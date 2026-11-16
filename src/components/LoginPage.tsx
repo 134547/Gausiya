@@ -440,11 +440,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         {mode === 'login' && (
           <form onSubmit={handleLogin} autoComplete="off" className="space-y-4">
-            <div className="text-[11px] text-center text-[#737373] bg-neutral-50 border border-neutral-200 rounded-lg py-1.5 px-2">
-              {lang === 'ur'
-                ? 'محفوظ لاگ ان: ایڈمن · استاد · طالب علم · سرپرست'
-                : 'Protected Portal: Admin · Teacher · Student · Parent'}
-            </div>
 
             {isLocked && (
               <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-[#DC1726] space-y-1">
