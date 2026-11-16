@@ -12,6 +12,13 @@ import {
 } from '../supabase.ts';
 import { saveUploadedAsset } from '../imgbb.ts';
 import { logActivity, notifyRoles } from '../auth.ts';
+import {
+  TOO_MANY_ATTEMPTS_MESSAGE,
+  checkIpRateLimit,
+  clearFailedLoginAttempts,
+  precheckLoginAttempt,
+  recordFailedLoginAttempt,
+} from '../bruteForce.ts';
 
 const router = Router();
 
@@ -522,8 +529,130 @@ router.post('/admission', async (req, res) => {
   }
 });
 
+router.post('/admission-status', async (req, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+
+    const admissionsOpen = await getAdmissionsOpen(admin);
+    if (!admissionsOpen) {
+      return res.status(403).json({
+        error: 'Online admissions and status checking are currently turned off by Madrasa administration.',
+      });
+    }
+
+    const { reference_no, mobile } = req.body as { reference_no?: string; mobile?: string };
+    const cleanRef = sanitizeOrTerm(reference_no);
+    const cleanMobileDigits = String(mobile || '').replace(/\D/g, '').slice(-10);
+
+    if (!cleanRef || cleanMobileDigits.length < 6) {
+      return res.status(400).json({
+        error: 'Please enter a valid Reference Number and registered Mobile Number.',
+      });
+    }
+
+    let { data: adm } = await admin
+      .from('admissions')
+      .select('*, classes(name)')
+      .ilike('admission_no', cleanRef)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let linkedStudent: any = null;
+    if (!adm) {
+      const { data: st } = await admin
+        .from('students')
+        .select('id, student_code, admission_no, classes(name)')
+        .or(`admission_no.ilike.${cleanRef},student_code.ilike.${cleanRef}`)
+        .is('deleted_at', null)
+        .limit(1)
+        .maybeSingle();
+      if (st?.id) {
+        linkedStudent = st;
+        const { data: linkedAdm } = await admin
+          .from('admissions')
+          .select('*, classes(name)')
+          .eq('student_id', st.id)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        adm = linkedAdm;
+      }
+    } else if (adm.student_id) {
+      const { data: st } = await admin
+        .from('students')
+        .select('id, student_code, admission_no, classes(name)')
+        .eq('id', adm.student_id)
+        .is('deleted_at', null)
+        .maybeSingle();
+      linkedStudent = st;
+    }
+
+    if (!adm) {
+      return res.status(404).json({
+        error: 'No admission application found for this Reference Number and Mobile Number.',
+      });
+    }
+
+    const norm = (val: string | null | undefined) => String(val || '').replace(/\D/g, '').slice(-10);
+    const gDigits = norm(adm.guardian_mobile);
+    const sDigits = norm(adm.student_mobile);
+    const matchesMobile =
+      (gDigits.length >= 6 && gDigits === cleanMobileDigits) ||
+      (sDigits.length >= 6 && sDigits === cleanMobileDigits);
+
+    if (!matchesMobile) {
+      return res.status(404).json({
+        error: 'No admission application found for this Reference Number and Mobile Number.',
+      });
+    }
+
+    const resolvedPhoto = adm.photo_url ? await resolveStorageUrl(adm.photo_url) : '';
+    const className = linkedStudent?.classes?.name || (adm as any).classes?.name || 'To be assigned';
+
+    return res.json({
+      id: adm.id,
+      reference_no: adm.admission_no,
+      admission_no: adm.admission_no,
+      official_admission_no: linkedStudent?.admission_no || '',
+      student_code: linkedStudent?.student_code || '',
+      status: adm.status || 'pending',
+      student_name: adm.student_name,
+      father_name: adm.father_name,
+      mother_name: adm.mother_name || '',
+      dob: adm.dob || '',
+      gender: adm.gender || 'Male',
+      religion: adm.religion || 'Islam',
+      guardian_name: adm.guardian_name || adm.father_name,
+      guardian_relationship: adm.guardian_relationship || 'Father',
+      guardian_mobile: adm.guardian_mobile || '',
+      student_mobile: adm.student_mobile || '',
+      previous_school: adm.previous_school || '',
+      previous_class: adm.previous_class || '',
+      address: adm.address || '',
+      village: adm.village || '',
+      district: adm.district || 'Palamu',
+      state: adm.state || 'Jharkhand',
+      pin_code: adm.pin_code || '',
+      class_name: className,
+      admission_date: adm.admission_date || '',
+      reviewed_at: adm.reviewed_at || '',
+      remarks: adm.remarks || '',
+      photo_url: resolvedPhoto,
+    });
+  } catch (err: any) {
+    console.error('Admission status check error:', err);
+    return res.status(500).json({ error: 'Failed to check admission status' });
+  }
+});
+
 router.post('/check-result', async (req, res) => {
   try {
+    if (!checkIpRateLimit(req, res, 'result_login', 15)) return;
+
     const admin = requireSupabaseAdmin(res);
     if (!admin) return;
     if (!(await getResultsOpen(admin))) {
@@ -534,12 +663,49 @@ router.post('/check-result', async (req, res) => {
     const authClient = createSupabaseAuthClient();
     if (!authClient) return res.status(503).json({ error: 'Supabase auth client unavailable' });
 
-    const { username, password } = req.body as { username?: string; password?: string };
+    const { username, password, captchaToken, captchaAnswer } = req.body as {
+      username?: string;
+      password?: string;
+      captchaToken?: string;
+      captchaAnswer?: string;
+    };
     if (!username?.trim() || !password) {
       return res.status(400).json({ error: 'Student username (or ID/email) and password are required.' });
     }
 
     const clean = username.trim();
+    const precheck = await precheckLoginAttempt(req, 'result_login', clean, captchaToken, captchaAnswer);
+    if (!precheck.allowed) {
+      if (precheck.retryAfterSeconds) {
+        res.setHeader('Retry-After', String(precheck.retryAfterSeconds));
+      }
+      return res.status(precheck.statusCode || 429).json(precheck.body);
+    }
+
+    const handleFailure = async () => {
+      const fail = await recordFailedLoginAttempt(req, 'result_login', clean);
+      if (fail.locked) {
+        if (fail.retryAfterSeconds) {
+          res.setHeader('Retry-After', String(fail.retryAfterSeconds));
+        }
+        return res.status(429).json({
+          error: TOO_MANY_ATTEMPTS_MESSAGE,
+          code: 'TOO_MANY_ATTEMPTS',
+          lockedUntil: fail.lockedUntil,
+          retryAfterSeconds: fail.retryAfterSeconds,
+          attemptsRemaining: 0,
+          captchaRequired: false,
+        });
+      }
+      return res.status(401).json({
+        error: 'Invalid student username or password.',
+        code: 'INVALID_CREDENTIALS',
+        attemptsRemaining: fail.attemptsRemaining,
+        captchaRequired: fail.captchaRequired,
+        captcha: fail.captcha,
+      });
+    };
+
     let profileRow: { id: string; email: string; linked_type: string | null; linked_id: string | null } | null = null;
 
     if (clean.includes('@')) {
@@ -582,7 +748,7 @@ router.post('/check-result', async (req, res) => {
     }
 
     if (!profileRow?.email) {
-      return res.status(401).json({ error: 'Invalid student username or password.' });
+      return handleFailure();
     }
 
     // Verify password strictly via Supabase Auth
@@ -591,8 +757,10 @@ router.post('/check-result', async (req, res) => {
       password,
     });
     if (signInErr) {
-      return res.status(401).json({ error: 'Invalid student username or password.' });
+      return handleFailure();
     }
+
+    await clearFailedLoginAttempts(req, 'result_login', clean);
 
     let studentId: string | null = profileRow.linked_type === 'student' ? profileRow.linked_id : null;
     if (!studentId) {

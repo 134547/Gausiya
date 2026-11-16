@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Award, Lock, LogIn, Printer, Search } from 'lucide-react';
 import { MadrasaSettings } from '../types.ts';
 import { MadrasaLogo } from '../components/MadrasaLogo.tsx';
 import { PrintModal } from '../components/PrintModal.tsx';
+import { CaptchaChallengeData, SecurityCaptchaBox } from '../components/SecurityCaptchaBox.tsx';
 
 interface PublicCheckResultPageProps {
   settings: MadrasaSettings | null;
@@ -27,19 +28,97 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
     attendanceSummary: any;
   } | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
+  const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(null);
+  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState<number>(Date.now());
+  const [captcha, setCaptcha] = useState<CaptchaChallengeData | null>(null);
+  const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [refreshingCaptcha, setRefreshingCaptcha] = useState(false);
+
+  const isLocked = Boolean(lockedUntil && lockedUntil > nowTick);
+  const remainingLockSeconds = isLocked && lockedUntil ? Math.max(1, Math.ceil((lockedUntil - nowTick) / 1000)) : 0;
+  const formatCountdown = (secs: number) => {
+    const mins = Math.floor(secs / 60);
+    const rem = secs % 60;
+    return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+  };
+
+  useEffect(() => {
+    if (!lockedUntil) return;
+    setNowTick(Date.now());
+    const id = window.setInterval(() => {
+      const current = Date.now();
+      setNowTick(current);
+      if (current >= lockedUntil) {
+        setLockedUntil(null);
+        setAttemptsRemaining(null);
+        setError('');
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [lockedUntil]);
+
+  const refreshCaptcha = async () => {
+    setRefreshingCaptcha(true);
+    try {
+      const res = await fetch('/api/auth/captcha');
+      if (res.ok) {
+        const next = (await res.json()) as CaptchaChallengeData;
+        setCaptcha(next);
+        setCaptchaAnswer('');
+      }
+    } catch {
+      // ignore
+    } finally {
+      setRefreshingCaptcha(false);
+    }
+  };
 
   const handleCheck = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLocked) return;
     setError('');
     setLoading(true);
     try {
       const res = await fetch('/api/public/check-result', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password }),
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+          captchaToken: captcha?.token,
+          captchaAnswer: captcha ? captchaAnswer : undefined,
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not load result');
+      if (!res.ok) {
+        if (res.status === 429 || data?.code === 'TOO_MANY_ATTEMPTS' || data?.code === 'RATE_LIMITED') {
+          const lockEnd = Number(data?.lockedUntil) || Date.now() + (Number(data?.retryAfterSeconds) || 900) * 1000;
+          setNowTick(Date.now());
+          setLockedUntil(lockEnd);
+          setAttemptsRemaining(0);
+          setCaptcha(null);
+          setCaptchaAnswer('');
+          setError('Too many attempts. Please try again later.');
+          return;
+        }
+        if (typeof data?.attemptsRemaining === 'number') {
+          setAttemptsRemaining(data.attemptsRemaining);
+        }
+        if (data?.captchaRequired) {
+          if (data?.captcha) {
+            setCaptcha(data.captcha);
+            setCaptchaAnswer('');
+          } else {
+            await refreshCaptcha();
+          }
+        }
+        throw new Error(data.error || 'Could not load result');
+      }
+      setAttemptsRemaining(null);
+      setLockedUntil(null);
+      setCaptcha(null);
+      setCaptchaAnswer('');
       setReport(data);
     } catch (e: any) {
       setError(e.message || 'Unable to verify credentials');
@@ -123,7 +202,22 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
               </p>
             </div>
 
-            {error && (
+            {isLocked && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-[#DC1726] space-y-1">
+                <div className="font-bold">Too many attempts. Please try again later.</div>
+                <div className="font-mono-num text-[11px] text-red-700">
+                  Login temporarily locked. Try again in {formatCountdown(remainingLockSeconds)}
+                </div>
+              </div>
+            )}
+
+            {!isLocked && attemptsRemaining !== null && attemptsRemaining > 0 && attemptsRemaining < 5 && (
+              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-medium">
+                {attemptsRemaining} attempt{attemptsRemaining === 1 ? '' : 's'} remaining before temporary 15-minute lockout.
+              </div>
+            )}
+
+            {error && !isLocked && (
               <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-[#DC1726] font-medium">
                 {error}
               </div>
@@ -134,11 +228,12 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
               <input
                 type="text"
                 required
+                disabled={isLocked}
                 autoComplete="off"
                 placeholder="Enter student username or ID"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-lg border border-neutral-200 text-sm focus:outline-none focus:border-[#DC1726]"
+                className="w-full px-3 py-2.5 rounded-lg border border-neutral-200 text-sm focus:outline-none focus:border-[#DC1726] disabled:bg-neutral-100"
               />
             </div>
 
@@ -147,16 +242,27 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
               <input
                 type="password"
                 required
+                disabled={isLocked}
                 placeholder="Enter student password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-lg border border-neutral-200 text-sm focus:outline-none focus:border-[#DC1726]"
+                className="w-full px-3 py-2.5 rounded-lg border border-neutral-200 text-sm focus:outline-none focus:border-[#DC1726] disabled:bg-neutral-100"
               />
             </div>
 
+            {!isLocked && captcha && (
+              <SecurityCaptchaBox
+                captcha={captcha}
+                answer={captchaAnswer}
+                onAnswerChange={setCaptchaAnswer}
+                onRefresh={refreshCaptcha}
+                refreshing={refreshingCaptcha}
+              />
+            )}
+
             <button
               type="submit"
-              disabled={loading || !username || !password}
+              disabled={loading || isLocked || !username || !password}
               className="w-full inline-flex items-center justify-center gap-2 py-2.5 rounded-lg gold-gradient text-white text-sm font-semibold shadow-sm hover:opacity-95 disabled:opacity-60"
             >
               <Search className="w-4 h-4" />

@@ -18,6 +18,7 @@ import {
   Paperclip,
   Phone,
   Rss,
+  SearchCheck,
   Sparkles,
   Users,
   X,
@@ -45,6 +46,7 @@ interface HomePageProps {
   onToggleLang: () => void;
   onOpenLogin: () => void;
   onOpenAdmission: () => void;
+  onOpenAdmissionStatus?: () => void;
   onOpenCheckResult: () => void;
 }
 
@@ -132,6 +134,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   onToggleLang,
   onOpenLogin,
   onOpenAdmission,
+  onOpenAdmissionStatus,
   onOpenCheckResult,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -268,6 +271,15 @@ export const HomePage: React.FC<HomePageProps> = ({
               >
                 {admissionsOpen ? 'Admission' : 'Admission Closed'}
               </button>
+              {admissionsOpen && onOpenAdmissionStatus && (
+                <button
+                  type="button"
+                  onClick={() => { setMobileMenuOpen(false); onOpenAdmissionStatus(); }}
+                  className="flex-1 py-2 rounded-lg border border-neutral-200 font-semibold text-center"
+                >
+                  Admission Status
+                </button>
+              )}
               {resultsOpen && (
                 <button
                   type="button"
@@ -358,6 +370,17 @@ export const HomePage: React.FC<HomePageProps> = ({
                 ? (admissionsOpen ? 'آن لائن داخلہ' : 'داخلہ بند ہے')
                 : (admissionsOpen ? 'Apply for Admission' : 'Admissions Closed')}
             </button>
+
+            {admissionsOpen && onOpenAdmissionStatus && (
+              <button
+                type="button"
+                onClick={onOpenAdmissionStatus}
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold shadow-md transition-colors whitespace-nowrap shrink-0"
+              >
+                <SearchCheck className="w-4 h-4" />
+                <span>{lang === 'ur' ? 'داخلہ اسٹیٹس' : 'Admission Status'}</span>
+              </button>
+            )}
 
             {resultsOpen && (
               <button

@@ -1,7 +1,11 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 let supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
-let supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
+let supabaseAnonKey = (
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  ''
+).trim();
 
 export let isSupabaseClientConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 

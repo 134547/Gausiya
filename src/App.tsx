@@ -43,6 +43,7 @@ export default function App() {
   const [settings, setSettings] = useState<MadrasaSettings | null>(null);
   const [publicData, setPublicData] = useState<PublicHomeData | null>(null);
   const [publicView, setPublicView] = useState<PublicView>('home');
+  const [publicAdmissionSection, setPublicAdmissionSection] = useState<'form' | 'status'>('form');
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [activeModule, setActiveModule] = useState<NavModuleId>('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -305,6 +306,7 @@ export default function App() {
             (settings?.admissions_open ?? publicData?.settings?.admissions_open) !== false
           }
           classes={publicData?.classes || []}
+          initialSection={publicAdmissionSection}
           onBackHome={() => {
             setPublicView('home');
             loadPublicHome();
@@ -348,6 +350,12 @@ export default function App() {
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         onOpenAdmission={() => {
+          setPublicAdmissionSection('form');
+          setPublicView('admission');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onOpenAdmissionStatus={() => {
+          setPublicAdmissionSection('status');
           setPublicView('admission');
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}

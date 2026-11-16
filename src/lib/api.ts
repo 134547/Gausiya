@@ -32,10 +32,12 @@ async function resolveAccessToken(): Promise<string | null> {
 export class ApiError extends Error {
   status: number;
   code?: string;
-  constructor(message: string, status: number, code?: string) {
+  data?: any;
+  constructor(message: string, status: number, code?: string, data?: any) {
     super(message);
     this.status = status;
     this.code = code;
+    this.data = data;
   }
 }
 
@@ -62,7 +64,7 @@ export async function apiRequest<T = any>(
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new ApiError(data?.error || `Request failed (${res.status})`, res.status, data?.code);
+    throw new ApiError(data?.error || `Request failed (${res.status})`, res.status, data?.code, data);
   }
   return data as T;
 }

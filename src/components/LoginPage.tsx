@@ -16,6 +16,7 @@ import { initSupabaseClient, isSupabaseClientConfigured, missingSupabaseClientEn
 import { User } from '../types.ts';
 import { Language } from '../i18n/translations.ts';
 import { MadrasaLogo } from './MadrasaLogo.tsx';
+import { CaptchaChallengeData, SecurityCaptchaBox } from './SecurityCaptchaBox.tsx';
 
 interface LoginPageProps {
   lang: Language;
@@ -57,6 +58,35 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [infoMsg, setInfoMsg] = useState('');
   const [supabaseReady, setSupabaseReady] = useState(isSupabaseClientConfigured);
   const [apiReachable, setApiReachable] = useState<boolean | null>(null);
+  const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(null);
+  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState<number>(Date.now());
+  const [captcha, setCaptcha] = useState<CaptchaChallengeData | null>(null);
+  const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [refreshingCaptcha, setRefreshingCaptcha] = useState(false);
+
+  const isLocked = Boolean(lockedUntil && lockedUntil > nowTick);
+  const remainingLockSeconds = isLocked && lockedUntil ? Math.max(1, Math.ceil((lockedUntil - nowTick) / 1000)) : 0;
+  const formatCountdown = (secs: number) => {
+    const mins = Math.floor(secs / 60);
+    const rem = secs % 60;
+    return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+  };
+
+  useEffect(() => {
+    if (!lockedUntil) return;
+    setNowTick(Date.now());
+    const id = window.setInterval(() => {
+      const current = Date.now();
+      setNowTick(current);
+      if (current >= lockedUntil) {
+        setLockedUntil(null);
+        setAttemptsRemaining(null);
+        setError('');
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [lockedUntil]);
 
   useEffect(() => {
     setMode(initialMode);
@@ -89,8 +119,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       });
   }, []);
 
+  const refreshCaptcha = async () => {
+    setRefreshingCaptcha(true);
+    try {
+      const res = await fetch('/api/auth/captcha');
+      if (res.ok) {
+        const next = (await res.json()) as CaptchaChallengeData;
+        setCaptcha(next);
+        setCaptchaAnswer('');
+      }
+    } catch {
+      // ignore
+    } finally {
+      setRefreshingCaptcha(false);
+    }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLocked) return;
     setError('');
     setInfoMsg('');
     setLoading(true);
@@ -101,9 +148,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         user: User;
       }>('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ identifier, password }),
+        body: JSON.stringify({
+          identifier,
+          password,
+          captchaToken: captcha?.token,
+          captchaAnswer: captcha ? captchaAnswer : undefined,
+        }),
       });
 
+      setAttemptsRemaining(null);
+      setLockedUntil(null);
+      setCaptcha(null);
+      setCaptchaAnswer('');
       setStoredToken(data.token);
       if (supabase && data.session?.access_token && data.session?.refresh_token) {
         await supabase.auth.setSession({
@@ -113,7 +169,29 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       }
       onSuccess(data.user);
     } catch (err: any) {
-      setError(err.message || 'Sign in failed');
+      const payload = err?.data || {};
+      if (err?.status === 429 || payload.code === 'TOO_MANY_ATTEMPTS' || payload.code === 'RATE_LIMITED') {
+        const lockEnd = Number(payload.lockedUntil) || Date.now() + (Number(payload.retryAfterSeconds) || 900) * 1000;
+        setNowTick(Date.now());
+        setLockedUntil(lockEnd);
+        setAttemptsRemaining(0);
+        setCaptcha(null);
+        setCaptchaAnswer('');
+        setError('Too many attempts. Please try again later.');
+      } else {
+        if (typeof payload.attemptsRemaining === 'number') {
+          setAttemptsRemaining(payload.attemptsRemaining);
+        }
+        if (payload.captchaRequired) {
+          if (payload.captcha) {
+            setCaptcha(payload.captcha);
+            setCaptchaAnswer('');
+          } else {
+            await refreshCaptcha();
+          }
+        }
+        setError(err.message || 'Sign in failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -373,6 +451,31 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         {mode === 'login' && (
           <form onSubmit={handleLogin} autoComplete="off" className="space-y-4">
+            <div className="text-[11px] text-center text-[#737373] bg-neutral-50 border border-neutral-200 rounded-lg py-1.5 px-2">
+              {lang === 'ur'
+                ? 'محفوظ لاگ ان: ایڈمن · استاد · طالب علم · سرپرست'
+                : 'Protected Portal: Admin · Teacher · Student · Parent'}
+            </div>
+
+            {isLocked && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-[#DC1726] space-y-1">
+                <div className="font-bold">Too many attempts. Please try again later.</div>
+                <div className="font-mono-num text-[11px] text-red-700">
+                  {lang === 'ur'
+                    ? `دوبارہ کوشش کے لیے باقی وقت: ${formatCountdown(remainingLockSeconds)}`
+                    : `Login temporarily locked. Try again in ${formatCountdown(remainingLockSeconds)}`}
+                </div>
+              </div>
+            )}
+
+            {!isLocked && attemptsRemaining !== null && attemptsRemaining > 0 && attemptsRemaining < 5 && (
+              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-medium">
+                {lang === 'ur'
+                  ? `15 منٹ کی عارضی پابندی سے پہلے باقی کوششیں: ${attemptsRemaining}`
+                  : `${attemptsRemaining} attempt${attemptsRemaining === 1 ? '' : 's'} remaining before temporary 15-minute lockout.`}
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-medium text-[#171717] mb-1.5">
                 {lang === 'ur' ? 'یوزر نیم / ای میل / موبائل' : 'Username, Email, or Mobile'}
@@ -382,11 +485,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <input
                   type="text"
                   required
+                  disabled={isLocked}
                   autoComplete="off"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   placeholder={lang === 'ur' ? 'یوزر نیم یا ای میل درج کریں' : 'Enter username, email, or mobile'}
-                  className="w-full ps-9 pe-3 py-2.5 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-[#DC1726]/20 focus:border-[#DC1726]"
+                  className="w-full ps-9 pe-3 py-2.5 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-[#DC1726]/20 focus:border-[#DC1726] disabled:bg-neutral-100"
                 />
               </div>
             </div>
@@ -414,21 +518,39 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <input
                   type="password"
                   required
+                  disabled={isLocked}
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder={lang === 'ur' ? 'پاس ورڈ درج کریں' : 'Enter password'}
-                  className="w-full ps-9 pe-3 py-2.5 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-[#DC1726]/20 focus:border-[#DC1726]"
+                  className="w-full ps-9 pe-3 py-2.5 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-[#DC1726]/20 focus:border-[#DC1726] disabled:bg-neutral-100"
                 />
               </div>
             </div>
 
+            {!isLocked && captcha && (
+              <SecurityCaptchaBox
+                captcha={captcha}
+                answer={captchaAnswer}
+                onAnswerChange={setCaptchaAnswer}
+                onRefresh={refreshCaptcha}
+                refreshing={refreshingCaptcha}
+                lang={lang}
+              />
+            )}
+
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || isLocked}
               className="w-full py-2.5 px-4 rounded-lg bg-[#DC1726] hover:bg-red-700 text-white text-sm font-semibold transition-colors disabled:opacity-60"
             >
-              {loading ? 'Signing in...' : lang === 'ur' ? 'لاگ ان کریں' : 'Sign In to Portal'}
+              {isLocked
+                ? `Locked (${formatCountdown(remainingLockSeconds)})`
+                : loading
+                  ? 'Signing in...'
+                  : lang === 'ur'
+                    ? 'لاگ ان کریں'
+                    : 'Sign In to Portal'}
             </button>
           </form>
         )}

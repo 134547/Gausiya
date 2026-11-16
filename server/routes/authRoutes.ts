@@ -13,13 +13,26 @@ import {
   requireAuth,
 } from '../auth.ts';
 import { getAdmissionsOpen, getChatsOpen, getResultsOpen, normalizeStorageRef, sanitizeOrTerm } from './publicRoutes.ts';
+import {
+  TOO_MANY_ATTEMPTS_MESSAGE,
+  checkIpRateLimit,
+  clearFailedLoginAttempts,
+  generateCaptchaChallenge,
+  precheckLoginAttempt,
+  recordFailedLoginAttempt,
+} from '../bruteForce.ts';
 
 const router = Router();
 
+router.get('/captcha', (req, res) => {
+  if (!checkIpRateLimit(req, res, 'captcha', 30)) return;
+  return res.json(generateCaptchaChallenge());
+});
+
 async function ensurePublicRole(admin: NonNullable<ReturnType<typeof requireSupabaseAdmin>>) {
   const { data: existing } = await admin.from('roles').select('id, name, slug').eq('slug', 'public').maybeSingle();
-  if (existing?.id) return existing;
-  const { data: inserted } = await admin
+  if (existing?.id) return { role: existing, error: null as string | null };
+  const { data: inserted, error } = await admin
     .from('roles')
     .upsert(
       {
@@ -31,7 +44,7 @@ async function ensurePublicRole(admin: NonNullable<ReturnType<typeof requireSupa
     )
     .select('id, name, slug')
     .single();
-  return inserted || null;
+  return { role: inserted || null, error: error?.message || null };
 }
 
 async function hasActiveSuperAdmin(admin: NonNullable<ReturnType<typeof requireSupabaseAdmin>>): Promise<boolean> {
@@ -62,6 +75,7 @@ router.get('/setup-status', async (_req, res) => {
 
 router.post('/setup-admin', async (req, res) => {
   try {
+    if (!checkIpRateLimit(req, res, 'setup_admin', 10)) return;
     const admin = requireSupabaseAdmin(res);
     if (!admin) return;
     const authClient = createSupabaseAuthClient();
@@ -193,6 +207,7 @@ router.post('/setup-admin', async (req, res) => {
 // Public Self-Registration (defaults safely to 'public' role; Super Admin can view & change role anytime)
 router.post('/register', async (req, res) => {
   try {
+    if (!checkIpRateLimit(req, res, 'register', 10)) return;
     const admin = requireSupabaseAdmin(res);
     if (!admin) return;
     const authClient = createSupabaseAuthClient();
@@ -242,9 +257,13 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
 
-    const publicRole = await ensurePublicRole(admin);
+    const { role: publicRole, error: roleErr } = await ensurePublicRole(admin);
     if (!publicRole?.id) {
-      return res.status(500).json({ error: 'Public role could not be initialized.' });
+      const hint =
+        roleErr && roleErr.includes('roles_slug_check')
+          ? 'Please run supabase/migrations/2026_add_public_role.sql in your Supabase SQL Editor to enable the public role.'
+          : roleErr || 'Public role could not be initialized.';
+      return res.status(500).json({ error: hint });
     }
 
     const { data: createdAuth, error: createErr } = await admin.auth.admin.createUser({
@@ -327,6 +346,8 @@ router.post('/register', async (req, res) => {
 // Email OR Username/Mobile/UserCode login backed exclusively by Supabase Auth (auth.users)
 router.post('/login', async (req, res) => {
   try {
+    if (!checkIpRateLimit(req, res, 'portal_login', 15)) return;
+
     const admin = requireSupabaseAdmin(res);
     if (!admin) return;
     const authClient = createSupabaseAuthClient();
@@ -334,18 +355,55 @@ router.post('/login', async (req, res) => {
       return res.status(503).json({ error: 'Supabase anon key is not configured on the server.' });
     }
 
-    const { identifier, password } = req.body as { identifier?: string; password?: string };
+    const { identifier, password, captchaToken, captchaAnswer } = req.body as {
+      identifier?: string;
+      password?: string;
+      captchaToken?: string;
+      captchaAnswer?: string;
+    };
     if (!identifier || !password) {
       return res.status(400).json({ error: 'Email/username and password are required.' });
     }
 
     const cleanId = identifier.trim();
+    const precheck = await precheckLoginAttempt(req, 'portal_login', cleanId, captchaToken, captchaAnswer);
+    if (!precheck.allowed) {
+      if (precheck.retryAfterSeconds) {
+        res.setHeader('Retry-After', String(precheck.retryAfterSeconds));
+      }
+      return res.status(precheck.statusCode || 429).json(precheck.body);
+    }
+
+    const handleFailure = async (fallbackMessage: string) => {
+      const fail = await recordFailedLoginAttempt(req, 'portal_login', cleanId);
+      if (fail.locked) {
+        if (fail.retryAfterSeconds) {
+          res.setHeader('Retry-After', String(fail.retryAfterSeconds));
+        }
+        return res.status(429).json({
+          error: TOO_MANY_ATTEMPTS_MESSAGE,
+          code: 'TOO_MANY_ATTEMPTS',
+          lockedUntil: fail.lockedUntil,
+          retryAfterSeconds: fail.retryAfterSeconds,
+          attemptsRemaining: 0,
+          captchaRequired: false,
+        });
+      }
+      return res.status(401).json({
+        error: fallbackMessage,
+        code: 'INVALID_CREDENTIALS',
+        attemptsRemaining: fail.attemptsRemaining,
+        captchaRequired: fail.captchaRequired,
+        captcha: fail.captcha,
+      });
+    };
+
     let emailToLogin = cleanId;
 
     if (!cleanId.includes('@')) {
       const safeId = sanitizeOrTerm(cleanId);
       if (!safeId) {
-        return res.status(401).json({ error: 'Invalid credentials. Please check username and password.' });
+        return handleFailure('Invalid credentials. Please check username and password.');
       }
       const { data: profileMatch } = await admin
         .from('profiles')
@@ -355,7 +413,7 @@ router.post('/login', async (req, res) => {
         .maybeSingle();
 
       if (!profileMatch?.email) {
-        return res.status(401).json({ error: 'Invalid credentials. Please check username and password.' });
+        return handleFailure('Invalid credentials. Please check username and password.');
       }
       emailToLogin = profileMatch.email;
     }
@@ -366,8 +424,10 @@ router.post('/login', async (req, res) => {
     });
 
     if (signInErr || !signInData.session || !signInData.user) {
-      return res.status(401).json({ error: 'Invalid credentials. Please check email/username and password.' });
+      return handleFailure('Invalid credentials. Please check email/username and password.');
     }
+
+    await clearFailedLoginAttempts(req, 'portal_login', cleanId);
 
     const resolved = await getUserWithPermissions(signInData.user.id);
     if (resolved.pending) {
