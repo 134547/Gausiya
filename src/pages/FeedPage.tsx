@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  Download,
   Eye,
   FileUp,
   Heart,
@@ -13,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { apiRequest, uploadFile } from '../lib/api.ts';
+import { downloadFeedPostCard, downloadImageFile } from '../lib/download.ts';
 import { User } from '../types.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 
@@ -33,6 +35,7 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
   const [viewPostId, setViewPostId] = useState<string | null>(null);
   const [viewImageIdx, setViewImageIdx] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [err, setErr] = useState('');
 
   const viewPost = posts.find((p) => p.id === viewPostId) || null;
@@ -102,6 +105,58 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
       load();
     } catch (e: any) {
       setErr(e.message || 'Failed to post comment');
+    }
+  };
+
+  const handleDownloadImage = async (url: string, baseName: string, key: string) => {
+    if (downloadingKey) return;
+    setErr('');
+    setDownloadingKey(key);
+    try {
+      await downloadImageFile(url, baseName);
+    } catch (e: any) {
+      setErr(e?.message || 'Failed to download image');
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
+
+  const handleDownloadAllImages = async (urls: string[], baseName: string, key: string) => {
+    if (downloadingKey) return;
+    setErr('');
+    setDownloadingKey(key);
+    try {
+      for (let i = 0; i < urls.length; i += 1) {
+        await downloadImageFile(urls[i], `${baseName}-${i + 1}`);
+      }
+    } catch (e: any) {
+      setErr(e?.message || 'Failed to download images');
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
+
+  const handleDownloadFeed = async (post: any, images: string[], imgIdx: number, key: string) => {
+    if (downloadingKey) return;
+    setErr('');
+    setDownloadingKey(key);
+    try {
+      await downloadFeedPostCard(
+        {
+          id: post.id,
+          title: post.title,
+          content: post.content,
+          author_name: post.author_name,
+          author_role: post.author_role,
+          created_at: post.created_at,
+          images,
+        },
+        imgIdx
+      );
+    } catch (e: any) {
+      setErr(e?.message || 'Failed to download feed post');
+    } finally {
+      setDownloadingKey(null);
     }
   };
 
@@ -208,21 +263,39 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
                 {imgs.length > 0 && (
                   <div className={`grid gap-2 ${imgs.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
                     {imgs.map((url, idx) => (
-                      <img
-                        key={idx}
-                        src={url}
-                        alt={`Post media ${idx + 1}`}
-                        onClick={() => {
-                          setViewPostId(post.id);
-                          setViewImageIdx(idx);
-                        }}
-                        className="w-full max-h-72 object-cover rounded-lg border border-neutral-200 cursor-pointer hover:opacity-95 transition-opacity"
-                      />
+                      <div key={idx} className="relative group rounded-lg overflow-hidden border border-neutral-200">
+                        <img
+                          src={url}
+                          alt={`Post media ${idx + 1}`}
+                          onClick={() => {
+                            setViewPostId(post.id);
+                            setViewImageIdx(idx);
+                          }}
+                          className="w-full max-h-72 object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                        />
+                        <button
+                          type="button"
+                          disabled={downloadingKey === `img-${post.id}-${idx}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownloadImage(
+                              url,
+                              `${post.title || 'madrasa-photo'}-${idx + 1}`,
+                              `img-${post.id}-${idx}`
+                            );
+                          }}
+                          title="Download Image"
+                          className="absolute bottom-2 end-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-black/70 text-white text-[11px] font-semibold hover:bg-black/85 transition-colors cursor-pointer disabled:opacity-60"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>{downloadingKey === `img-${post.id}-${idx}` ? 'Saving...' : 'Download'}</span>
+                        </button>
+                      </div>
                     ))}
                   </div>
                 )}
 
-                <div className="pt-2 border-t border-neutral-100 flex items-center justify-between gap-4 text-xs">
+                <div className="pt-2 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-3 text-xs">
                   <div className="flex items-center gap-4">
                     <button
                       type="button"
@@ -239,16 +312,27 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
                       <span className="font-mono-num">{post.comments?.length || 0}</span> Comments
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setViewPostId(post.id);
-                      setViewImageIdx(0);
-                    }}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#0EA5E9] hover:underline cursor-pointer"
-                  >
-                    <Eye className="w-3.5 h-3.5" /> View Details
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={downloadingKey === `feed-${post.id}`}
+                      onClick={() => handleDownloadFeed(post, imgs, 0, `feed-${post.id}`)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-neutral-200 bg-white text-[11px] font-semibold text-[#171717] hover:bg-neutral-50 cursor-pointer disabled:opacity-60"
+                    >
+                      <Download className="w-3.5 h-3.5 text-[#10B981]" />
+                      <span>{downloadingKey === `feed-${post.id}` ? 'Saving...' : 'Download Feed'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setViewPostId(post.id);
+                        setViewImageIdx(0);
+                      }}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-[#0EA5E9] hover:underline cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" /> View Details
+                    </button>
+                  </div>
                 </div>
 
                 {/* Comments */}
@@ -437,24 +521,83 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
                         ))}
                       </div>
                     )}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={downloadingKey === `modal-img-${viewPost.id}`}
+                        onClick={() =>
+                          handleDownloadImage(
+                            viewImgs[safeIdx],
+                            `${viewPost.title || 'madrasa-photo'}-${safeIdx + 1}`,
+                            `modal-img-${viewPost.id}`
+                          )
+                        }
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#0EA5E9] text-white text-xs font-semibold hover:bg-sky-600 transition-colors disabled:opacity-60"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>
+                          {downloadingKey === `modal-img-${viewPost.id}`
+                            ? 'Downloading Image...'
+                            : viewImgs.length > 1
+                              ? `Download Photo ${safeIdx + 1}`
+                              : 'Download Image'}
+                        </span>
+                      </button>
+                      {viewImgs.length > 1 && (
+                        <button
+                          type="button"
+                          disabled={downloadingKey === `modal-all-${viewPost.id}`}
+                          onClick={() =>
+                            handleDownloadAllImages(
+                              viewImgs,
+                              viewPost.title || 'madrasa-photo',
+                              `modal-all-${viewPost.id}`
+                            )
+                          }
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 transition-colors disabled:opacity-60"
+                        >
+                          <Download className="w-3.5 h-3.5 text-[#0EA5E9]" />
+                          <span>
+                            {downloadingKey === `modal-all-${viewPost.id}`
+                              ? 'Downloading All...'
+                              : `Download All (${viewImgs.length})`}
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
 
-                <div className="pt-3 border-t border-neutral-100 flex items-center gap-4 text-xs">
+                <div className="pt-3 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-4">
+                    <button
+                      type="button"
+                      onClick={() => handleLike(viewPost.id)}
+                      className={`inline-flex items-center gap-1.5 font-medium transition-colors ${
+                        viewPost.liked_by_me ? 'text-[#DC1726]' : 'text-[#737373] hover:text-[#171717]'
+                      }`}
+                    >
+                      <Heart className={`w-4 h-4 ${viewPost.liked_by_me ? 'fill-[#DC1726]' : ''}`} />
+                      <span className="font-mono-num">{viewPost.likes_count || 0}</span> Likes
+                    </button>
+                    <span className="inline-flex items-center gap-1.5 text-[#737373]">
+                      <MessageSquare className="w-4 h-4" />
+                      <span className="font-mono-num">{viewPost.comments?.length || 0}</span> Comments
+                    </span>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => handleLike(viewPost.id)}
-                    className={`inline-flex items-center gap-1.5 font-medium transition-colors ${
-                      viewPost.liked_by_me ? 'text-[#DC1726]' : 'text-[#737373] hover:text-[#171717]'
-                    }`}
+                    disabled={downloadingKey === `modal-feed-${viewPost.id}`}
+                    onClick={() =>
+                      handleDownloadFeed(viewPost, viewImgs, safeIdx, `modal-feed-${viewPost.id}`)
+                    }
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#10B981] text-white text-xs font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-60"
                   >
-                    <Heart className={`w-4 h-4 ${viewPost.liked_by_me ? 'fill-[#DC1726]' : ''}`} />
-                    <span className="font-mono-num">{viewPost.likes_count || 0}</span> Likes
+                    <Download className="w-3.5 h-3.5" />
+                    <span>
+                      {downloadingKey === `modal-feed-${viewPost.id}` ? 'Preparing Feed...' : 'Download Feed'}
+                    </span>
                   </button>
-                  <span className="inline-flex items-center gap-1.5 text-[#737373]">
-                    <MessageSquare className="w-4 h-4" />
-                    <span className="font-mono-num">{viewPost.comments?.length || 0}</span> Comments
-                  </span>
                 </div>
 
                 <div className="space-y-2 pt-1 max-h-56 overflow-y-auto">

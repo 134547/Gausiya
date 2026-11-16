@@ -6,6 +6,7 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  Download,
   Eye,
   GraduationCap,
   Heart,
@@ -26,6 +27,7 @@ import heroCampusImg from '../assets/images/gausiya_madarsa_hero_crest_179480487
 import { Language } from '../i18n/translations.ts';
 import { MadrasaSettings } from '../types.ts';
 import { MadrasaLogo } from '../components/MadrasaLogo.tsx';
+import { downloadFeedPostCard, downloadImageFile } from '../lib/download.ts';
 
 export interface PublicHomeData {
   settings: MadrasaSettings | null;
@@ -137,6 +139,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [viewFeedPost, setViewFeedPost] = useState<any | null>(null);
   const [viewFeedImageIdx, setViewFeedImageIdx] = useState(0);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const settings = data?.settings;
   const admissionsOpen = data?.admissionsOpen !== false && settings?.admissions_open !== false;
   const resultsOpen = data?.resultsOpen !== false && settings?.results_open !== false;
@@ -158,6 +161,56 @@ export const HomePage: React.FC<HomePageProps> = ({
     const parsed = new Date(d);
     if (Number.isNaN(parsed.getTime())) return d;
     return parsed.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  const handleDownloadImage = async (url: string, baseName: string, key: string) => {
+    if (downloadingKey) return;
+    setDownloadingKey(key);
+    try {
+      await downloadImageFile(url, baseName);
+    } catch {
+      // ignore transient network errors
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
+
+  const handleDownloadAllImages = async (urls: string[], baseName: string, key: string) => {
+    if (downloadingKey) return;
+    setDownloadingKey(key);
+    try {
+      for (let i = 0; i < urls.length; i += 1) {
+        await downloadImageFile(urls[i], `${baseName}-${i + 1}`);
+      }
+    } catch {
+      // ignore transient errors
+    } finally {
+      setDownloadingKey(null);
+    }
+  };
+
+  const handleDownloadFeed = async (post: any, images: string[], imgIdx: number, key: string) => {
+    if (downloadingKey) return;
+    setDownloadingKey(key);
+    try {
+      await downloadFeedPostCard(
+        {
+          id: post.id,
+          title: post.title,
+          content: post.content,
+          author_name: post.author_name,
+          author_role: post.author_role,
+          created_at: post.created_at,
+          images,
+          institutionName: settings?.name || 'Madrasa Ghausia Razvia',
+        },
+        imgIdx
+      );
+    } catch {
+      // ignore transient errors
+    } finally {
+      setDownloadingKey(null);
+    }
   };
 
   return (
@@ -644,17 +697,45 @@ export const HomePage: React.FC<HomePageProps> = ({
                             <Paperclip className="w-3 h-3" /> {imgs.length} media
                           </span>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setViewFeedPost({ ...post, parsedImages: imgs });
-                            setViewFeedImageIdx(0);
-                          }}
-                          className="ms-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-neutral-50 text-xs font-semibold text-[#171717] hover:bg-neutral-100 transition-colors cursor-pointer"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-[#DC1726]" />
-                          <span>{lang === 'ur' ? 'مکمل دیکھیں' : 'View'}</span>
-                        </button>
+                        <div className="ms-auto flex flex-wrap items-center gap-2">
+                          {imgs.length > 0 && (
+                            <button
+                              type="button"
+                              disabled={downloadingKey === `img-${post.id}`}
+                              onClick={() =>
+                                handleDownloadImage(
+                                  imgs[0],
+                                  post.title || `madrasa-photo-${post.id}`,
+                                  `img-${post.id}`
+                                )
+                              }
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 transition-colors cursor-pointer disabled:opacity-60"
+                            >
+                              <Download className="w-3.5 h-3.5 text-[#0EA5E9]" />
+                              <span>{downloadingKey === `img-${post.id}` ? 'Saving...' : 'Download Image'}</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={downloadingKey === `feed-${post.id}`}
+                            onClick={() => handleDownloadFeed(post, imgs, 0, `feed-${post.id}`)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 transition-colors cursor-pointer disabled:opacity-60"
+                          >
+                            <Download className="w-3.5 h-3.5 text-[#10B981]" />
+                            <span>{downloadingKey === `feed-${post.id}` ? 'Saving...' : 'Download Feed'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setViewFeedPost({ ...post, parsedImages: imgs });
+                              setViewFeedImageIdx(0);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-neutral-50 text-xs font-semibold text-[#171717] hover:bg-neutral-100 transition-colors cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-[#DC1726]" />
+                            <span>View</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -921,21 +1002,82 @@ export const HomePage: React.FC<HomePageProps> = ({
                         ))}
                       </div>
                     )}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={downloadingKey === `modal-img-${viewFeedPost.id}`}
+                        onClick={() =>
+                          handleDownloadImage(
+                            imgs[safeIdx],
+                            `${viewFeedPost.title || 'madrasa-photo'}-${safeIdx + 1}`,
+                            `modal-img-${viewFeedPost.id}`
+                          )
+                        }
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#0EA5E9] text-white text-xs font-semibold hover:bg-sky-600 transition-colors disabled:opacity-60"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>
+                          {downloadingKey === `modal-img-${viewFeedPost.id}`
+                            ? 'Downloading Image...'
+                            : imgs.length > 1
+                              ? `Download Photo ${safeIdx + 1}`
+                              : 'Download Image'}
+                        </span>
+                      </button>
+                      {imgs.length > 1 && (
+                        <button
+                          type="button"
+                          disabled={downloadingKey === `modal-all-${viewFeedPost.id}`}
+                          onClick={() =>
+                            handleDownloadAllImages(
+                              imgs,
+                              viewFeedPost.title || 'madrasa-photo',
+                              `modal-all-${viewFeedPost.id}`
+                            )
+                          }
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 transition-colors disabled:opacity-60"
+                        >
+                          <Download className="w-3.5 h-3.5 text-[#0EA5E9]" />
+                          <span>
+                            {downloadingKey === `modal-all-${viewFeedPost.id}`
+                              ? 'Downloading All...'
+                              : `Download All (${imgs.length})`}
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
 
-                <div className="pt-3 border-t border-neutral-100 flex items-center justify-between text-xs text-[#737373]">
+                <div className="pt-3 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-2 text-xs text-[#737373]">
                   <span className="inline-flex items-center gap-1.5">
                     <Heart className="w-4 h-4 text-[#DC1726]" />
                     <span className="font-mono-num">{viewFeedPost.likes_count || 0}</span> Likes
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setViewFeedPost(null)}
-                    className="px-4 py-1.5 rounded-lg bg-[#171717] text-white text-xs font-semibold hover:bg-neutral-800"
-                  >
-                    {lang === 'ur' ? 'بند کریں' : 'Close'}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={downloadingKey === `modal-feed-${viewFeedPost.id}`}
+                      onClick={() =>
+                        handleDownloadFeed(viewFeedPost, imgs, safeIdx, `modal-feed-${viewFeedPost.id}`)
+                      }
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#10B981] text-white text-xs font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-60"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>
+                        {downloadingKey === `modal-feed-${viewFeedPost.id}`
+                          ? 'Preparing Feed...'
+                          : 'Download Feed'}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewFeedPost(null)}
+                      className="px-4 py-1.5 rounded-lg bg-[#171717] text-white text-xs font-semibold hover:bg-neutral-800"
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
