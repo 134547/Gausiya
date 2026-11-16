@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
-  Globe,
   KeyRound,
   Lock,
   Mail,
@@ -20,7 +19,6 @@ import { CaptchaChallengeData, SecurityCaptchaBox } from './SecurityCaptchaBox.t
 
 interface LoginPageProps {
   lang: Language;
-  onToggleLang: () => void;
   onSuccess: (user: User) => void;
   onBackHome?: () => void;
   initialMode?: 'login' | 'forgot' | 'reset' | 'register';
@@ -29,7 +27,6 @@ interface LoginPageProps {
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   lang,
-  onToggleLang,
   onSuccess,
   onBackHome,
   initialMode = 'login',
@@ -333,17 +330,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-medium text-[#171717] hover:bg-neutral-50 whitespace-nowrap"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              <span>{lang === 'en' ? 'Home' : 'ہوم پیج'}</span>
+              <span>Home</span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={onToggleLang}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-medium text-[#171717] hover:bg-neutral-50 whitespace-nowrap"
-          >
-            <Globe className="w-3.5 h-3.5 text-[#DC1726]" />
-            <span>{lang === 'en' ? 'اردو' : 'English'}</span>
-          </button>
         </div>
       </div>
 
@@ -811,6 +800,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         {/* Contact Us Help Bar */}
         <div className="mt-6 pt-4 border-t border-neutral-100 text-center space-y-2">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-[#737373]">Contact Us / Help</div>
+          <div className="text-xs font-medium text-[#171717]">
+            Founder: <span className="font-semibold">Dilshad Ansari</span>{' '}
+            <span className="text-[#737373]">(S/o MD Ayub Ansari)</span>
+          </div>
           <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
             <a
               href="https://wa.me/917209629509"
@@ -820,6 +813,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             >
               <MessageCircle className="w-3.5 h-3.5" />
               <span className="font-mono-num">WhatsApp: 7209629509</span>
+            </a>
+            <a
+              href="tel:+916202736648"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-50 text-[#0EA5E9] font-semibold hover:bg-sky-100 transition-colors"
+            >
+              <span className="font-mono-num">Call: 6202736648</span>
             </a>
             <a
               href="mailto:dil.dil.a.1345@gmail.com"
@@ -833,7 +832,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       </div>
 
       <div className="text-center text-xs text-[#737373]">
-        Madrasa Ghausia Razvia · Islamnagar, Ramgarh, Palamu, Jharkhand, 822110 · WhatsApp: 7209629509
+        Madrasa Ghausia Razvia · Founder: Dilshad Ansari S/o MD Ayub Ansari · Islamnagar, Ramgarh, Palamu, Jharkhand, 822110 · Contact: 7209629509 / 6202736648
       </div>
     </div>
   );

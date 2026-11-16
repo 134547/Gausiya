@@ -864,7 +864,7 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
       </main>
 
       <footer className="border-t border-neutral-200 bg-white px-4 py-4 text-center text-xs text-[#737373] no-print">
-        <span>Need help? Contact Us: </span>
+        <span>Need help? Contact Us (Founder: Dilshad Ansari S/o MD Ayub Ansari): </span>
         <a
           href="https://wa.me/917209629509"
           target="_blank"
@@ -872,6 +872,10 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
           className="font-semibold text-[#10B981] hover:underline font-mono-num"
         >
           WhatsApp 7209629509
+        </a>
+        <span> · </span>
+        <a href="tel:+916202736648" className="font-semibold text-[#0EA5E9] hover:underline font-mono-num">
+          Call 6202736648
         </a>
         <span> · </span>
         <a href="mailto:dil.dil.a.1345@gmail.com" className="font-semibold text-[#DC1726] hover:underline">

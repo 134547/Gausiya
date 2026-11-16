@@ -7,7 +7,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
-  Globe,
   GraduationCap,
   Heart,
   LogIn,
@@ -43,7 +42,6 @@ export interface PublicHomeData {
 interface HomePageProps {
   data: PublicHomeData | null;
   lang: Language;
-  onToggleLang: () => void;
   onOpenLogin: () => void;
   onOpenAdmission: () => void;
   onOpenAdmissionStatus?: () => void;
@@ -131,7 +129,6 @@ const FEATURES = [
 export const HomePage: React.FC<HomePageProps> = ({
   data,
   lang,
-  onToggleLang,
   onOpenLogin,
   onOpenAdmission,
   onOpenAdmissionStatus,
@@ -203,14 +200,6 @@ export const HomePage: React.FC<HomePageProps> = ({
           </nav>
 
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={onToggleLang}
-              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-medium text-[#171717] hover:bg-neutral-50 whitespace-nowrap"
-            >
-              <Globe className="w-3.5 h-3.5 text-[#DC1726]" />
-              <span>{lang === 'en' ? 'اردو' : 'English'}</span>
-            </button>
             {resultsOpen && (
               <button
                 type="button"
@@ -289,13 +278,6 @@ export const HomePage: React.FC<HomePageProps> = ({
                   Check Result
                 </button>
               )}
-              <button
-                type="button"
-                onClick={onToggleLang}
-                className="px-3 py-2 rounded-lg border border-neutral-200 font-medium"
-              >
-                {lang === 'en' ? 'اردو' : 'English'}
-              </button>
             </div>
           </div>
         )}
@@ -415,10 +397,15 @@ export const HomePage: React.FC<HomePageProps> = ({
               {lang === 'ur' ? 'علم اور ایمان کی آبیاری' : 'Nurturing Knowledge & Faith'}
             </h2>
             <p className="mt-5 text-[#737373] leading-relaxed text-base sm:text-lg">
-              {lang === 'ur'
-                ? 'مدرسہ غوثیہ رضویہ، اسلام نگر، رام گڑھ، پلاموں، جھارکھنڈ معیاری دینی و عصری تعلیم کا ایک مثالی ادارہ ہے جو درجہ اول تا پنجم طلباء کی دینی، اخلاقی اور تعلیمی تربیت کے لیے کوشاں ہے۔'
-                : 'Madrasa Ghausia Razvia, located in Islamnagar, Ramgarh, Palamu, Jharkhand, is dedicated to providing quality Islamic and modern education. We nurture students from Class 1 to 5 with a balanced curriculum that builds both Deeni knowledge and worldly understanding, shaping young minds for a bright future.'}
+              Madrasa Ghausia Razvia, located in Islamnagar, Ramgarh, Palamu, Jharkhand, is dedicated to providing quality Islamic and modern education. Founded by{' '}
+              <span className="font-semibold text-[#171717]">Dilshad Ansari S/o MD Ayub Ansari</span>, we nurture students from Class 1 to 5 with a balanced curriculum that builds both Deeni knowledge and worldly understanding, shaping young minds for a bright future.
             </p>
+            <div className="mt-5 inline-flex flex-col sm:flex-row items-center gap-1.5 sm:gap-3 px-5 py-3 rounded-xl bg-white border border-neutral-200 shadow-xs text-sm">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[#DC1726]">Founder</span>
+              <span className="hidden sm:inline text-neutral-300">·</span>
+              <span className="font-bold text-[#171717]">Dilshad Ansari</span>
+              <span className="text-xs text-[#737373]">S/o MD Ayub Ansari</span>
+            </div>
           </div>
 
           <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6 max-w-3xl mx-auto">
@@ -724,18 +711,23 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       {/* Contact Us */}
       <section id="contact" className="py-16 md:py-24">
-        <div className="max-w-3xl mx-auto px-4 text-center">
+        <div className="max-w-4xl mx-auto px-4 text-center">
           <div className="text-xs font-semibold tracking-widest text-[#DC1726] uppercase mb-2">Get In Touch</div>
           <h2 className="text-3xl md:text-4xl font-bold text-[#171717]">
-            {lang === 'ur' ? 'ہم سے رابطہ کریں' : 'Contact Us'}
+            Contact Us
           </h2>
           <p className="mt-2 text-xs text-[#737373]">
-            {lang === 'ur'
-              ? 'داخلہ، نتائج یا پورٹل اکاؤنٹ کے لیے واٹس ایپ یا جی میل پر رابطہ کریں۔'
-              : 'Reach Madrasa Ghausia Razvia directly on WhatsApp or Gmail.'}
+            Reach Madrasa Ghausia Razvia directly via phone, WhatsApp, or Gmail.
           </p>
 
-          <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4 text-start">
+          <div className="mt-5 inline-flex flex-col sm:flex-row items-center gap-1.5 sm:gap-3 px-5 py-3 rounded-xl bg-white border border-neutral-200 shadow-xs text-sm">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[#DC1726]">Founder</span>
+            <span className="hidden sm:inline text-neutral-300">·</span>
+            <span className="font-bold text-[#171717]">Dilshad Ansari</span>
+            <span className="text-xs text-[#737373]">S/o MD Ayub Ansari</span>
+          </div>
+
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4 text-start">
             <a
               href="https://wa.me/917209629509"
               target="_blank"
@@ -746,9 +738,23 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <MessageCircle className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#10B981]">WhatsApp</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#10B981]">WhatsApp / Call</div>
                 <div className="text-sm font-bold text-[#171717] font-mono-num">7209629509</div>
                 <div className="text-xs text-[#737373]">Tap to chat on WhatsApp</div>
+              </div>
+            </a>
+
+            <a
+              href="tel:+916202736648"
+              className="flex items-center gap-3.5 p-4 rounded-xl bg-white border border-neutral-200 shadow-xs hover:border-[#0EA5E9] transition-colors"
+            >
+              <div className="w-11 h-11 rounded-xl bg-sky-50 text-[#0EA5E9] flex items-center justify-center shrink-0">
+                <Phone className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#0EA5E9]">Contact Number</div>
+                <div className="text-sm font-bold text-[#171717] font-mono-num">6202736648</div>
+                <div className="text-xs text-[#737373]">Tap to call directly</div>
               </div>
             </a>
 
@@ -772,12 +778,16 @@ export const HomePage: React.FC<HomePageProps> = ({
               <MapPin className="w-4 h-4 text-[#DC1726] shrink-0" />
               <span>{addressText}</span>
             </div>
-            <div className="flex items-center justify-center gap-2.5 font-mono-num">
+            <div className="flex flex-wrap items-center justify-center gap-2.5 font-mono-num">
               <Phone className="w-4 h-4 text-[#DC1726] shrink-0" />
               <a href="tel:+917209629509" className="hover:text-[#DC1726]">
                 +91 72096 29509
               </a>
-              {settings?.phone && settings.phone !== '+91 72096 29509' && (
+              <span>·</span>
+              <a href="tel:+916202736648" className="hover:text-[#DC1726]">
+                +91 62027 36648
+              </a>
+              {settings?.phone && settings.phone !== '+91 72096 29509' && settings.phone !== '+91 62027 36648' && (
                 <>
                   <span>·</span>
                   <a href={`tel:${settings.phone}`} className="hover:text-[#DC1726]">
@@ -797,9 +807,10 @@ export const HomePage: React.FC<HomePageProps> = ({
             <MadrasaLogo logoUrl={settings?.logo_url} size={32} surface="dark" />
             <span className="font-bold text-white text-base">{institutionName}</span>
           </div>
+          <p className="text-xs text-white/90 font-medium">Founder: Dilshad Ansari S/o MD Ayub Ansari</p>
           <p className="text-xs text-white/80">{addressText}</p>
           <p className="text-xs font-mono-num text-white/75">
-            WhatsApp: 7209629509 · Gmail: dil.dil.a.1345@gmail.com
+            Contact: 7209629509 · 6202736648 · Gmail: dil.dil.a.1345@gmail.com
           </p>
           <div className="pt-3 flex flex-wrap items-center justify-center gap-4 text-xs">
             <button type="button" onClick={onOpenLogin} className="hover:text-white underline">

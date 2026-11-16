@@ -50,19 +50,16 @@ export default function App() {
   const [supabaseReady, setSupabaseReady] = useState(isSupabaseClientConfigured);
   const currentUserIdRef = useRef<string | null>(null);
 
-  const [lang, setLang] = useState<Language>(() => {
-    const saved = localStorage.getItem('madrasa_lang');
-    return saved === 'ur' ? 'ur' : 'en';
-  });
+  const lang: Language = 'en';
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
-    document.documentElement.dir = lang === 'ur' ? 'rtl' : 'ltr';
-    document.documentElement.lang = lang;
-    localStorage.setItem('madrasa_lang', lang);
-  }, [lang]);
+    document.documentElement.dir = 'ltr';
+    document.documentElement.lang = 'en';
+    localStorage.removeItem('madrasa_lang');
+  }, []);
 
   const loadPublicHome = useCallback(async () => {
     try {
@@ -287,7 +284,6 @@ export default function App() {
       return (
         <LoginPage
           lang={lang}
-          onToggleLang={() => setLang((prev) => (prev === 'en' ? 'ur' : 'en'))}
           onSuccess={handleLoginSuccess}
           initialMode={loginMode}
           onBackHome={() => {
@@ -343,7 +339,6 @@ export default function App() {
       <HomePage
         data={publicData}
         lang={lang}
-        onToggleLang={() => setLang((prev) => (prev === 'en' ? 'ur' : 'en'))}
         onOpenLogin={() => {
           setLoginMode('login');
           setPublicView('login');
@@ -478,7 +473,6 @@ export default function App() {
           lang={lang}
           notifications={notifications}
           unreadCount={unreadCount}
-          onToggleLang={() => setLang((prev) => (prev === 'en' ? 'ur' : 'en'))}
           onOpenMobileMenu={() => setMobileOpen(true)}
           onSelectModule={handleSelectModule}
           onMarkNotificationRead={handleMarkNotificationRead}

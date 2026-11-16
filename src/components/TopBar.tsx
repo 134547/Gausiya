@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, CheckCheck, Globe, LogOut, Menu } from 'lucide-react';
+import { Bell, CheckCheck, LogOut, Menu } from 'lucide-react';
 import { NavModuleId, NotificationItem, User } from '../types.ts';
 import { Language, translations } from '../i18n/translations.ts';
 
@@ -9,7 +9,6 @@ interface TopBarProps {
   lang: Language;
   notifications: NotificationItem[];
   unreadCount: number;
-  onToggleLang: () => void;
   onOpenMobileMenu: () => void;
   onSelectModule: (id: NavModuleId) => void;
   onMarkNotificationRead: (id: string) => void;
@@ -23,7 +22,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   lang,
   notifications,
   unreadCount,
-  onToggleLang,
   onOpenMobileMenu,
   onSelectModule,
   onMarkNotificationRead,
@@ -69,16 +67,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         </div>
 
-        {/* Right: Language Switcher, Notifications, Profile, Logout */}
+        {/* Right: Notifications, Profile, Logout */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={onToggleLang}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-medium text-[#171717] hover:bg-neutral-50 transition-colors whitespace-nowrap"
-          >
-            <Globe className="w-3.5 h-3.5 text-[#DC1726]" />
-            <span>{t.common.language}</span>
-          </button>
 
           {/* Notification Bell */}
           <div className="relative" ref={dropRef}>
