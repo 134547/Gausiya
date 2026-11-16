@@ -23,7 +23,7 @@ $$;
 CREATE TABLE IF NOT EXISTS public.roles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL UNIQUE,
-  slug TEXT NOT NULL UNIQUE CHECK (slug IN ('super_admin', 'teacher', 'parent', 'student', 'committee_member')),
+  slug TEXT NOT NULL UNIQUE CHECK (slug IN ('super_admin', 'teacher', 'parent', 'student', 'committee_member', 'public')),
   description TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   full_name TEXT NOT NULL,
   role_id UUID REFERENCES public.roles(id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('active', 'disabled', 'pending')),
-  linked_type TEXT CHECK (linked_type IN ('student', 'teacher', 'parent', 'committee', 'admin')),
+  linked_type TEXT CHECK (linked_type IN ('student', 'teacher', 'parent', 'committee', 'admin', 'public')),
   linked_id UUID,
   father_name TEXT NOT NULL DEFAULT '',
   dob TEXT NOT NULL DEFAULT '',

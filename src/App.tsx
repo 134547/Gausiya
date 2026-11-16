@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, apiRequest, setStoredToken } from './lib/api.ts';
-import { supabase } from './lib/supabase.ts';
+import { initSupabaseClient, isSupabaseClientConfigured, supabase } from './lib/supabase.ts';
 import { Language } from './i18n/translations.ts';
 import { MadrasaSettings, NavModuleId, NotificationItem, User } from './types.ts';
 import { LoginPage } from './components/LoginPage.tsx';
@@ -46,6 +46,7 @@ export default function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [activeModule, setActiveModule] = useState<NavModuleId>('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [supabaseReady, setSupabaseReady] = useState(isSupabaseClientConfigured);
   const currentUserIdRef = useRef<string | null>(null);
 
   const [lang, setLang] = useState<Language>(() => {
@@ -114,11 +115,14 @@ export default function App() {
   }, [loadNotifications, loadPublicHome]);
 
   useEffect(() => {
+    initSupabaseClient().then((ready) => {
+      if (ready) setSupabaseReady(true);
+    });
     fetchMe({ silent: false, resetModule: true });
   }, [fetchMe]);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabaseReady || !supabase) return;
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
@@ -158,7 +162,7 @@ export default function App() {
     return () => {
       listener.subscription.unsubscribe();
     };
-  }, [fetchMe]);
+  }, [fetchMe, supabaseReady]);
 
   useEffect(() => {
     if (!user) return;

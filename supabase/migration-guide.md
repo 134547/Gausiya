@@ -13,9 +13,10 @@ VITE_SUPABASE_URL="https://YOUR_PROJECT_REF.supabase.co"
 VITE_SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY"
 SUPABASE_URL="https://YOUR_PROJECT_REF.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY="YOUR_SUPABASE_SERVICE_ROLE_KEY"
+IMGBB_API_KEY="YOUR_IMGBB_API_KEY"
 ```
 
-> **Security Rule**: `SUPABASE_SERVICE_ROLE_KEY` must ONLY be configured on the server (`SUPABASE_SERVICE_ROLE_KEY`) and **never** prefixed with `VITE_` or exposed in browser bundles.
+> **Security Rule**: `SUPABASE_SERVICE_ROLE_KEY` and `IMGBB_API_KEY` must ONLY be configured on the server and **never** prefixed with `VITE_` or exposed in browser bundles.
 
 ---
 

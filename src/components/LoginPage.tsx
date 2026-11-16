@@ -12,7 +12,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { apiRequest, setStoredToken } from '../lib/api.ts';
-import { isSupabaseClientConfigured, missingSupabaseClientEnv, supabase } from '../lib/supabase.ts';
+import { initSupabaseClient, isSupabaseClientConfigured, missingSupabaseClientEnv, supabase } from '../lib/supabase.ts';
 import { User } from '../types.ts';
 import { Language } from '../i18n/translations.ts';
 import { MadrasaLogo } from './MadrasaLogo.tsx';
@@ -55,6 +55,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(initialError);
   const [infoMsg, setInfoMsg] = useState('');
+  const [supabaseReady, setSupabaseReady] = useState(isSupabaseClientConfigured);
+  const [apiReachable, setApiReachable] = useState<boolean | null>(null);
 
   useEffect(() => {
     setMode(initialMode);
@@ -65,14 +67,26 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   }, [initialError]);
 
   useEffect(() => {
+    initSupabaseClient().then((ready) => {
+      if (ready) setSupabaseReady(true);
+    });
     fetch('/api/auth/setup-status')
-      .then((r) => (r.ok ? r.json() : null))
+      .then(async (r) => {
+        if (!r.ok) {
+          setApiReachable(false);
+          return null;
+        }
+        setApiReachable(true);
+        return r.json().catch(() => null);
+      })
       .then((data) => {
         if (data?.needsSetup) {
           setNeedsSetup(true);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setApiReachable(false);
+      });
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -300,14 +314,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           </div>
         )}
 
-        {!isSupabaseClientConfigured && (
+        {!supabaseReady && (
           <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
             <div>
               <div className="font-semibold">Supabase Configuration Required</div>
               <p className="mt-0.5">
-                Configure <span className="font-mono-num">{missingSupabaseClientEnv.join(', ')}</span> in your environment variables to enable authentication.
+                Configure{' '}
+                <span className="font-mono-num">
+                  {(missingSupabaseClientEnv.length ? missingSupabaseClientEnv : ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY']).join(', ')}
+                </span>{' '}
+                (along with <span className="font-mono-num">SUPABASE_URL</span>,{' '}
+                <span className="font-mono-num">SUPABASE_SERVICE_ROLE_KEY</span>, and{' '}
+                <span className="font-mono-num">IMGBB_API_KEY</span>) in your hosting Environment Variables and redeploy.
               </p>
+              {apiReachable === false && (
+                <p className="mt-1 text-[11px] text-amber-700">
+                  Backend API route (<span className="font-mono-num">/api</span>) is also unavailable on this deployment yet.
+                </p>
+              )}
             </div>
           </div>
         )}

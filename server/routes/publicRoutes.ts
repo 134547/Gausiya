@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import multer from 'multer';
 import {
+  SUPABASE_ANON_KEY,
+  SUPABASE_URL,
   createSupabaseAuthClient,
   isSupabaseServerConfigured,
   requireSupabaseAdmin,
@@ -13,11 +15,21 @@ import { logActivity, notifyRoles } from '../auth.ts';
 
 const router = Router();
 
+router.get('/config', (_req, res) => {
+  res.json({
+    supabaseUrl: SUPABASE_URL,
+    supabaseAnonKey: SUPABASE_ANON_KEY,
+    supabaseClientConfigured: Boolean(SUPABASE_URL && SUPABASE_ANON_KEY),
+    supabaseServerConfigured: isSupabaseServerConfigured,
+  });
+});
+
 const publicUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) cb(null, true);
+    const isImageExt = /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.originalname || '');
+    if (file.mimetype.startsWith('image/') || isImageExt) cb(null, true);
     else cb(new Error('Only image files are allowed.'));
   },
 });

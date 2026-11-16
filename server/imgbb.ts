@@ -15,6 +15,14 @@ export interface UploadedAssetResult {
   provider: 'imgbb' | 'supabase';
 }
 
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
+
+function isImageAsset(mimetype: string, originalName: string): boolean {
+  if (mimetype.startsWith('image/')) return true;
+  const ext = path.extname(originalName || '').toLowerCase();
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
 export async function uploadImageToImgbb(
   buffer: Buffer,
   originalName: string,
@@ -27,7 +35,7 @@ export async function uploadImageToImgbb(
     throw err;
   }
 
-  if (!mimetype.startsWith('image/')) {
+  if (!isImageAsset(mimetype, originalName)) {
     const err: any = new Error('ImgBB only supports image files.');
     err.status = 400;
     throw err;
@@ -82,7 +90,7 @@ export async function saveUploadedAsset(options: {
 }): Promise<UploadedAssetResult> {
   const { buffer, originalName, mimetype, bucket = 'madrasa-assets', folder = 'general' } = options;
 
-  if (mimetype.startsWith('image/')) {
+  if (isImageAsset(mimetype, originalName)) {
     if (isImgbbConfigured()) {
       const imgbb = await uploadImageToImgbb(buffer, originalName, mimetype);
       return {
