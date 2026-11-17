@@ -12,6 +12,7 @@ export type NavModuleId =
   | 'parents'
   | 'classes'
   | 'subjects'
+  | 'syllabus'
   | 'attendance'
   | 'examinations'
   | 'results'

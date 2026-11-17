@@ -1423,4 +1423,252 @@ router.delete('/online-classes/:id', requireAuth, requireRole('super_admin', 'te
   return res.json({ success: true });
 });
 
+// ==================== SYLLABUS & BOOKS ====================
+const SYLLABUS_GLOBAL_ENTITY_ID = '00000000-0000-0000-0000-000000000001';
+
+router.get('/syllabus', requireAuth, async (req, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+
+  const { classId, subject, search } = req.query as Record<string, string>;
+
+  const [{ data: docs, error }, { data: classesRaw }, { data: taRaw }] = await Promise.all([
+    admin
+      .from('documents')
+      .select('id, entity_id, file_url, uploaded_by, created_at')
+      .eq('entity_type', 'general')
+      .eq('title', 'SYLLABUS_ITEM')
+      .order('created_at', { ascending: false }),
+    admin.from('classes').select('id, name, code, teachers(full_name)').is('deleted_at', null),
+    admin.from('teacher_assignments').select('class_id, is_class_teacher, teachers(full_name, deleted_at)'),
+  ]);
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  const assignedTeacherByClass = new Map<string, string>();
+  for (const ta of taRaw || []) {
+    const tName = (ta as any).teachers?.full_name;
+    const tDeleted = (ta as any).teachers?.deleted_at;
+    if (!ta.class_id || !tName || tDeleted) continue;
+    if (ta.is_class_teacher || !assignedTeacherByClass.has(ta.class_id)) {
+      assignedTeacherByClass.set(ta.class_id, tName);
+    }
+  }
+
+  const classMap = new Map<string, { name: string; code: string; class_teacher_name: string }>();
+  for (const c of classesRaw || []) {
+    classMap.set(c.id, {
+      name: c.name,
+      code: c.code,
+      class_teacher_name: (c as any).teachers?.full_name || assignedTeacherByClass.get(c.id) || 'Unassigned',
+    });
+  }
+
+  const parsedItems = await Promise.all(
+    (docs || []).map(async (doc: any) => {
+      let data: Record<string, any> = {};
+      try {
+        data = JSON.parse(doc.file_url || '{}');
+      } catch {
+        data = {};
+      }
+      const clsId = String(data.class_id || (doc.entity_id !== SYLLABUS_GLOBAL_ENTITY_ID ? doc.entity_id : '') || '');
+      const clsInfo = clsId ? classMap.get(clsId) : null;
+
+      const [coverPageUrl, bookPdfUrl, syllabusPdfUrl] = await Promise.all([
+        resolveStorageUrl(data.cover_page_url),
+        resolveStorageUrl(data.book_pdf_url),
+        resolveStorageUrl(data.syllabus_pdf_url),
+      ]);
+
+      return {
+        id: doc.id,
+        class_id: clsId,
+        class_name: clsInfo?.name || data.class_name || 'All Classes',
+        class_code: clsInfo?.code || '',
+        class_teacher_name: clsInfo?.class_teacher_name || '',
+        subject_id: String(data.subject_id || ''),
+        subject_name: String(data.subject_name || ''),
+        book_name: String(data.book_name || ''),
+        author_name: String(data.author_name || ''),
+        academic_year: String(data.academic_year || ''),
+        cover_page_url: coverPageUrl,
+        book_pdf_url: bookPdfUrl,
+        book_pdf_name: String(data.book_pdf_name || ''),
+        syllabus_pdf_url: syllabusPdfUrl,
+        syllabus_pdf_name: String(data.syllabus_pdf_name || ''),
+        weekly_plan: String(data.weekly_plan || ''),
+        created_at: doc.created_at,
+      };
+    })
+  );
+
+  const q = (search || '').trim().toLowerCase();
+  const subFilter = (subject || '').trim().toLowerCase();
+  const items = parsedItems.filter((item) => {
+    if (classId && item.class_id !== classId) return false;
+    if (subFilter && subFilter !== 'all' && item.subject_name.toLowerCase() !== subFilter) return false;
+    if (!q) return true;
+    return (
+      item.book_name.toLowerCase().includes(q) ||
+      item.subject_name.toLowerCase().includes(q) ||
+      item.class_name.toLowerCase().includes(q) ||
+      item.author_name.toLowerCase().includes(q) ||
+      item.weekly_plan.toLowerCase().includes(q)
+    );
+  });
+
+  return res.json({ items });
+});
+
+router.post('/syllabus', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const b = req.body as Record<string, any>;
+    const subjectName = String(b.subject_name || '').trim();
+    const bookName = String(b.book_name || '').trim();
+    if (!subjectName || !bookName) {
+      return res.status(400).json({ error: 'Subject / Language (e.g. English, Urdu) and Book Name are required.' });
+    }
+
+    const classId = String(b.class_id || '').trim();
+    const payload = {
+      class_id: classId,
+      class_name: String(b.class_name || '').trim(),
+      subject_id: String(b.subject_id || '').trim(),
+      subject_name: subjectName,
+      book_name: bookName,
+      author_name: String(b.author_name || '').trim(),
+      academic_year: String(b.academic_year || '').trim(),
+      cover_page_url: normalizeStorageRef(String(b.cover_page_url || '')),
+      book_pdf_url: normalizeStorageRef(String(b.book_pdf_url || '')),
+      book_pdf_name: String(b.book_pdf_name || '').trim(),
+      syllabus_pdf_url: normalizeStorageRef(String(b.syllabus_pdf_url || '')),
+      syllabus_pdf_name: String(b.syllabus_pdf_name || '').trim(),
+      weekly_plan: String(b.weekly_plan || '').trim(),
+    };
+
+    const { data: created, error } = await admin
+      .from('documents')
+      .insert({
+        entity_type: 'general',
+        entity_id: classId || SYLLABUS_GLOBAL_ENTITY_ID,
+        title: 'SYLLABUS_ITEM',
+        file_url: JSON.stringify(payload),
+        file_type: 'syllabus_item',
+        uploaded_by: req.user!.id,
+      })
+      .select('id')
+      .single();
+
+    if (error || !created) {
+      return res.status(400).json({ error: error?.message || 'Failed to add syllabus item' });
+    }
+
+    await notifyRoles(
+      ['teacher', 'student', 'parent'],
+      'notice',
+      'Syllabus & Book Updated',
+      `New syllabus added for ${subjectName}: ${bookName}.`,
+      'syllabus',
+      created.id
+    );
+    await logActivity(
+      req.user!,
+      'SYLLABUS_ADDED',
+      'syllabus',
+      created.id,
+      `Added syllabus & book "${bookName}" (${subjectName})`,
+      req.ip
+    );
+
+    return res.status(201).json({ id: created.id });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to add syllabus item' });
+  }
+});
+
+router.put('/syllabus/:id', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const id = req.params.id;
+    const { data: existing, error: findErr } = await admin
+      .from('documents')
+      .select('id, file_url')
+      .eq('id', id)
+      .eq('title', 'SYLLABUS_ITEM')
+      .maybeSingle();
+
+    if (findErr || !existing) {
+      return res.status(404).json({ error: 'Syllabus item not found' });
+    }
+
+    let prevData: Record<string, any> = {};
+    try {
+      prevData = JSON.parse(existing.file_url || '{}');
+    } catch {
+      prevData = {};
+    }
+
+    const b = req.body as Record<string, any>;
+    const subjectName = String(b.subject_name ?? prevData.subject_name ?? '').trim();
+    const bookName = String(b.book_name ?? prevData.book_name ?? '').trim();
+    if (!subjectName || !bookName) {
+      return res.status(400).json({ error: 'Subject / Language and Book Name are required.' });
+    }
+
+    const classId = String(b.class_id ?? prevData.class_id ?? '').trim();
+    const updatedPayload = {
+      class_id: classId,
+      class_name: String(b.class_name ?? prevData.class_name ?? '').trim(),
+      subject_id: String(b.subject_id ?? prevData.subject_id ?? '').trim(),
+      subject_name: subjectName,
+      book_name: bookName,
+      author_name: String(b.author_name ?? prevData.author_name ?? '').trim(),
+      academic_year: String(b.academic_year ?? prevData.academic_year ?? '').trim(),
+      cover_page_url: normalizeStorageRef(String(b.cover_page_url ?? prevData.cover_page_url ?? '')),
+      book_pdf_url: normalizeStorageRef(String(b.book_pdf_url ?? prevData.book_pdf_url ?? '')),
+      book_pdf_name: String(b.book_pdf_name ?? prevData.book_pdf_name ?? '').trim(),
+      syllabus_pdf_url: normalizeStorageRef(String(b.syllabus_pdf_url ?? prevData.syllabus_pdf_url ?? '')),
+      syllabus_pdf_name: String(b.syllabus_pdf_name ?? prevData.syllabus_pdf_name ?? '').trim(),
+      weekly_plan: String(b.weekly_plan ?? prevData.weekly_plan ?? '').trim(),
+    };
+
+    const { error } = await admin
+      .from('documents')
+      .update({
+        entity_id: classId || SYLLABUS_GLOBAL_ENTITY_ID,
+        file_url: JSON.stringify(updatedPayload),
+      })
+      .eq('id', id)
+      .eq('title', 'SYLLABUS_ITEM');
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    await logActivity(
+      req.user!,
+      'SYLLABUS_UPDATED',
+      'syllabus',
+      id,
+      `Updated syllabus & book "${bookName}" (${subjectName})`,
+      req.ip
+    );
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to update syllabus item' });
+  }
+});
+
+router.delete('/syllabus/:id', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  const id = req.params.id;
+  const { error } = await admin.from('documents').delete().eq('id', id).eq('title', 'SYLLABUS_ITEM');
+  if (error) return res.status(400).json({ error: error.message });
+  await logActivity(req.user!, 'SYLLABUS_DELETED', 'syllabus', id, `Deleted syllabus item ${id}`, req.ip);
+  return res.json({ success: true });
+});
+
 export default router;

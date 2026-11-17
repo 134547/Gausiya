@@ -22,6 +22,7 @@ export const ClassesPage: React.FC<ClassesPageProps> = ({ user }) => {
   const [transferSource, setTransferSource] = useState<any>(null);
   const [transferTargetId, setTransferTargetId] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [savingTeacherClassId, setSavingTeacherClassId] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
@@ -89,6 +90,29 @@ export const ClassesPage: React.FC<ClassesPageProps> = ({ user }) => {
     }
   };
 
+  const handleQuickClassTeacher = async (cls: any, teacherId: string) => {
+    setSavingTeacherClassId(cls.id);
+    setErr('');
+    setMsg('');
+    try {
+      await apiRequest(`/api/classes/${cls.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ class_teacher_id: teacherId || null }),
+      });
+      const tObj = teachers.find((t) => String(t.id) === String(teacherId));
+      setMsg(
+        teacherId
+          ? `Class Teacher for ${cls.name} set to ${tObj?.full_name || 'selected teacher'}.`
+          : `Class Teacher unassigned from ${cls.name}.`
+      );
+      await load();
+    } catch (e: any) {
+      setErr(e.message || 'Failed to assign Class Teacher');
+    } finally {
+      setSavingTeacherClassId(null);
+    }
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setErr('');
@@ -142,6 +166,33 @@ export const ClassesPage: React.FC<ClassesPageProps> = ({ user }) => {
             <div className="text-xs text-[#737373]">
               Subjects ({(c.subjects || []).length}): {(c.subjects || []).map((s: any) => s.subject_name).join(', ') || 'None assigned'}
             </div>
+
+            {isAdmin && (
+              <div className="pt-1">
+                <label className="block text-[11px] font-medium text-[#737373] mb-1">
+                  Assign / Change Class Teacher
+                </label>
+                <div className="flex items-center gap-2">
+                  <select
+                    aria-label={`Class Teacher for ${c.name}`}
+                    disabled={savingTeacherClassId === c.id}
+                    value={c.class_teacher_id || ''}
+                    onChange={(e) => handleQuickClassTeacher(c, e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-neutral-200 bg-neutral-50 text-[#171717] focus:outline-none focus:border-[#DC1726] disabled:opacity-60"
+                  >
+                    <option value="">-- Unassigned --</option>
+                    {teachers.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.full_name} {t.designation ? `(${t.designation})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {savingTeacherClassId === c.id && (
+                    <span className="text-[11px] text-[#737373] shrink-0">Saving...</span>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="pt-3 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-2">
               <button

@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  BookOpen,
   Calendar,
   Check,
   Eye,
+  GraduationCap,
   KeyRound,
   Pencil,
   Plus,
@@ -17,17 +19,19 @@ import {
   X,
 } from 'lucide-react';
 import { apiRequest, uploadFile } from '../lib/api.ts';
-import { AcademicSession, GradingRule, MadrasaSettings } from '../types.ts';
+import { AcademicSession, GradingRule, MadrasaSettings, User } from '../types.ts';
 import { MadrasaLogo } from '../components/MadrasaLogo.tsx';
+import { SyllabusPage } from './SyllabusPage.tsx';
 
 interface SuperAdminPageProps {
+  user: User;
   onSettingsUpdated: (s: MadrasaSettings) => void;
 }
 
 const ROLE_ORDER = ['super_admin', 'teacher', 'student', 'parent', 'public', 'committee_member'];
 
-export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSettingsUpdated }) => {
-  const [activeTab, setActiveTab] = useState<'settings' | 'users'>('settings');
+export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ user, onSettingsUpdated }) => {
+  const [activeTab, setActiveTab] = useState<'settings' | 'users' | 'syllabus' | 'class_teachers'>('settings');
 
   // Settings & Sessions state
   const [settings, setSettings] = useState<MadrasaSettings | null>(null);
@@ -65,6 +69,19 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSettingsUpdate
   });
   const [resetTarget, setResetTarget] = useState<any>(null);
   const [newPassword, setNewPassword] = useState('');
+
+  // Class Teachers state
+  const [classesList, setClassesList] = useState<any[]>([]);
+  const [teachersList, setTeachersList] = useState<any[]>([]);
+  const [classesLoading, setClassesLoading] = useState(false);
+  const [savingClassTeacherId, setSavingClassTeacherId] = useState<string | null>(null);
+  const [newClassForm, setNewClassForm] = useState({
+    name: '',
+    code: '',
+    class_teacher_id: '',
+    room_no: '',
+  });
+  const [creatingClass, setCreatingClass] = useState(false);
 
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
@@ -105,9 +122,26 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSettingsUpdate
     }
   };
 
+  const loadClassesAndTeachers = async () => {
+    setClassesLoading(true);
+    try {
+      const [cRes, tRes] = await Promise.all([
+        apiRequest<{ classes: any[] }>('/api/classes'),
+        apiRequest<{ teachers: any[] }>('/api/teachers'),
+      ]);
+      setClassesList(cRes.classes || []);
+      setTeachersList(tRes.teachers || []);
+    } catch (e: any) {
+      setErr(e.message || 'Failed to load classes and teachers');
+    } finally {
+      setClassesLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadSettings();
     loadUsers();
+    loadClassesAndTeachers();
   }, []);
 
   const filteredUsers = useMemo(() => {
@@ -323,6 +357,58 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSettingsUpdate
     }
   };
 
+  const handleAssignClassTeacher = async (cls: any, teacherId: string) => {
+    setSavingClassTeacherId(cls.id);
+    setErr('');
+    setMsg('');
+    try {
+      await apiRequest(`/api/classes/${cls.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ class_teacher_id: teacherId || null }),
+      });
+      const tObj = teachersList.find((t) => String(t.id) === String(teacherId));
+      setMsg(
+        teacherId
+          ? `Class Teacher for ${cls.name} assigned to ${tObj?.full_name || 'selected teacher'}.`
+          : `Class Teacher removed from ${cls.name}.`
+      );
+      await loadClassesAndTeachers();
+    } catch (e: any) {
+      setErr(e.message || 'Failed to update Class Teacher');
+    } finally {
+      setSavingClassTeacherId(null);
+    }
+  };
+
+  const handleQuickCreateClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newClassForm.name.trim() || !newClassForm.code.trim()) return;
+    setCreatingClass(true);
+    setErr('');
+    setMsg('');
+    try {
+      const activeSessionId = sessions.find((s) => s.is_active)?.id || settings?.active_session_id || '';
+      await apiRequest('/api/classes', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: newClassForm.name.trim(),
+          code: newClassForm.code.trim(),
+          class_teacher_id: newClassForm.class_teacher_id || null,
+          room_no: newClassForm.room_no.trim(),
+          academic_session_id: activeSessionId || undefined,
+          status: 'active',
+        }),
+      });
+      setNewClassForm({ name: '', code: '', class_teacher_id: '', room_no: '' });
+      setMsg(`Class ${newClassForm.name.trim()} created successfully.`);
+      await loadClassesAndTeachers();
+    } catch (e: any) {
+      setErr(e.message || 'Failed to create class');
+    } finally {
+      setCreatingClass(false);
+    }
+  };
+
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!resetTarget) return;
@@ -357,7 +443,7 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSettingsUpdate
     <div className="space-y-6">
       {/* Super Admin Sub-Navigation */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex items-center gap-1 p-1 bg-neutral-200/70 rounded-xl">
+        <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-neutral-200/70 rounded-xl">
           <button
             type="button"
             onClick={() => setActiveTab('settings')}
@@ -377,6 +463,26 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSettingsUpdate
           >
             <Users className="w-3.5 h-3.5 text-[#DC1726]" />
             <span>Users &amp; Roles ({users.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('syllabus')}
+            className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
+              activeTab === 'syllabus' ? 'bg-white text-[#171717] shadow-xs' : 'text-[#737373] hover:text-[#171717]'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5 text-[#DC1726]" />
+            <span>Syllabus &amp; Books</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('class_teachers')}
+            className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
+              activeTab === 'class_teachers' ? 'bg-white text-[#171717] shadow-xs' : 'text-[#737373] hover:text-[#171717]'
+            }`}
+          >
+            <GraduationCap className="w-3.5 h-3.5 text-[#DC1726]" />
+            <span>Class Teachers ({classesList.length})</span>
           </button>
         </div>
 
@@ -410,7 +516,150 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSettingsUpdate
       {msg && <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-700 font-medium">{msg}</div>}
       {err && <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-[#DC1726] font-medium">{err}</div>}
 
-      {activeTab === 'users' ? (
+      {activeTab === 'syllabus' ? (
+        <SyllabusPage user={user} embedded />
+      ) : activeTab === 'class_teachers' ? (
+        <div className="space-y-5">
+          {/* Quick Add Class with Class Teacher */}
+          <form onSubmit={handleQuickCreateClass} className="bg-white rounded-xl border border-neutral-200 p-5 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-sm font-bold text-[#171717]">Add New Class &amp; Assign Class Teacher</h2>
+              <p className="text-xs text-[#737373]">
+                Create a new class and immediately set its Class Teacher, or assign/change the Class Teacher for every existing class below.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <input
+                type="text"
+                required
+                placeholder="Class Name (e.g. Class 6)"
+                value={newClassForm.name}
+                onChange={(e) => setNewClassForm({ ...newClassForm, name: e.target.value })}
+                className="px-3 py-2 text-xs rounded-lg border border-neutral-200"
+              />
+              <input
+                type="text"
+                required
+                placeholder="Code (e.g. CLS-06)"
+                value={newClassForm.code}
+                onChange={(e) => setNewClassForm({ ...newClassForm, code: e.target.value })}
+                className="px-3 py-2 text-xs rounded-lg border border-neutral-200 font-mono-num"
+              />
+              <select
+                value={newClassForm.class_teacher_id}
+                onChange={(e) => setNewClassForm({ ...newClassForm, class_teacher_id: e.target.value })}
+                className="px-3 py-2 text-xs rounded-lg border border-neutral-200 bg-white"
+              >
+                <option value="">Select Class Teacher (Optional)</option>
+                {teachersList.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.full_name} {t.designation ? `(${t.designation})` : ''}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                placeholder="Room No (Optional)"
+                value={newClassForm.room_no}
+                onChange={(e) => setNewClassForm({ ...newClassForm, room_no: e.target.value })}
+                className="px-3 py-2 text-xs rounded-lg border border-neutral-200"
+              />
+              <button
+                type="submit"
+                disabled={creatingClass}
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-60"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{creatingClass ? 'Creating...' : 'Add Class'}</span>
+              </button>
+            </div>
+          </form>
+
+          {/* Per-Class Teacher Assignment Table */}
+          <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
+            <div className="px-5 py-4 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold text-[#171717]">Class Teacher Assignment (All Classes)</h2>
+                <p className="text-xs text-[#737373]">
+                  Select a Class Teacher for each class — updates automatically across Syllabus, Classes, and Result Builder.
+                </p>
+              </div>
+              <span className="text-xs font-mono-num text-[#737373]">
+                {classesList.length} Classes · {teachersList.length} Teachers
+              </span>
+            </div>
+
+            {classesLoading ? (
+              <div className="p-8 text-center text-xs text-[#737373]">Loading classes and teachers...</div>
+            ) : classesList.length === 0 ? (
+              <div className="p-8 text-center text-xs text-[#737373]">No classes created yet.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
+                    <tr>
+                      <th className="px-4 py-3 text-start font-semibold">Class</th>
+                      <th className="px-4 py-3 text-start font-semibold">Code / Session</th>
+                      <th className="px-4 py-3 text-start font-semibold">Students</th>
+                      <th className="px-4 py-3 text-start font-semibold">Current Class Teacher</th>
+                      <th className="px-4 py-3 text-start font-semibold">Assign / Change Class Teacher</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {classesList.map((cls) => (
+                      <tr key={cls.id} className="hover:bg-neutral-50">
+                        <td className="px-4 py-3">
+                          <div className="font-bold text-[#171717]">{cls.name}</div>
+                          {cls.room_no && <div className="text-[11px] text-[#737373]">Room {cls.room_no}</div>}
+                        </td>
+                        <td className="px-4 py-3 font-mono-num text-[#737373]">
+                          <div>{cls.code}</div>
+                          <div className="text-[11px]">{cls.session_name || '-'}</div>
+                        </td>
+                        <td className="px-4 py-3 font-mono-num font-semibold text-[#0EA5E9]">
+                          {cls.student_count ?? 0}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-semibold ${
+                              cls.class_teacher_name && cls.class_teacher_name !== 'Unassigned'
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : 'bg-amber-50 text-amber-700'
+                            }`}
+                          >
+                            {cls.class_teacher_name || 'Unassigned'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2 max-w-xs">
+                            <select
+                              aria-label={`Class Teacher for ${cls.name}`}
+                              disabled={savingClassTeacherId === cls.id}
+                              value={cls.class_teacher_id || ''}
+                              onChange={(e) => handleAssignClassTeacher(cls, e.target.value)}
+                              className="w-full px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 bg-white text-[#171717] focus:outline-none focus:border-[#DC1726] disabled:opacity-60"
+                            >
+                              <option value="">-- Unassigned --</option>
+                              {teachersList.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.full_name} {t.designation ? `(${t.designation})` : ''}
+                                </option>
+                              ))}
+                            </select>
+                            {savingClassTeacherId === cls.id && (
+                              <span className="text-[11px] text-[#737373] shrink-0">Saving...</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : activeTab === 'users' ? (
         <div className="space-y-4">
           {/* Role Filter Pills + Search */}
           <div className="bg-white rounded-xl border border-neutral-200 p-4 shadow-xs space-y-3">
