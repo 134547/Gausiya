@@ -14,6 +14,7 @@ import {
   Power,
   Search,
   Send,
+  Smile,
   SmilePlus,
   Trash2,
   UserPlus,
@@ -24,8 +25,8 @@ import { apiRequest, uploadFile } from '../lib/api.ts';
 import { downloadImageFile, sanitizeFileName } from '../lib/download.ts';
 import { MadrasaSettings, User } from '../types.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
-
-const CHAT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+import { EmojiPickerPanel } from '../components/EmojiPickerPanel.tsx';
+import { QUICK_REACTION_EMOJIS } from '../data/chatEmojis.ts';
 
 interface ChatsPageProps {
   user: User;
@@ -91,6 +92,8 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
   const [deleteMsgTarget, setDeleteMsgTarget] = useState<any>(null);
   const [editingMsg, setEditingMsg] = useState<{ id: string; originalText: string } | null>(null);
   const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
+  const [reactionFullPickerMsgId, setReactionFullPickerMsgId] = useState<string | null>(null);
+  const [composerEmojiOpen, setComposerEmojiOpen] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<{ url: string; name: string } | null>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
@@ -119,6 +122,8 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
     activeConvIdRef.current = conv.id;
     setEditingMsg(null);
     setReactionPickerMsgId(null);
+    setReactionFullPickerMsgId(null);
+    setComposerEmojiOpen(false);
     try {
       const res = await apiRequest<{ messages: any[] }>(`/api/chats/${conv.id}/messages`);
       setMessages(res.messages || []);
@@ -404,9 +409,31 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
     }
   };
 
+  const insertEmojiToMessage = (emoji: string) => {
+    const inputEl = messageInputRef.current;
+    if (!inputEl) {
+      setText((prev) => `${prev}${emoji}`);
+      return;
+    }
+    const start = inputEl.selectionStart ?? text.length;
+    const end = inputEl.selectionEnd ?? text.length;
+    const nextValue = text.slice(0, start) + emoji + text.slice(end);
+    setText(nextValue);
+    window.setTimeout(() => {
+      inputEl.focus();
+      const nextCursor = start + emoji.length;
+      try {
+        inputEl.setSelectionRange(nextCursor, nextCursor);
+      } catch {
+        // ignore if input doesn't support selection range
+      }
+    }, 10);
+  };
+
   const handleReactMessage = async (messageId: string, emoji: string) => {
     if (!activeConv) return;
     setReactionPickerMsgId(null);
+    setReactionFullPickerMsgId(null);
     setErr('');
     try {
       const res = await apiRequest<{ reactions: any[] }>(
@@ -1153,7 +1180,11 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
 
               {/* WhatsApp Wallpaper Message Area */}
               <div
-                onClick={() => reactionPickerMsgId && setReactionPickerMsgId(null)}
+                onClick={() => {
+                  if (reactionPickerMsgId) setReactionPickerMsgId(null);
+                  if (reactionFullPickerMsgId) setReactionFullPickerMsgId(null);
+                  if (composerEmojiOpen) setComposerEmojiOpen(false);
+                }}
                 className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 bg-[#EFEAE2]"
               >
                 {messages.length === 0 ? (
@@ -1180,7 +1211,7 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                     </div>
                   </div>
                 ) : (
-                  messages.map((m) => {
+                  messages.map((m, msgIdx) => {
                     const mine = m.sender_id === user.id;
                     const canDelete = mine || isSuperAdmin;
                     const isImg = m.attachment_url && isImageAttachment(m.attachment_url, m.attachment_name || '');
@@ -1189,6 +1220,7 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                       : [];
                     const pickerOpen = reactionPickerMsgId === m.id;
                     const isBeingEdited = editingMsg?.id === m.id;
+                    const placeBelow = msgIdx < 2;
 
                     return (
                       <div key={m.id} className={`flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
@@ -1259,47 +1291,94 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                               <span className="text-[10px] text-[#667781] font-mono-num">
                                 {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
-                              {mine && <CheckCheck className="w-3.5 h-3.5 text-[#53BDEB]" />}
+                              {mine && (
+                                <span title={m.is_seen ? 'Seen' : 'Sent / Delivered'}>
+                                  <CheckCheck
+                                    className={`w-3.5 h-3.5 ${m.is_seen ? 'text-[#53BDEB]' : 'text-[#667781]'}`}
+                                  />
+                                </span>
+                              )}
                             </div>
 
                             {/* Floating Emoji Reaction Picker Popover */}
                             {pickerOpen && (
                               <div
                                 onClick={(e) => e.stopPropagation()}
-                                className={`absolute -top-11 z-20 flex items-center gap-1 bg-white border border-neutral-200 rounded-full px-2 py-1 shadow-lg ${
-                                  mine ? 'end-0' : 'start-0'
-                                }`}
+                                className={`absolute z-30 flex flex-col gap-1.5 ${
+                                  placeBelow ? 'top-full mt-2' : 'bottom-full mb-2'
+                                } ${mine ? 'end-0 items-end' : 'start-0 items-start'}`}
                               >
-                                {CHAT_REACTION_EMOJIS.map((emoji) => {
-                                  const activeEmoji = reactions.some((r) => r.emoji === emoji && r.reactedByMe);
-                                  return (
-                                    <button
-                                      key={emoji}
-                                      type="button"
-                                      onClick={() => handleReactMessage(m.id, emoji)}
-                                      className={`w-7 h-7 rounded-full flex items-center justify-center text-base transition-transform hover:scale-125 ${
-                                        activeEmoji ? 'bg-emerald-100 ring-1 ring-[#008069]' : 'hover:bg-neutral-100'
-                                      }`}
-                                      title={`React ${emoji}`}
-                                    >
-                                      {emoji}
-                                    </button>
-                                  );
-                                })}
+                                {reactionFullPickerMsgId === m.id && (
+                                  <EmojiPickerPanel
+                                    title="React to Message"
+                                    activeEmoji={reactions.find((r) => r.reactedByMe)?.emoji || null}
+                                    onSelect={(emoji) => handleReactMessage(m.id, emoji)}
+                                    onClose={() => {
+                                      setReactionFullPickerMsgId(null);
+                                      setReactionPickerMsgId(null);
+                                    }}
+                                  />
+                                )}
+                                <div className="flex items-center gap-0.5 sm:gap-1 bg-white border border-neutral-200 rounded-full px-2 py-1 shadow-lg max-w-[92vw] overflow-x-auto">
+                                  {QUICK_REACTION_EMOJIS.map((emoji) => {
+                                    const activeEmoji = reactions.some((r) => r.emoji === emoji && r.reactedByMe);
+                                    return (
+                                      <button
+                                        key={emoji}
+                                        type="button"
+                                        onClick={() => handleReactMessage(m.id, emoji)}
+                                        className={`w-7 h-7 rounded-full flex items-center justify-center text-base transition-transform hover:scale-125 shrink-0 ${
+                                          activeEmoji ? 'bg-emerald-100 ring-1 ring-[#008069]' : 'hover:bg-neutral-100'
+                                        }`}
+                                        title={`React ${emoji}`}
+                                      >
+                                        {emoji}
+                                      </button>
+                                    );
+                                  })}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setReactionFullPickerMsgId((prev) => (prev === m.id ? null : m.id))
+                                    }
+                                    title="More Emojis"
+                                    className={`w-7 h-7 rounded-full flex items-center justify-center border shrink-0 transition-colors ${
+                                      reactionFullPickerMsgId === m.id
+                                        ? 'bg-[#008069] text-white border-[#008069]'
+                                        : 'bg-neutral-100 text-[#54656F] border-neutral-200 hover:bg-neutral-200'
+                                    }`}
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>
 
-                          {/* Hover / Tap Action Buttons (React, Edit, Delete) */}
+                          {/* Always-Visible Dedicated React Button + Edit / Delete */}
                           <div
                             onClick={(e) => e.stopPropagation()}
-                            className="flex items-center gap-0.5 bg-white/90 border border-neutral-200/80 rounded-full px-1 py-0.5 shadow-xs opacity-90 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0"
+                            className="flex items-center gap-0.5 bg-white/95 border border-neutral-200 rounded-full px-1 py-0.5 shadow-xs shrink-0"
                           >
                             <button
                               type="button"
-                              onClick={() => setReactionPickerMsgId(pickerOpen ? null : m.id)}
-                              title="React to message"
-                              className="p-1 rounded-full text-[#54656F] hover:text-[#008069] hover:bg-emerald-50"
+                              onClick={() => {
+                                if (pickerOpen) {
+                                  setReactionPickerMsgId(null);
+                                  setReactionFullPickerMsgId(null);
+                                } else {
+                                  setComposerEmojiOpen(false);
+                                  setReactionPickerMsgId(m.id);
+                                  setReactionFullPickerMsgId(null);
+                                }
+                              }}
+                              title="React with Emoji"
+                              aria-label="React to message"
+                              className={`p-1 rounded-full transition-colors ${
+                                pickerOpen
+                                  ? 'bg-[#008069] text-white'
+                                  : 'text-[#54656F] hover:text-[#008069] hover:bg-emerald-50'
+                              }`}
                             >
                               <SmilePlus className="w-3.5 h-3.5" />
                             </button>
@@ -1318,6 +1397,7 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                                 type="button"
                                 onClick={() => {
                                   setReactionPickerMsgId(null);
+                                  setReactionFullPickerMsgId(null);
                                   setDeleteMsgTarget(m);
                                 }}
                                 title="Delete message"
@@ -1384,74 +1464,104 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
               )}
 
               {/* Bottom WhatsApp Composer Bar */}
-              <form onSubmit={handleSend} className="px-3 py-2.5 border-t border-neutral-200 bg-[#F0F2F5] flex items-center gap-2">
-                {!editingMsg && (
-                  <label
-                    className={`p-2.5 rounded-full hover:bg-neutral-200/70 cursor-pointer shrink-0 text-[#54656F] ${
-                      uploadingFile ? 'opacity-50 pointer-events-none' : ''
-                    }`}
-                    title="Attach photo, PDF, or document"
-                  >
-                    <Paperclip className="w-5 h-5" />
-                    <input
-                      type="file"
-                      disabled={uploadingFile}
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0];
-                        if (!f) return;
-                        setErr('');
-                        setUploadingFile(true);
-                        try {
-                          const up = await uploadFile(f, 'chat-attachments');
-                          setAttachment({ url: up.url, name: up.name });
-                        } catch (err: any) {
-                          setErr(err.message || 'Failed to upload attachment');
-                        } finally {
-                          setUploadingFile(false);
-                          e.target.value = '';
-                        }
-                      }}
-                      className="hidden"
+              <div className="relative">
+                {composerEmojiOpen && (
+                  <div className="absolute bottom-full start-2 sm:start-3 mb-2 z-30">
+                    <EmojiPickerPanel
+                      title="Insert Emoji"
+                      onSelect={insertEmojiToMessage}
+                      onClose={() => setComposerEmojiOpen(false)}
                     />
-                  </label>
+                  </div>
                 )}
+                <form onSubmit={handleSend} className="px-3 py-2.5 border-t border-neutral-200 bg-[#F0F2F5] flex items-center gap-1.5 sm:gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReactionPickerMsgId(null);
+                      setReactionFullPickerMsgId(null);
+                      setComposerEmojiOpen((prev) => !prev);
+                    }}
+                    title="Emoji Picker"
+                    aria-label="Open Emoji Picker"
+                    className={`p-2 rounded-full shrink-0 transition-colors ${
+                      composerEmojiOpen
+                        ? 'bg-[#008069] text-white'
+                        : 'hover:bg-neutral-200/70 text-[#54656F]'
+                    }`}
+                  >
+                    <Smile className="w-5 h-5" />
+                  </button>
 
-                <div className="flex-1 flex flex-col min-w-0">
-                  {uploadingFile && <div className="text-[11px] text-[#667781] mb-1">Uploading file...</div>}
-                  {!editingMsg && attachment && (
-                    <div className="text-[11px] text-[#008069] font-medium flex items-center gap-1.5 mb-1 bg-white px-2.5 py-1 rounded-md border border-emerald-200">
-                      <Paperclip className="w-3 h-3 shrink-0" />
-                      <span className="truncate">{attachment.name}</span>
-                      <button type="button" onClick={() => setAttachment(null)} className="ms-auto text-[#667781] hover:text-[#DC1726]">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                  {!editingMsg && (
+                    <label
+                      className={`p-2 rounded-full hover:bg-neutral-200/70 cursor-pointer shrink-0 text-[#54656F] ${
+                        uploadingFile ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                      title="Attach photo, PDF, or document"
+                    >
+                      <Paperclip className="w-5 h-5" />
+                      <input
+                        type="file"
+                        disabled={uploadingFile}
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (!f) return;
+                          setErr('');
+                          setUploadingFile(true);
+                          try {
+                            const up = await uploadFile(f, 'chat-attachments');
+                            setAttachment({ url: up.url, name: up.name });
+                          } catch (err: any) {
+                            setErr(err.message || 'Failed to upload attachment');
+                          } finally {
+                            setUploadingFile(false);
+                            e.target.value = '';
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
                   )}
-                  <input
-                    ref={messageInputRef}
-                    type="text"
-                    value={text}
-                    onChange={(e) => setText(e.target.value)}
-                    placeholder={
-                      editingMsg
-                        ? 'Edit your message...'
-                        : activeConv.is_personal_channel
-                          ? 'Write a note or save a message to your channel...'
-                          : 'Type a message'
-                    }
-                    className="w-full px-4 py-2.5 text-xs rounded-full bg-white border border-neutral-200/80 text-[#111B21] placeholder:text-[#667781] focus:outline-none focus:border-[#008069]"
-                  />
-                </div>
 
-                <button
-                  type="submit"
-                  disabled={uploadingFile}
-                  aria-label={editingMsg ? 'Save Edit' : 'Send'}
-                  className="w-10 h-10 rounded-full bg-[#008069] text-white flex items-center justify-center hover:bg-[#006a57] disabled:opacity-60 shrink-0 shadow-xs"
-                >
-                  {editingMsg ? <Check className="w-4 h-4" /> : <Send className="w-4 h-4" />}
-                </button>
-              </form>
+                  <div className="flex-1 flex flex-col min-w-0">
+                    {uploadingFile && <div className="text-[11px] text-[#667781] mb-1">Uploading file...</div>}
+                    {!editingMsg && attachment && (
+                      <div className="text-[11px] text-[#008069] font-medium flex items-center gap-1.5 mb-1 bg-white px-2.5 py-1 rounded-md border border-emerald-200">
+                        <Paperclip className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{attachment.name}</span>
+                        <button type="button" onClick={() => setAttachment(null)} className="ms-auto text-[#667781] hover:text-[#DC1726]">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                    <input
+                      ref={messageInputRef}
+                      type="text"
+                      value={text}
+                      onFocus={() => setComposerEmojiOpen(false)}
+                      onChange={(e) => setText(e.target.value)}
+                      placeholder={
+                        editingMsg
+                          ? 'Edit your message...'
+                          : activeConv.is_personal_channel
+                            ? 'Write a note or save a message to your channel...'
+                            : 'Type a message'
+                      }
+                      className="w-full px-4 py-2.5 text-xs rounded-full bg-white border border-neutral-200/80 text-[#111B21] placeholder:text-[#667781] focus:outline-none focus:border-[#008069]"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={uploadingFile}
+                    aria-label={editingMsg ? 'Save Edit' : 'Send'}
+                    className="w-10 h-10 rounded-full bg-[#008069] text-white flex items-center justify-center hover:bg-[#006a57] disabled:opacity-60 shrink-0 shadow-xs"
+                  >
+                    {editingMsg ? <Check className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+                  </button>
+                </form>
+              </div>
             </>
           )}
         </div>

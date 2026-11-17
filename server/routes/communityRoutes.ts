@@ -597,7 +597,7 @@ router.get('/chats/:id/messages', requireAuth, async (req: AuthRequest, res) => 
     const { data: isPart } = await admin.from('conversation_participants').select('id').eq('conversation_id', convId).eq('user_id', uid).maybeSingle();
     if (!isPart) return res.status(403).json({ error: 'Access denied to this conversation' });
 
-    const [, { data: msgsRaw }, { data: metaRows }] = await Promise.all([
+    const [, { data: msgsRaw }, { data: metaRows }, { data: partRows }] = await Promise.all([
       admin.from('conversation_participants').update({ last_read_at: new Date().toISOString() }).eq('conversation_id', convId).eq('user_id', uid),
       admin
         .from('messages')
@@ -611,6 +611,10 @@ router.get('/chats/:id/messages', requireAuth, async (req: AuthRequest, res) => 
         .eq('entity_id', convId)
         .eq('title', 'CHAT_MSG_META')
         .order('created_at', { ascending: true }),
+      admin
+        .from('conversation_participants')
+        .select('user_id, last_read_at')
+        .eq('conversation_id', convId),
     ]);
 
     const metaMap = new Map<string, ChatMsgMeta>();
@@ -620,15 +624,25 @@ router.get('/chats/:id/messages', requireAuth, async (req: AuthRequest, res) => 
       }
     }
 
+    const participantsList = (partRows || []).map((p: any) => ({
+      user_id: String(p.user_id || ''),
+      read_ts: p.last_read_at ? new Date(p.last_read_at).getTime() : 0,
+    }));
+
     const resolved = await resolveStorageUrlsInRows(msgsRaw || [], ['attachment_url']);
     const messages = resolved.map((m: any) => {
       const meta = metaMap.get(m.id) || { edited_at: null, reactions: {} };
+      const msgTs = m.created_at ? new Date(m.created_at).getTime() : 0;
+      const otherReaders = participantsList.filter((p) => p.user_id && p.user_id !== m.sender_id);
+      const isSeen =
+        otherReaders.length > 0 && otherReaders.some((p) => p.read_ts > 0 && p.read_ts >= msgTs);
       return {
         ...m,
         sender_name: m.profiles?.full_name || '',
         sender_role: m.profiles?.roles?.name || '',
         edited_at: meta.edited_at,
         reactions: formatReactionsList(meta.reactions, uid),
+        is_seen: isSeen,
       };
     });
 
@@ -727,7 +741,13 @@ router.post('/chats', requireAuth, async (req: AuthRequest, res) => {
       .single();
     if (convErr || !createdConv) return res.status(500).json({ error: 'Failed to create conversation' });
 
-    await admin.from('conversation_participants').insert(uniqueIds.map((pid) => ({ conversation_id: createdConv.id, user_id: pid })));
+    await admin.from('conversation_participants').insert(
+      uniqueIds.map((pid) => ({
+        conversation_id: createdConv.id,
+        user_id: pid,
+        last_read_at: pid === uid ? new Date().toISOString() : new Date(0).toISOString(),
+      }))
+    );
     if (initial_message) {
       await admin.from('messages').insert({ conversation_id: createdConv.id, sender_id: uid, content: initial_message });
       for (const oid of otherIds) {
@@ -777,7 +797,7 @@ router.post('/chats/:id/messages', requireAuth, async (req: AuthRequest, res) =>
     for (const o of others || []) {
       await createNotification(o.user_id, 'message', 'New Message', `${req.user!.full_name}: ${(content || attachment_name || 'Attachment').slice(0, 80)}`, 'chats', convId);
     }
-    return res.status(201).json({ id: createdMsg.id });
+    return res.status(201).json({ id: createdMsg.id, is_seen: false });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Failed to send message' });
   }
@@ -855,7 +875,7 @@ router.post('/chats/:id/messages/:messageId/react', requireAuth, async (req: Aut
     if (!msgRow) return res.status(404).json({ error: 'Message not found' });
 
     const emoji = String((req.body as { emoji?: string })?.emoji || '').trim();
-    if (!emoji || emoji.length > 16) {
+    if (!emoji || emoji.length > 24) {
       return res.status(400).json({ error: 'Valid reaction emoji is required.' });
     }
 

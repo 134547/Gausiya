@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireSupabaseAdmin, resolveStorageUrlsInRows } from '../supabase.ts';
+import { requireSupabaseAdmin, resolveStorageUrl, resolveStorageUrlsInRows } from '../supabase.ts';
 import {
   AuthRequest,
   getParentIdForUser,
@@ -379,32 +379,63 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
     // Student Dashboard
     const stId = await getStudentIdForUser(user);
     const { data: studentRaw } = stId
-      ? await admin.from('students').select('*, classes(name)').eq('id', stId).is('deleted_at', null).maybeSingle()
+      ? await admin
+          .from('students')
+          .select('*, classes(name, code, teachers(full_name, mobile))')
+          .eq('id', stId)
+          .is('deleted_at', null)
+          .maybeSingle()
       : { data: null };
 
     const student = studentRaw
       ? {
           ...(await resolveStorageUrlsInRows([studentRaw], ['photo_url']))[0],
           class_name: (studentRaw as any).classes?.name || 'Unassigned',
+          class_code: (studentRaw as any).classes?.code || '',
           username: (studentRaw as any).username || user.username,
         }
       : undefined;
 
-    const [attRes, hwRes, resultsRes, noticesRes, admRes, ocRes] = await Promise.all([
-      stId ? admin.from('attendance').select('status').eq('student_id', stId) : Promise.resolve({ data: [] }),
+    const [
+      attRes,
+      hwRes,
+      hwSubsRes,
+      resultsRes,
+      noticesRes,
+      admRes,
+      ocRes,
+      examsRes,
+      subjectsRes,
+      syllabusDocsRes,
+      programsRes,
+      classTeacherRes,
+    ] = await Promise.all([
+      stId
+        ? admin
+            .from('attendance')
+            .select('attendance_date, status, remark')
+            .eq('student_id', stId)
+            .order('attendance_date', { ascending: false })
+        : Promise.resolve({ data: [] }),
       student?.class_id
         ? admin
             .from('homework')
-            .select('id, title, submission_deadline, subjects(name)')
+            .select('id, title, submission_deadline, assigned_date, subjects(name), teachers(full_name)')
             .eq('class_id', student.class_id)
             .is('deleted_at', null)
             .order('created_at', { ascending: false })
-            .limit(5)
+            .limit(6)
+        : Promise.resolve({ data: [] }),
+      stId
+        ? admin
+            .from('homework_submissions')
+            .select('homework_id, status, grade, submitted_at')
+            .eq('student_id', stId)
         : Promise.resolve({ data: [] }),
       stId
         ? admin
             .from('results')
-            .select('*, examinations(name)')
+            .select('*, examinations(name, start_date)')
             .eq('student_id', stId)
             .eq('is_published', true)
             .order('created_at', { ascending: false })
@@ -429,46 +460,183 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       student?.class_id
         ? admin
             .from('online_classes')
-            .select('id, title, scheduled_at, status, meeting_link, subjects(name)')
+            .select('id, title, meeting_date, start_time, end_time, platform, meeting_url, status, subjects(name), teachers(full_name)')
             .eq('class_id', student.class_id)
             .is('deleted_at', null)
-            .order('scheduled_at', { ascending: false })
+            .order('meeting_date', { ascending: false })
+            .order('start_time', { ascending: true })
             .limit(5)
         : Promise.resolve({ data: [] }),
+      student?.class_id
+        ? admin
+            .from('examinations')
+            .select('id, name, exam_type, start_date, end_date, status, examination_subjects(subjects(name))')
+            .eq('class_id', student.class_id)
+            .is('deleted_at', null)
+            .in('status', ['scheduled', 'ongoing'])
+            .order('start_date', { ascending: true })
+            .limit(5)
+        : Promise.resolve({ data: [] }),
+      student?.class_id
+        ? admin
+            .from('class_subjects')
+            .select('id, subjects!inner(name, code, deleted_at), teachers(full_name)')
+            .eq('class_id', student.class_id)
+            .is('subjects.deleted_at', null)
+        : Promise.resolve({ data: [] }),
+      admin
+        .from('documents')
+        .select('id, entity_id, file_url, created_at')
+        .eq('entity_type', 'general')
+        .eq('title', 'SYLLABUS_ITEM')
+        .order('created_at', { ascending: false })
+        .limit(30),
+      admin
+        .from('programs')
+        .select('id, title, program_date, start_time, venue, status')
+        .is('deleted_at', null)
+        .order('program_date', { ascending: false })
+        .limit(4),
+      student?.class_id
+        ? admin
+            .from('teacher_assignments')
+            .select('is_class_teacher, teachers(full_name, mobile, deleted_at)')
+            .eq('class_id', student.class_id)
+        : Promise.resolve({ data: [] }),
     ]);
+
+    let classTeacher: { full_name: string; mobile?: string } | null = null;
+    const directTeacher = (studentRaw as any)?.classes?.teachers;
+    if (directTeacher?.full_name) {
+      classTeacher = { full_name: directTeacher.full_name, mobile: directTeacher.mobile || '' };
+    } else {
+      for (const ta of (classTeacherRes as any)?.data || []) {
+        const t = ta.teachers;
+        if (!t?.full_name || t.deleted_at) continue;
+        if (ta.is_class_teacher || !classTeacher) {
+          classTeacher = { full_name: t.full_name, mobile: t.mobile || '' };
+          if (ta.is_class_teacher) break;
+        }
+      }
+    }
 
     const attList = attRes.data || [];
     const attStats = {
       total: attList.length,
-      present: attList.filter((a) => a.status === 'present').length,
-      absent: attList.filter((a) => a.status === 'absent').length,
-      late: attList.filter((a) => a.status === 'late').length,
-      on_leave: attList.filter((a) => a.status === 'leave').length,
+      present: attList.filter((a: any) => a.status === 'present').length,
+      absent: attList.filter((a: any) => a.status === 'absent').length,
+      late: attList.filter((a: any) => a.status === 'late').length,
+      on_leave: attList.filter((a: any) => a.status === 'leave').length,
     };
+    const recentAttendance = attList.slice(0, 6);
+
+    const hwSubMap = new Map<string, any>();
+    for (const sub of hwSubsRes.data || []) {
+      if (sub.homework_id) hwSubMap.set(sub.homework_id, sub);
+    }
 
     const notices = (noticesRes.data || [])
       .filter((n: any) => n.target_audience === 'all' || n.target_audience === 'students' || (n.target_audience === 'class' && n.target_class_id === student?.class_id))
       .slice(0, 5);
 
-    const recentHomework = (hwRes.data || []).map((h: any) => ({
-      id: h.id,
-      title: h.title,
-      submission_deadline: h.submission_deadline,
-      subject_name: h.subjects?.name || '',
-    }));
+    const recentHomework = (hwRes.data || []).map((h: any) => {
+      const sub = hwSubMap.get(h.id);
+      return {
+        id: h.id,
+        title: h.title,
+        submission_deadline: h.submission_deadline,
+        assigned_date: h.assigned_date || '',
+        subject_name: h.subjects?.name || '',
+        teacher_name: h.teachers?.full_name || '',
+        submission_status: sub?.status || 'pending',
+        grade: sub?.grade || '',
+      };
+    });
+    const homeworkPendingCount = recentHomework.filter((h: any) => h.submission_status === 'pending').length;
 
     const recentResults = (resultsRes.data || []).map((r: any) => ({
       ...r,
       exam_name: r.examinations?.name || '',
+      exam_date: r.examinations?.start_date || '',
     }));
 
     const onlineClasses = (ocRes.data || []).map((oc: any) => ({
       id: oc.id,
       title: oc.title,
-      scheduled_at: oc.scheduled_at,
-      status: oc.status,
-      meeting_link: oc.meeting_link || '',
+      meeting_date: oc.meeting_date || '',
+      start_time: oc.start_time || '',
+      end_time: oc.end_time || '',
+      platform: oc.platform || 'Online',
+      scheduled_at: oc.meeting_date || '',
+      status: oc.status || 'scheduled',
+      meeting_link: oc.meeting_url || '',
+      meeting_url: oc.meeting_url || '',
       subject_name: oc.subjects?.name || '',
+      teacher_name: oc.teachers?.full_name || '',
+    }));
+
+    const upcomingExams = (examsRes.data || []).map((e: any) => ({
+      id: e.id,
+      name: e.name,
+      exam_type: e.exam_type || '',
+      start_date: e.start_date,
+      end_date: e.end_date || '',
+      status: e.status,
+      subjects: (e.examination_subjects || []).map((es: any) => es.subjects?.name).filter(Boolean).join(', '),
+    }));
+
+    const subjects = (subjectsRes.data || []).map((cs: any) => ({
+      id: cs.id,
+      name: cs.subjects?.name || '',
+      code: cs.subjects?.code || '',
+      teacher_name: cs.teachers?.full_name || '',
+    }));
+
+    const rawSyllabusDocs = (syllabusDocsRes.data || [])
+      .map((doc: any) => {
+        let parsed: Record<string, any> = {};
+        try {
+          parsed = JSON.parse(doc.file_url || '{}');
+        } catch {
+          parsed = {};
+        }
+        const clsId = String(parsed.class_id || (doc.entity_id !== '00000000-0000-0000-0000-000000000001' ? doc.entity_id : '') || '');
+        return { doc, parsed, clsId };
+      })
+      .filter(({ clsId }) => !clsId || !student?.class_id || clsId === student.class_id)
+      .slice(0, 6);
+
+    const syllabusItems = await Promise.all(
+      rawSyllabusDocs.map(async ({ doc, parsed, clsId }) => {
+        const [coverPageUrl, bookPdfUrl, syllabusPdfUrl] = await Promise.all([
+          resolveStorageUrl(parsed.cover_page_url),
+          resolveStorageUrl(parsed.book_pdf_url),
+          resolveStorageUrl(parsed.syllabus_pdf_url),
+        ]);
+        return {
+          id: doc.id,
+          class_id: clsId,
+          class_name: parsed.class_name || student?.class_name || 'All Classes',
+          subject_name: String(parsed.subject_name || ''),
+          book_name: String(parsed.book_name || ''),
+          author_name: String(parsed.author_name || ''),
+          cover_page_url: coverPageUrl,
+          book_pdf_url: bookPdfUrl,
+          book_pdf_name: String(parsed.book_pdf_name || ''),
+          syllabus_pdf_url: syllabusPdfUrl,
+          syllabus_pdf_name: String(parsed.syllabus_pdf_name || ''),
+          weekly_plan: String(parsed.weekly_plan || ''),
+        };
+      })
+    );
+
+    const upcomingPrograms = (programsRes.data || []).map((p: any) => ({
+      id: p.id,
+      title: p.title,
+      program_date: p.program_date,
+      start_time: p.start_time || '',
+      venue: p.venue || '',
+      status: p.status || 'upcoming',
     }));
 
     const admissionRow: any = (admRes as any)?.data || null;
@@ -495,6 +663,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       role: 'student',
       activeSession: activeSession?.name || '2026-2027',
       student,
+      classTeacher,
       admissionDetails,
       feeStatus: {
         status: 'Madrasa Sponsored / Active Enrollment',
@@ -504,9 +673,15 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
         ...attStats,
         percentage: attStats.total > 0 ? Math.round(((attStats.present + attStats.late) / attStats.total) * 100) : 0,
       },
+      recentAttendance,
       recentHomework,
+      homeworkPendingCount,
       recentResults,
       onlineClasses,
+      upcomingExams,
+      subjects,
+      syllabusItems,
+      upcomingPrograms,
       notices,
       committeeMembers,
     });

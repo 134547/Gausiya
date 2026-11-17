@@ -3,12 +3,18 @@ import {
   Activity,
   Award,
   BookMarked,
+  BookOpen,
   Building2,
+  Calendar,
   CalendarCheck,
   ClipboardCheck,
   ClipboardList,
+  ExternalLink,
+  FileText,
   GraduationCap,
   Phone,
+  RefreshCw,
+  Sparkles,
   UserCheck,
   Users,
   UsersRound,
@@ -40,10 +46,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [analyticsTab, setAnalyticsTab] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setError('');
     apiRequest('/api/dashboard')
       .then((res) => {
         if (active) setData(res);
@@ -57,7 +65,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
     return () => {
       active = false;
     };
-  }, [user.id]);
+  }, [user.id, reloadTick]);
 
   if (loading) {
     return (
@@ -74,8 +82,18 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
 
   if (error || !data) {
     return (
-      <div className="p-6 rounded-xl bg-white border border-red-200 text-sm text-[#DC1726]">
-        {error || 'Unable to load dashboard'}
+      <div className="p-6 rounded-xl bg-white border border-red-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="text-sm text-[#DC1726] font-medium">
+          {error || 'Unable to load dashboard'}
+        </div>
+        <button
+          type="button"
+          onClick={() => setReloadTick((v) => v + 1)}
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 shrink-0 self-start sm:self-auto"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Retry
+        </button>
       </div>
     );
   }
@@ -187,13 +205,25 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
   if (data.role === 'student') {
     const att = data.attendanceSummary || { percentage: 0, present: 0, absent: 0, late: 0, on_leave: 0, total: 0 };
     const st = data.student || {};
+    const classTeacher = data.classTeacher || null;
     const adm = data.admissionDetails || {};
     const fee = data.feeStatus || { status: 'Active Enrollment', note: '' };
+    const recentAttendance = data.recentAttendance || [];
+    const recentHomework = data.recentHomework || [];
+    const homeworkPendingCount = Number(data.homeworkPendingCount || 0);
+    const recentResults = data.recentResults || [];
+    const onlineClasses = data.onlineClasses || [];
+    const upcomingExams = data.upcomingExams || [];
+    const subjects = data.subjects || [];
+    const syllabusItems = data.syllabusItems || [];
+    const upcomingPrograms = data.upcomingPrograms || [];
+    const notices = data.notices || [];
+
     return (
       <div className="space-y-6">
         {/* Student Profile & Admission Details Header */}
         <div className="bg-white rounded-xl border border-neutral-200 p-5 shadow-xs">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div className="flex items-start gap-4">
               {st.photo_url ? (
                 <img
@@ -207,14 +237,26 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
                   {(st.full_name || user.full_name || 'S').charAt(0).toUpperCase()}
                 </div>
               )}
-              <div className="space-y-1.5">
+              <div className="space-y-2 min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-lg font-bold text-[#171717]">{st.full_name || user.full_name}</h2>
                   <span className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-[#10B981] uppercase">
                     {adm.status || 'Approved'}
                   </span>
+                  {st.student_code && (
+                    <span className="px-2 py-0.5 rounded bg-neutral-100 border border-neutral-200 text-[11px] font-mono-num font-semibold text-[#525252]">
+                      ID: {st.student_code}
+                    </span>
+                  )}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-1 text-xs text-[#525252]">
+
+                {!st.id ? (
+                  <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                    Aapka student profile abhi database record se link nahi hua hai. Please Madrasa Office / Super Admin se apna student record link karwayein.
+                  </div>
+                ) : null}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-1.5 text-xs text-[#525252]">
                   <div>
                     <span className="text-[#737373]">Username:</span>{' '}
                     <strong className="font-mono-num text-[#0EA5E9]">@{st.username || user.username}</strong>
@@ -226,12 +268,31 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
                     </strong>
                   </div>
                   <div>
+                    <span className="text-[#737373]">Roll No:</span>{' '}
+                    <strong className="font-mono-num text-[#171717]">{st.roll_number || '—'}</strong>
+                  </div>
+                  <div>
                     <span className="text-[#737373]">Class / Course:</span>{' '}
                     <strong className="text-[#171717]">{st.class_name || 'Unassigned'}</strong>
                   </div>
                   <div>
+                    <span className="text-[#737373]">Class Teacher:</span>{' '}
+                    <strong className="text-[#171717]">
+                      {classTeacher?.full_name || 'Unassigned'}
+                      {classTeacher?.mobile ? ` (${classTeacher.mobile})` : ''}
+                    </strong>
+                  </div>
+                  <div>
                     <span className="text-[#737373]">Father&apos;s Name:</span>{' '}
                     <strong className="text-[#171717]">{st.father_name || '—'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[#737373]">Mobile:</span>{' '}
+                    <strong className="font-mono-num text-[#171717]">{st.mobile || user.mobile || '—'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[#737373]">Session:</span>{' '}
+                    <strong className="font-mono-num text-[#171717]">{data.activeSession}</strong>
                   </div>
                   {adm.reference_no && (
                     <div>
@@ -239,10 +300,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
                       <strong className="font-mono-num text-[#DC1726]">{adm.reference_no}</strong>
                     </div>
                   )}
-                  <div>
-                    <span className="text-[#737373]">Session:</span>{' '}
-                    <strong className="font-mono-num text-[#171717]">{data.activeSession}</strong>
-                  </div>
                   <div className="sm:col-span-2">
                     <span className="text-[#737373]">Fees / Enrollment:</span>{' '}
                     <strong className="text-[#10B981]">{fee.status}</strong>
@@ -250,13 +307,28 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
                 </div>
               </div>
             </div>
+
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               <button
                 type="button"
                 onClick={() => onNavigate('profile')}
-                className="px-3.5 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50"
+                className="px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50"
               >
                 My Profile
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('students')}
+                className="px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50"
+              >
+                My ID &amp; Docs
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('syllabus')}
+                className="px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#0EA5E9] hover:bg-sky-50"
+              >
+                Syllabus &amp; Kitab
               </button>
               <button
                 type="button"
@@ -269,32 +341,287 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={GraduationCap} color="#0EA5E9" label="Class / Course" value={st.class_name || 'Unassigned'} onClick={() => onNavigate('profile')} />
-          <StatCard icon={ClipboardCheck} color="#10B981" label="Attendance Rate" value={`${att.percentage}%`} sub={`${att.present}/${att.total} days`} onClick={() => onNavigate('attendance')} />
-          <StatCard icon={BookMarked} color="#F59E0B" label="Assigned Homework" value={String((data.recentHomework || []).length)} onClick={() => onNavigate('homework')} />
-          <StatCard icon={Award} color="#14B8A6" label="Examination Results" value={String((data.recentResults || []).length)} onClick={() => onNavigate('results')} />
+        {/* KPI Cards Row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <StatCard
+            icon={GraduationCap}
+            color="#0EA5E9"
+            label="Class / Course"
+            value={st.class_name || 'Unassigned'}
+            sub={classTeacher?.full_name ? `Teacher: ${classTeacher.full_name}` : 'No teacher assigned'}
+            onClick={() => onNavigate('profile')}
+          />
+          <StatCard
+            icon={ClipboardCheck}
+            color="#10B981"
+            label="Attendance Rate"
+            value={`${att.percentage}%`}
+            sub={`${att.present} Present / ${att.total} days`}
+            onClick={() => onNavigate('attendance')}
+          />
+          <StatCard
+            icon={BookMarked}
+            color="#F59E0B"
+            label="Homework"
+            value={String(recentHomework.length)}
+            sub={homeworkPendingCount > 0 ? `${homeworkPendingCount} pending` : 'All caught up'}
+            onClick={() => onNavigate('homework')}
+          />
+          <StatCard
+            icon={Calendar}
+            color="#DC1726"
+            label="Upcoming Exams"
+            value={String(upcomingExams.length)}
+            sub={upcomingExams[0]?.start_date ? `Next: ${upcomingExams[0].start_date}` : 'None scheduled'}
+            onClick={() => onNavigate('examinations')}
+          />
+          <StatCard
+            icon={Award}
+            color="#14B8A6"
+            label="Published Results"
+            value={String(recentResults.length)}
+            sub={recentResults[0]?.grade ? `Latest: Grade ${recentResults[0].grade}` : 'Check marksheet'}
+            onClick={() => onNavigate('results')}
+          />
         </div>
 
+        {/* Row 1: Attendance Breakdown & Upcoming Exams / Subjects */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Attendance Breakdown */}
+          <div className="bg-white rounded-xl border border-neutral-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[#171717] flex items-center gap-1.5">
+                <CalendarCheck className="w-4 h-4 text-[#10B981]" /> My Attendance Summary
+              </h3>
+              <button
+                type="button"
+                onClick={() => onNavigate('attendance')}
+                className="text-xs font-medium text-[#DC1726] hover:underline"
+              >
+                Full History
+              </button>
+            </div>
+            <div className="mb-3">
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="text-[#737373]">Overall Presence</span>
+                <span className="font-mono-num font-bold text-[#10B981]">{att.percentage}%</span>
+              </div>
+              <div className="w-full h-2.5 rounded-full bg-neutral-100 overflow-hidden">
+                <div
+                  className="h-full bg-[#10B981] transition-all"
+                  style={{ width: `${Math.min(100, Math.max(0, att.percentage))}%` }}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-2 text-center mb-4">
+              <MiniStat label="Present" value={att.present} color="text-[#10B981]" />
+              <MiniStat label="Absent" value={att.absent} color="text-[#DC1726]" />
+              <MiniStat label="Late" value={att.late} color="text-[#F59E0B]" />
+              <MiniStat label="Leave" value={att.on_leave} color="text-[#0EA5E9]" />
+            </div>
+            {recentAttendance.length === 0 ? (
+              <p className="text-xs text-[#737373] py-2">No attendance marked yet.</p>
+            ) : (
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#737373] mb-2">
+                  Recent Days
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {recentAttendance.map((a: any, idx: number) => {
+                    const badgeCls =
+                      a.status === 'present'
+                        ? 'bg-emerald-50 border-emerald-200 text-[#10B981]'
+                        : a.status === 'absent'
+                          ? 'bg-red-50 border-red-200 text-[#DC1726]'
+                          : a.status === 'late'
+                            ? 'bg-amber-50 border-amber-200 text-[#F59E0B]'
+                            : 'bg-sky-50 border-sky-200 text-[#0EA5E9]';
+                    return (
+                      <div
+                        key={`${a.attendance_date}-${idx}`}
+                        className={`px-2.5 py-1 rounded-md border text-[11px] font-mono-num font-semibold ${badgeCls}`}
+                        title={a.remark || a.status}
+                      >
+                        {a.attendance_date} · {String(a.status || '').toUpperCase()}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Upcoming Examinations & My Class Subjects */}
+          <div className="bg-white rounded-xl border border-neutral-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[#171717] flex items-center gap-1.5">
+                <ClipboardList className="w-4 h-4 text-[#DC1726]" /> Upcoming Exams &amp; Subjects
+              </h3>
+              <button
+                type="button"
+                onClick={() => onNavigate('examinations')}
+                className="text-xs font-medium text-[#DC1726] hover:underline"
+              >
+                Exam Schedule
+              </button>
+            </div>
+            {upcomingExams.length === 0 ? (
+              <p className="text-xs text-[#737373] py-2">No upcoming examinations scheduled for your class.</p>
+            ) : (
+              <div className="divide-y divide-neutral-100 mb-4">
+                {upcomingExams.map((ex: any) => (
+                  <div key={ex.id} className="py-2 flex items-center justify-between text-xs gap-2">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-[#171717] truncate">{ex.name}</div>
+                      {ex.subjects && <div className="text-[11px] text-[#737373] truncate">{ex.subjects}</div>}
+                    </div>
+                    <div className="text-end shrink-0">
+                      <div className="font-mono-num font-semibold text-[#DC1726]">{ex.start_date}</div>
+                      <div className="text-[10px] uppercase text-[#737373]">{ex.status}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pt-3 border-t border-neutral-100">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-[#737373] mb-2">
+                My Subjects ({subjects.length})
+              </div>
+              {subjects.length === 0 ? (
+                <p className="text-xs text-[#737373]">Subjects will appear once assigned to your class.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {subjects.map((sub: any) => (
+                    <div
+                      key={sub.id}
+                      className="px-2.5 py-1.5 rounded-lg bg-neutral-50 border border-neutral-200 text-xs"
+                    >
+                      <span className="font-semibold text-[#171717]">{sub.name}</span>
+                      {sub.teacher_name && <span className="text-[#737373]"> · {sub.teacher_name}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Row 2: Syllabus & Kitab (Full Width) */}
+        <div className="bg-white rounded-xl border border-neutral-200 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-[#171717] flex items-center gap-1.5">
+              <BookOpen className="w-4 h-4 text-[#0EA5E9]" /> Class Syllabus &amp; Kitab (Books &amp; Weekly Plan)
+            </h3>
+            <button
+              type="button"
+              onClick={() => onNavigate('syllabus')}
+              className="text-xs font-medium text-[#DC1726] hover:underline"
+            >
+              Open Full Syllabus
+            </button>
+          </div>
+          {syllabusItems.length === 0 ? (
+            <p className="text-xs text-[#737373] py-3">No syllabus or books uploaded for your class yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {syllabusItems.map((item: any) => (
+                <div
+                  key={item.id}
+                  className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/50 flex gap-3"
+                >
+                  {item.cover_page_url ? (
+                    <img
+                      src={item.cover_page_url}
+                      alt={item.book_name}
+                      referrerPolicy="no-referrer"
+                      className="w-12 h-16 rounded-lg object-cover border border-neutral-200 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-12 h-16 rounded-lg bg-[#3B0A0D] text-white flex items-center justify-center shrink-0">
+                      <BookOpen className="w-5 h-5" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="text-[11px] font-semibold text-[#0EA5E9] uppercase tracking-wide truncate">
+                      {item.subject_name}
+                    </div>
+                    <div className="text-xs font-bold text-[#171717] truncate">{item.book_name}</div>
+                    {item.weekly_plan && (
+                      <p className="text-[11px] text-[#737373] line-clamp-2">{item.weekly_plan}</p>
+                    )}
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {item.book_pdf_url && (
+                        <a
+                          href={item.book_pdf_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-neutral-200 text-[11px] font-semibold text-[#171717] hover:border-[#0EA5E9] hover:text-[#0EA5E9]"
+                        >
+                          <FileText className="w-3 h-3" /> Book PDF
+                        </a>
+                      )}
+                      {item.syllabus_pdf_url && (
+                        <a
+                          href={item.syllabus_pdf_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-neutral-200 text-[11px] font-semibold text-[#DC1726] hover:border-[#DC1726]"
+                        >
+                          <FileText className="w-3 h-3" /> Weekly PDF
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Row 3: Homework & Results */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white rounded-xl border border-neutral-200 p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-[#171717]">Recent Homework</h3>
-              <button type="button" onClick={() => onNavigate('homework')} className="text-xs font-medium text-[#DC1726] hover:underline">Open All</button>
+              <button
+                type="button"
+                onClick={() => onNavigate('homework')}
+                className="text-xs font-medium text-[#DC1726] hover:underline"
+              >
+                Open All
+              </button>
             </div>
-            {(data.recentHomework || []).length === 0 ? (
+            {recentHomework.length === 0 ? (
               <p className="text-xs text-[#737373] py-4">No homework assigned.</p>
             ) : (
               <div className="divide-y divide-neutral-100">
-                {data.recentHomework.map((hw: any) => (
-                  <div key={hw.id} className="py-2.5 flex items-center justify-between text-xs">
-                    <div>
-                      <div className="font-semibold text-[#171717]">{hw.title}</div>
-                      <div className="text-[#737373]">{hw.subject_name}</div>
+                {recentHomework.map((hw: any) => {
+                  const statusCls =
+                    hw.submission_status === 'reviewed'
+                      ? 'bg-emerald-50 border-emerald-200 text-[#10B981]'
+                      : hw.submission_status === 'submitted'
+                        ? 'bg-sky-50 border-sky-200 text-[#0EA5E9]'
+                        : 'bg-amber-50 border-amber-200 text-[#F59E0B]';
+                  return (
+                    <div key={hw.id} className="py-2.5 flex items-center justify-between text-xs gap-2">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-[#171717] truncate">{hw.title}</div>
+                        <div className="text-[#737373] truncate">
+                          {hw.subject_name}
+                          {hw.teacher_name ? ` · ${hw.teacher_name}` : ''}
+                        </div>
+                      </div>
+                      <div className="text-end shrink-0 flex flex-col items-end gap-1">
+                        <span className={`px-2 py-0.5 rounded border text-[10px] font-bold uppercase ${statusCls}`}>
+                          {hw.submission_status}
+                          {hw.grade ? ` (${hw.grade})` : ''}
+                        </span>
+                        <span className="text-[11px] text-[#737373] font-mono-num">Due {hw.submission_deadline}</span>
+                      </div>
                     </div>
-                    <span className="text-[#737373] font-mono-num">Due {hw.submission_deadline}</span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -302,19 +629,28 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
           <div className="bg-white rounded-xl border border-neutral-200 p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-[#171717]">Examination Results</h3>
-              <button type="button" onClick={() => onNavigate('results')} className="text-xs font-medium text-[#DC1726] hover:underline">View Marksheet</button>
+              <button
+                type="button"
+                onClick={() => onNavigate('results')}
+                className="text-xs font-medium text-[#DC1726] hover:underline"
+              >
+                View Marksheet
+              </button>
             </div>
-            {(data.recentResults || []).length === 0 ? (
+            {recentResults.length === 0 ? (
               <p className="text-xs text-[#737373] py-4">No published examination results yet.</p>
             ) : (
               <div className="divide-y divide-neutral-100">
-                {data.recentResults.map((r: any) => (
-                  <div key={r.id} className="py-2.5 flex items-center justify-between text-xs">
+                {recentResults.map((r: any) => (
+                  <div key={r.id} className="py-2.5 flex items-center justify-between text-xs gap-2">
                     <div>
                       <div className="font-semibold text-[#171717]">{r.exam_name}</div>
-                      <div className="text-[#737373] font-mono-num">{r.obtained_marks}/{r.total_marks} ({r.percentage}%)</div>
+                      <div className="text-[#737373] font-mono-num">
+                        {r.obtained_marks}/{r.total_marks} ({r.percentage}%)
+                        {r.position ? ` · Rank #${r.position}` : ''}
+                      </div>
                     </div>
-                    <span className={`font-bold ${r.status === 'pass' ? 'text-[#10B981]' : 'text-[#DC1726]'}`}>
+                    <span className={`font-bold shrink-0 ${r.status === 'pass' ? 'text-[#10B981]' : 'text-[#DC1726]'}`}>
                       Grade {r.grade} · {String(r.status || '').toUpperCase()}
                     </span>
                   </div>
@@ -322,27 +658,49 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
               </div>
             )}
           </div>
+        </div>
 
+        {/* Row 4: Online Classes, Notices, Programs */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white rounded-xl border border-neutral-200 p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-[#171717] flex items-center gap-1.5">
                 <Video className="w-4 h-4 text-[#0EA5E9]" /> Online Classes
               </h3>
-              <button type="button" onClick={() => onNavigate('online_classes')} className="text-xs font-medium text-[#DC1726] hover:underline">Open All</button>
+              <button
+                type="button"
+                onClick={() => onNavigate('online_classes')}
+                className="text-xs font-medium text-[#DC1726] hover:underline"
+              >
+                Open All
+              </button>
             </div>
-            {(data.onlineClasses || []).length === 0 ? (
+            {onlineClasses.length === 0 ? (
               <p className="text-xs text-[#737373] py-4">No online classes scheduled for your class.</p>
             ) : (
               <div className="divide-y divide-neutral-100">
-                {data.onlineClasses.map((oc: any) => (
+                {onlineClasses.map((oc: any) => (
                   <div key={oc.id} className="py-2.5 flex items-center justify-between text-xs gap-2">
                     <div className="min-w-0">
                       <div className="font-semibold text-[#171717] truncate">{oc.title}</div>
-                      <div className="text-[#737373]">{oc.subject_name || 'Class Session'} · {oc.status}</div>
+                      <div className="text-[#737373] truncate">
+                        {oc.subject_name || 'Class Session'}
+                        {oc.meeting_date ? ` · ${oc.meeting_date}` : ''}
+                        {oc.start_time ? ` (${oc.start_time})` : ''}
+                      </div>
                     </div>
-                    <span className="text-[#737373] font-mono-num shrink-0">
-                      {oc.scheduled_at ? new Date(oc.scheduled_at).toLocaleDateString() : ''}
-                    </span>
+                    {(oc.meeting_url || oc.meeting_link) ? (
+                      <a
+                        href={oc.meeting_url || oc.meeting_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#0EA5E9] text-white text-[11px] font-semibold hover:bg-sky-600 shrink-0"
+                      >
+                        Join <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : (
+                      <span className="text-[11px] uppercase text-[#737373] shrink-0">{oc.status}</span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -352,17 +710,55 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
           <div className="bg-white rounded-xl border border-neutral-200 p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-[#171717]">Madrasa Notices</h3>
-              <button type="button" onClick={() => onNavigate('notices')} className="text-xs font-medium text-[#DC1726] hover:underline">View All</button>
+              <button
+                type="button"
+                onClick={() => onNavigate('notices')}
+                className="text-xs font-medium text-[#DC1726] hover:underline"
+              >
+                View All
+              </button>
             </div>
-            {(data.notices || []).length === 0 ? (
+            {notices.length === 0 ? (
               <p className="text-xs text-[#737373] py-4">No notices available.</p>
             ) : (
-              data.notices.map((n: any) => (
-                <div key={n.id} className="py-2.5 border-b last:border-0 border-neutral-100 flex items-center justify-between text-xs">
-                  <span className="font-medium text-[#171717]">{n.title}</span>
-                  <span className="text-[#737373] font-mono-num">{n.publish_date}</span>
-                </div>
-              ))
+              <div className="divide-y divide-neutral-100">
+                {notices.map((n: any) => (
+                  <div key={n.id} className="py-2.5 flex items-center justify-between text-xs gap-2">
+                    <span className="font-medium text-[#171717] truncate">{n.title}</span>
+                    <span className="text-[#737373] font-mono-num shrink-0">{n.publish_date}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-neutral-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[#171717] flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-[#F59E0B]" /> Madrasa Programs
+              </h3>
+              <button
+                type="button"
+                onClick={() => onNavigate('programs')}
+                className="text-xs font-medium text-[#DC1726] hover:underline"
+              >
+                View All
+              </button>
+            </div>
+            {upcomingPrograms.length === 0 ? (
+              <p className="text-xs text-[#737373] py-4">No programs listed.</p>
+            ) : (
+              <div className="divide-y divide-neutral-100">
+                {upcomingPrograms.map((p: any) => (
+                  <div key={p.id} className="py-2.5 flex items-center justify-between text-xs gap-2">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-[#171717] truncate">{p.title}</div>
+                      {p.venue && <div className="text-[#737373] truncate">{p.venue}</div>}
+                    </div>
+                    <span className="text-[#737373] font-mono-num shrink-0">{p.program_date}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>

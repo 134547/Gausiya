@@ -64,8 +64,9 @@ WHERE auth_user_id IS NULL OR approval_status = 'pending';
 
 CREATE INDEX IF NOT EXISTS idx_profiles_approval_status ON public.profiles(approval_status);
 
--- 4. Students: pending/disabled status support + username & approval tracking
+-- 4. Students: pending/disabled status support + roll_number, username & approval tracking
 ALTER TABLE public.students
+  ADD COLUMN IF NOT EXISTS roll_number TEXT NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS username TEXT,
   ADD COLUMN IF NOT EXISTS auth_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS admission_number TEXT,
@@ -102,6 +103,15 @@ SET
   END
 FROM public.profiles p
 WHERE s.user_id = p.id;
+
+UPDATE public.profiles p
+SET
+  linked_id = s.id,
+  linked_type = 'student'
+FROM public.students s
+WHERE s.user_id = p.id
+  AND s.deleted_at IS NULL
+  AND (p.linked_id IS NULL OR p.linked_type IS NULL);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_students_username_unique
   ON public.students(username)

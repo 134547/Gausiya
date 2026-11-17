@@ -472,6 +472,7 @@ router.post('/login', async (req, res) => {
       req.ip
     );
 
+    res.clearCookie('sb_access_token');
     return res.json({
       token: signInData.session.access_token,
       session: signInData.session,
@@ -490,6 +491,47 @@ router.post('/logout', requireAuth, async (req: AuthRequest, res) => {
     return res.json({ success: true });
   } catch {
     return res.status(500).json({ error: 'Failed to logout' });
+  }
+});
+
+router.post('/refresh', async (req, res) => {
+  try {
+    const authClient = createSupabaseAuthClient();
+    if (!authClient) {
+      return res.status(503).json({ error: 'Supabase auth client unavailable' });
+    }
+    const refreshToken = String((req.body as { refresh_token?: string })?.refresh_token || '').trim();
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'Refresh token required', code: 'SESSION_EXPIRED' });
+    }
+
+    const { data, error } = await authClient.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data?.session?.access_token || !data?.user) {
+      res.clearCookie('sb_access_token');
+      return res.status(401).json({ error: 'Your session has expired. Please sign in again.', code: 'SESSION_EXPIRED' });
+    }
+
+    const resolved = await getUserWithPermissions(data.user.id);
+    if (!resolved.user) {
+      res.clearCookie('sb_access_token');
+      return res.status(403).json({
+        error: resolved.pendingStudent
+          ? STUDENT_PENDING_LOGIN_MESSAGE
+          : resolved.rejected
+            ? STUDENT_REJECTED_LOGIN_MESSAGE
+            : 'Account is inactive or pending approval.',
+        code: 'SESSION_EXPIRED',
+      });
+    }
+
+    res.clearCookie('sb_access_token');
+    return res.json({
+      token: data.session.access_token,
+      session: data.session,
+      user: resolved.user,
+    });
+  } catch {
+    return res.status(401).json({ error: 'Your session has expired. Please sign in again.', code: 'SESSION_EXPIRED' });
   }
 });
 

@@ -212,7 +212,18 @@ export async function getStudentIdForUser(user: AuthenticatedUser): Promise<stri
     .eq('user_id', user.id)
     .is('deleted_at', null)
     .maybeSingle();
-  return data?.id ?? null;
+  if (data?.id) return data.id;
+
+  if (user.username) {
+    const { data: byUsername } = await supabaseAdmin
+      .from('students')
+      .select('id')
+      .eq('username', user.username)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (byUsername?.id) return byUsername.id;
+  }
+  return null;
 }
 
 export async function getTeacherAssignedClassIds(teacherId: string): Promise<string[]> {

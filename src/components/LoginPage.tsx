@@ -10,7 +10,7 @@ import {
   User as UserIcon,
   UserPlus,
 } from 'lucide-react';
-import { apiRequest, setStoredToken } from '../lib/api.ts';
+import { apiRequest, setStoredSession } from '../lib/api.ts';
 import { initSupabaseClient, isSupabaseClientConfigured, missingSupabaseClientEnv, supabase } from '../lib/supabase.ts';
 import { User } from '../types.ts';
 import { Language } from '../i18n/translations.ts';
@@ -158,7 +158,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setLockedUntil(null);
       setCaptcha(null);
       setCaptchaAnswer('');
-      setStoredToken(data.token);
+      setStoredSession(data.token, data.session?.refresh_token);
       if (supabase && data.session?.access_token && data.session?.refresh_token) {
         await supabase.auth.setSession({
           access_token: data.session.access_token,
@@ -208,7 +208,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         body: JSON.stringify(registerForm),
       });
 
-      setStoredToken(data.token);
+      setStoredSession(data.token, data.session?.refresh_token);
       if (supabase && data.session?.access_token && data.session?.refresh_token) {
         await supabase.auth.setSession({
           access_token: data.session.access_token,
@@ -238,7 +238,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         body: JSON.stringify(setupForm),
       });
 
-      setStoredToken(data.token);
+      setStoredSession(data.token, data.session?.refresh_token);
       if (supabase && data.session?.access_token && data.session?.refresh_token) {
         await supabase.auth.setSession({
           access_token: data.session.access_token,

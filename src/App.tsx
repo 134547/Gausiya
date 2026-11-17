@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, apiRequest, getStoredToken, setStoredToken } from './lib/api.ts';
+import { ApiError, apiRequest, clearStoredSession, getStoredRefreshToken, getStoredToken, setStoredSession } from './lib/api.ts';
 import { initSupabaseClient, isSupabaseClientConfigured, supabase } from './lib/supabase.ts';
 import { Language } from './i18n/translations.ts';
 import { MadrasaSettings, NavModuleId, NotificationItem, User } from './types.ts';
@@ -67,7 +67,7 @@ function readCachedPublicHome(): PublicHomeData | null {
 }
 
 function hasLocalSessionHint(): boolean {
-  if (getStoredToken()) return true;
+  if (getStoredToken() || getStoredRefreshToken()) return true;
   try {
     for (let i = 0; i < localStorage.length; i += 1) {
       const k = localStorage.key(i);
@@ -96,6 +96,7 @@ export default function App() {
 
   const [user, setUser] = useState<User | null>(null);
   const [pendingNotice, setPendingNotice] = useState<string | null>(null);
+  const [sessionNotice, setSessionNotice] = useState<string>('');
   const [loginMode, setLoginMode] = useState<'login' | 'forgot' | 'reset'>('login');
   const [settings, setSettings] = useState<MadrasaSettings | null>(cachedHomeRef.current?.settings || null);
   const [publicData, setPublicData] = useState<PublicHomeData | null>(cachedHomeRef.current);
@@ -170,10 +171,10 @@ export default function App() {
           err.status === 403 &&
           (err.code === 'ACCOUNT_PENDING' || err.code === 'ADMISSION_PENDING' || err.code === 'ADMISSION_REJECTED')
         ) {
-          setStoredToken(null);
+          clearStoredSession();
           setPendingNotice(err.message);
         } else {
-          setStoredToken(null);
+          clearStoredSession();
         }
         if (!options?.skipPublicFallback) {
           await loadPublicHome();
@@ -198,11 +199,27 @@ export default function App() {
   }, [fetchMe, loadPublicHome]);
 
   useEffect(() => {
+    const onSessionExpired = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ message?: string }>).detail;
+      currentUserIdRef.current = null;
+      clearStoredSession();
+      setUser(null);
+      setNotifications([]);
+      setUnreadCount(0);
+      setSessionNotice(detail?.message || 'Your session has expired. Please sign in again.');
+      setLoginMode('login');
+      setPublicView('login');
+    };
+    window.addEventListener('madrasa:session-expired', onSessionExpired);
+    return () => window.removeEventListener('madrasa:session-expired', onSessionExpired);
+  }, []);
+
+  useEffect(() => {
     if (!supabaseReady || !supabase) return;
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
-        if (session?.access_token) setStoredToken(session.access_token);
+        if (session?.access_token) setStoredSession(session.access_token, session.refresh_token);
         currentUserIdRef.current = null;
         setLoginMode('reset');
         setPublicView('login');
@@ -213,7 +230,7 @@ export default function App() {
 
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         if (session?.access_token) {
-          setStoredToken(session.access_token);
+          setStoredSession(session.access_token, session.refresh_token);
         }
         if (event === 'SIGNED_IN') {
           const authUid = session?.user?.id || null;
@@ -227,7 +244,7 @@ export default function App() {
 
       if (event === 'SIGNED_OUT') {
         currentUserIdRef.current = null;
-        setStoredToken(null);
+        clearStoredSession();
         setUser(null);
         setPendingNotice(null);
         setNotifications([]);
@@ -249,6 +266,7 @@ export default function App() {
   const handleLoginSuccess = async (loggedInUser: User) => {
     currentUserIdRef.current = loggedInUser.id;
     setPendingNotice(null);
+    setSessionNotice('');
     setUser(loggedInUser);
     setActiveModule('dashboard');
     try {
@@ -272,9 +290,10 @@ export default function App() {
       await supabase.auth.signOut().catch(() => {});
     }
     currentUserIdRef.current = null;
-    setStoredToken(null);
+    clearStoredSession();
     setUser(null);
     setPendingNotice(null);
+    setSessionNotice('');
     setNotifications([]);
     setUnreadCount(0);
     setActiveModule('dashboard');
@@ -365,7 +384,9 @@ export default function App() {
             lang={lang}
             onSuccess={handleLoginSuccess}
             initialMode={loginMode}
+            initialError={sessionNotice}
             onBackHome={() => {
+              setSessionNotice('');
               setLoginMode('login');
               setPublicView('home');
             }}
