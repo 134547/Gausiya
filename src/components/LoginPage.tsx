@@ -56,7 +56,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [infoMsg, setInfoMsg] = useState('');
   const [supabaseReady, setSupabaseReady] = useState(isSupabaseClientConfigured);
   const [apiReachable, setApiReachable] = useState<boolean | null>(null);
-  const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(null);
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState<number>(Date.now());
   const [captcha, setCaptcha] = useState<CaptchaChallengeData | null>(null);
@@ -79,7 +78,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setNowTick(current);
       if (current >= lockedUntil) {
         setLockedUntil(null);
-        setAttemptsRemaining(null);
         setError('');
       }
     }, 1000);
@@ -157,7 +155,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         }),
       });
 
-      setAttemptsRemaining(null);
       setLockedUntil(null);
       setCaptcha(null);
       setCaptchaAnswer('');
@@ -175,16 +172,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         const lockEnd = Number(payload.lockedUntil) || Date.now() + (Number(payload.retryAfterSeconds) || 900) * 1000;
         setNowTick(Date.now());
         setLockedUntil(lockEnd);
-        setAttemptsRemaining(0);
         setCaptcha(null);
         setCaptchaAnswer('');
         setErrorCode('TOO_MANY_ATTEMPTS');
         setError('Too many attempts. Please try again later.');
       } else {
         setErrorCode(payload.code || err?.code || '');
-        if (typeof payload.attemptsRemaining === 'number') {
-          setAttemptsRemaining(payload.attemptsRemaining);
-        }
         if (payload.captchaRequired) {
           if (payload.captcha) {
             setCaptcha(payload.captcha);
@@ -461,14 +454,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     ? `دوبارہ کوشش کے لیے باقی وقت: ${formatCountdown(remainingLockSeconds)}`
                     : `Login temporarily locked. Try again in ${formatCountdown(remainingLockSeconds)}`}
                 </div>
-              </div>
-            )}
-
-            {!isLocked && attemptsRemaining !== null && attemptsRemaining > 0 && attemptsRemaining < 5 && (
-              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-medium">
-                {lang === 'ur'
-                  ? `15 منٹ کی عارضی پابندی سے پہلے باقی کوششیں: ${attemptsRemaining}`
-                  : `${attemptsRemaining} attempt${attemptsRemaining === 1 ? '' : 's'} remaining before temporary 15-minute lockout.`}
               </div>
             )}
 

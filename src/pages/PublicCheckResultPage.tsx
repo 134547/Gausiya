@@ -29,7 +29,6 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
     attendanceSummary: any;
   } | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
-  const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(null);
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState<number>(Date.now());
   const [captcha, setCaptcha] = useState<CaptchaChallengeData | null>(null);
@@ -52,7 +51,6 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
       setNowTick(current);
       if (current >= lockedUntil) {
         setLockedUntil(null);
-        setAttemptsRemaining(null);
         setError('');
       }
     }, 1000);
@@ -99,14 +97,10 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
           const lockEnd = Number(data?.lockedUntil) || Date.now() + (Number(data?.retryAfterSeconds) || 900) * 1000;
           setNowTick(Date.now());
           setLockedUntil(lockEnd);
-          setAttemptsRemaining(0);
           setCaptcha(null);
           setCaptchaAnswer('');
           setError('Too many attempts. Please try again later.');
           return;
-        }
-        if (typeof data?.attemptsRemaining === 'number') {
-          setAttemptsRemaining(data.attemptsRemaining);
         }
         if (data?.captchaRequired) {
           if (data?.captcha) {
@@ -118,7 +112,6 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
         }
         throw new Error(formatHttpErrorMessage(res.status, data, rawText, 'Could not load result'));
       }
-      setAttemptsRemaining(null);
       setLockedUntil(null);
       setCaptcha(null);
       setCaptchaAnswer('');
@@ -211,12 +204,6 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
                 <div className="font-mono-num text-[11px] text-red-700">
                   Login temporarily locked. Try again in {formatCountdown(remainingLockSeconds)}
                 </div>
-              </div>
-            )}
-
-            {!isLocked && attemptsRemaining !== null && attemptsRemaining > 0 && attemptsRemaining < 5 && (
-              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-medium">
-                {attemptsRemaining} attempt{attemptsRemaining === 1 ? '' : 's'} remaining before temporary 15-minute lockout.
               </div>
             )}
 

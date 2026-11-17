@@ -655,7 +655,6 @@ router.post('/check-result', async (req, res) => {
       return res.status(401).json({
         error: 'Invalid student username or password.',
         code: 'INVALID_CREDENTIALS',
-        attemptsRemaining: fail.attemptsRemaining,
         captchaRequired: fail.captchaRequired,
         captcha: fail.captcha,
       });

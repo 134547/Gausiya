@@ -396,7 +396,6 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({
         error: fallbackMessage,
         code: 'INVALID_CREDENTIALS',
-        attemptsRemaining: fail.attemptsRemaining,
         captchaRequired: fail.captchaRequired,
         captcha: fail.captcha,
       });

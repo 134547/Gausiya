@@ -396,7 +396,6 @@ export async function precheckLoginAttempt(
           code: 'CAPTCHA_REQUIRED',
           captchaRequired: true,
           captcha: generateCaptchaChallenge(),
-          attemptsRemaining: Math.max(0, MAX_FAILED_ATTEMPTS - (acctState?.attempts || 0)),
         },
       };
     }
@@ -410,7 +409,6 @@ export async function precheckLoginAttempt(
           code: 'CAPTCHA_INVALID',
           captchaRequired: true,
           captcha: generateCaptchaChallenge(),
-          attemptsRemaining: Math.max(0, MAX_FAILED_ATTEMPTS - (acctState?.attempts || 0)),
         },
       };
     }
