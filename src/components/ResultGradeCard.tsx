@@ -30,7 +30,7 @@ export interface ResultCardData {
   admNo: string;
   studentName: string;
   division: string;
-  roll: number | string;
+  roll?: number | string;
   teacher: string;
   photo: string;
   remarks: string;
@@ -150,12 +150,11 @@ export function buildCardDataFromSavedResult(result: any, settings: any): Result
     admNo: meta.admNo || result?.admission_no || result?.student_code || '-',
     studentName: meta.studentName || result?.student_name || '-',
     division: meta.division || 'A',
-    roll: meta.roll ?? result?.position ?? 1,
     teacher: meta.teacher || 'Class Teacher',
     photo: meta.photo || result?.photo_url || '',
     remarks: meta.remarks || result?.teacher_remarks || '',
-    rank: result?.position || undefined,
-    totalStudents: meta.totalStudents || undefined,
+    rank: result?.position ? Number(result.position) : (meta.rank ? Number(meta.rank) : undefined),
+    totalStudents: result?.total_students || meta.totalStudents || undefined,
     subjects,
   };
 }
@@ -186,7 +185,24 @@ async function resolveElementImagesTemporarily(rootEl: HTMLElement): Promise<() 
   };
 }
 
-export async function exportResultCardPng(element: HTMLElement, fileBaseName: string): Promise<void> {
+async function waitForFontsReady() {
+  try {
+    if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) {
+      await Promise.race([
+        document.fonts.ready,
+        new Promise((resolve) => setTimeout(resolve, 600)),
+      ]);
+    }
+  } catch {
+    // ignore font readiness errors
+  }
+}
+
+export async function exportResultCardPng(
+  element: HTMLElement,
+  fileBaseName: string
+): Promise<{ fileName: string; dataUrl: string }> {
+  await waitForFontsReady();
   const restore = await resolveElementImagesTemporarily(element);
   try {
     let dataUrl: string;
@@ -195,18 +211,24 @@ export async function exportResultCardPng(element: HTMLElement, fileBaseName: st
     } catch {
       dataUrl = await toPng(element, { pixelRatio: 2, backgroundColor: '#ffffff', skipFonts: true });
     }
+    const fileName = `${sanitizeFileName(fileBaseName, 'result-card')}.png`;
     const link = document.createElement('a');
-    link.download = `${sanitizeFileName(fileBaseName, 'result-card')}.png`;
+    link.download = fileName;
     link.href = dataUrl;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    return { fileName, dataUrl };
   } finally {
     restore();
   }
 }
 
-export async function exportResultCardPdf(element: HTMLElement, fileBaseName: string): Promise<void> {
+export async function exportResultCardPdf(
+  element: HTMLElement,
+  fileBaseName: string
+): Promise<{ fileName: string; blobUrl: string }> {
+  await waitForFontsReady();
   const restore = await resolveElementImagesTemporarily(element);
   try {
     let dataUrl: string;
@@ -219,7 +241,7 @@ export async function exportResultCardPdf(element: HTMLElement, fileBaseName: st
     const imgProps = pdf.getImageProperties(dataUrl);
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 6;
+    const margin = 8;
     const imgWidth = pageWidth - margin * 2;
     const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
 
@@ -237,7 +259,11 @@ export async function exportResultCardPdf(element: HTMLElement, fileBaseName: st
         heightLeft -= pageHeight - margin * 2;
       }
     }
-    pdf.save(`${sanitizeFileName(fileBaseName, 'result-card')}.pdf`);
+    const fileName = `${sanitizeFileName(fileBaseName, 'result-card')}.pdf`;
+    const blob = pdf.output('blob');
+    const blobUrl = URL.createObjectURL(blob);
+    pdf.save(fileName);
+    return { fileName, blobUrl };
   } finally {
     restore();
   }
@@ -363,8 +389,12 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
             <span>{data.division || 'A'}</span>
           </div>
           <div>
-            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Roll No:</b>{' '}
-            <span>{data.roll || 1}</span>
+            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Rank:</b>{' '}
+            <span className="font-bold font-mono-num">
+              {data.rank
+                ? `#${data.rank}${data.totalStudents ? ` / ${data.totalStudents}` : ''}`
+                : 'Auto'}
+            </span>
           </div>
           <div>
             <b className="inline-block min-w-[115px] sm:min-w-[125px]">Class Teacher:</b>{' '}

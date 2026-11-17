@@ -5,6 +5,7 @@ import {
   requireSupabaseAdmin,
   resolveStorageUrl,
   resolveStorageUrlsInRows,
+  supabaseAdmin,
 } from '../supabase.ts';
 import { saveUploadedAsset } from '../imgbb.ts';
 import {
@@ -1608,11 +1609,148 @@ router.delete('/notices/:id', requireAuth, requireRole('super_admin', 'committee
 });
 
 // ==================== PROGRAMS & EVENTS ====================
-router.get('/programs', requireAuth, async (_req, res) => {
+interface ProgramMetaPayload {
+  poster_url: string;
+  whatsapp_number: string;
+  registration_enabled: boolean;
+  payment_required: boolean;
+  payment_amount: number;
+  payment_instructions: string;
+  sent_to_feed_count?: number;
+  last_sent_to_feed_at?: string;
+}
+
+function defaultProgramMeta(): ProgramMetaPayload {
+  return {
+    poster_url: '',
+    whatsapp_number: '',
+    registration_enabled: true,
+    payment_required: false,
+    payment_amount: 0,
+    payment_instructions: '',
+    sent_to_feed_count: 0,
+    last_sent_to_feed_at: '',
+  };
+}
+
+async function getProgramMetaMap(
+  admin: NonNullable<typeof supabaseAdmin>,
+  programIds: string[]
+): Promise<Map<string, ProgramMetaPayload>> {
+  const map = new Map<string, ProgramMetaPayload>();
+  if (!programIds.length) return map;
+
+  const { data: docs } = await admin
+    .from('documents')
+    .select('entity_id, file_url, created_at')
+    .eq('entity_type', 'general')
+    .eq('title', 'PROGRAM_META')
+    .in('entity_id', programIds)
+    .order('created_at', { ascending: false });
+
+  for (const doc of docs || []) {
+    const pid = String(doc.entity_id || '');
+    if (!pid || map.has(pid)) continue;
+    try {
+      const parsed = JSON.parse(doc.file_url || '{}');
+      const posterUrl = parsed?.poster_url ? await resolveStorageUrl(String(parsed.poster_url)) : '';
+      map.set(pid, {
+        poster_url: posterUrl,
+        whatsapp_number: String(parsed?.whatsapp_number || ''),
+        registration_enabled: parsed?.registration_enabled !== false,
+        payment_required: Boolean(parsed?.payment_required),
+        payment_amount: Number(parsed?.payment_amount || 0),
+        payment_instructions: String(parsed?.payment_instructions || ''),
+        sent_to_feed_count: Number(parsed?.sent_to_feed_count || 0),
+        last_sent_to_feed_at: String(parsed?.last_sent_to_feed_at || ''),
+      });
+    } catch {
+      map.set(pid, defaultProgramMeta());
+    }
+  }
+  return map;
+}
+
+async function upsertProgramMeta(
+  admin: NonNullable<typeof supabaseAdmin>,
+  programId: string,
+  userId: string,
+  meta: ProgramMetaPayload
+) {
+  const cleanMeta: ProgramMetaPayload = {
+    poster_url: normalizeStorageRef(meta.poster_url),
+    whatsapp_number: String(meta.whatsapp_number || '').trim(),
+    registration_enabled: meta.registration_enabled !== false,
+    payment_required: Boolean(meta.payment_required),
+    payment_amount: Boolean(meta.payment_required) ? Math.max(0, Number(meta.payment_amount || 0)) : 0,
+    payment_instructions: String(meta.payment_instructions || '').trim(),
+    sent_to_feed_count: Number(meta.sent_to_feed_count || 0),
+    last_sent_to_feed_at: String(meta.last_sent_to_feed_at || ''),
+  };
+
+  await admin
+    .from('documents')
+    .delete()
+    .eq('entity_type', 'general')
+    .eq('title', 'PROGRAM_META')
+    .eq('entity_id', programId);
+
+  const { error } = await admin.from('documents').insert({
+    entity_type: 'general',
+    entity_id: programId,
+    title: 'PROGRAM_META',
+    file_url: JSON.stringify(cleanMeta),
+    file_type: 'program_meta',
+    uploaded_by: userId,
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+router.get('/programs', requireAuth, async (req: AuthRequest, res) => {
   const admin = requireSupabaseAdmin(res);
   if (!admin) return;
   const { data } = await admin.from('programs').select('*').is('deleted_at', null).order('program_date', { ascending: false });
-  const resolved = await resolveStorageUrlsInRows(data || [], ['featured_photo']);
+  const rawList = data || [];
+  const programIds = rawList.map((p: any) => String(p.id)).filter(Boolean);
+
+  const [resolved, metaMap, regDocsRes] = await Promise.all([
+    resolveStorageUrlsInRows(rawList, ['featured_photo']),
+    getProgramMetaMap(admin, programIds),
+    programIds.length
+      ? admin
+          .from('documents')
+          .select('id, entity_id, file_url, uploaded_by, created_at')
+          .eq('entity_type', 'general')
+          .eq('title', 'PROGRAM_REGISTRATION')
+          .in('entity_id', programIds)
+          .order('created_at', { ascending: false })
+      : Promise.resolve({ data: [] as any[] }),
+  ]);
+
+  const regCountByProgram = new Map<string, number>();
+  const myRegByProgram = new Map<string, any>();
+  for (const rdoc of regDocsRes.data || []) {
+    const pid = String(rdoc.entity_id || '');
+    regCountByProgram.set(pid, (regCountByProgram.get(pid) || 0) + 1);
+    if (rdoc.uploaded_by === req.user!.id && !myRegByProgram.has(pid)) {
+      try {
+        const parsed = JSON.parse(rdoc.file_url || '{}');
+        myRegByProgram.set(pid, {
+          id: rdoc.id,
+          full_name: parsed.full_name || '',
+          whatsapp_number: parsed.whatsapp_number || '',
+          payment_required: Boolean(parsed.payment_required),
+          payment_amount: Number(parsed.payment_amount || 0),
+          created_at: rdoc.created_at,
+        });
+      } catch {
+        myRegByProgram.set(pid, { id: rdoc.id, created_at: rdoc.created_at });
+      }
+    }
+  }
+
   const programs = await Promise.all(
     resolved.map(async (p: any) => {
       let rawGallery: string[] = [];
@@ -1622,9 +1760,20 @@ router.get('/programs', requireAuth, async (_req, res) => {
         rawGallery = [];
       }
       const resolvedGallery = await Promise.all(rawGallery.map((u) => resolveStorageUrl(u)));
+      const meta = metaMap.get(String(p.id)) || defaultProgramMeta();
       return {
         ...p,
         gallery_json: JSON.stringify(resolvedGallery),
+        poster_url: meta.poster_url || '',
+        whatsapp_number: meta.whatsapp_number || '',
+        registration_enabled: meta.registration_enabled,
+        payment_required: meta.payment_required,
+        payment_amount: meta.payment_amount,
+        payment_instructions: meta.payment_instructions || '',
+        sent_to_feed_count: meta.sent_to_feed_count || 0,
+        last_sent_to_feed_at: meta.last_sent_to_feed_at || '',
+        registrations_count: regCountByProgram.get(String(p.id)) || 0,
+        my_registration: myRegByProgram.get(String(p.id)) || null,
       };
     })
   );
@@ -1635,8 +1784,31 @@ router.post('/programs', requireAuth, requireRole('super_admin', 'committee_memb
   try {
     const admin = requireSupabaseAdmin(res);
     if (!admin) return;
-    const { title, description, program_date, start_time, venue, category, featured_photo, gallery_images, status } = req.body;
+    const {
+      title,
+      description,
+      program_date,
+      start_time,
+      venue,
+      category,
+      featured_photo,
+      gallery_images,
+      status,
+      poster_url,
+      whatsapp_number,
+      registration_enabled,
+      payment_required,
+      payment_amount,
+      payment_instructions,
+    } = req.body;
     if (!title || !program_date) return res.status(400).json({ error: 'Program title and date are required.' });
+
+    const payReq = Boolean(payment_required);
+    const fixedAmount = payReq ? Number(payment_amount || 0) : 0;
+    if (payReq && (Number.isNaN(fixedAmount) || fixedAmount <= 0)) {
+      return res.status(400).json({ error: 'Please enter a valid fixed payment amount greater than 0 when payment is ON.' });
+    }
+
     const { data: created, error } = await admin
       .from('programs')
       .insert({
@@ -1655,6 +1827,18 @@ router.post('/programs', requireAuth, requireRole('super_admin', 'committee_memb
       .single();
 
     if (error || !created) return res.status(400).json({ error: error?.message || 'Failed to create program' });
+
+    await upsertProgramMeta(admin, created.id, req.user!.id, {
+      poster_url: poster_url || '',
+      whatsapp_number: whatsapp_number || '',
+      registration_enabled: registration_enabled !== false,
+      payment_required: payReq,
+      payment_amount: fixedAmount,
+      payment_instructions: payment_instructions || '',
+      sent_to_feed_count: 0,
+      last_sent_to_feed_at: '',
+    });
+
     await notifyRoles(['super_admin', 'teacher', 'parent', 'student', 'committee_member'], 'program', 'Upcoming Madrasa Program', `${title} on ${program_date}`, 'programs', created.id);
     await logActivity(req.user!, 'PROGRAM_CREATED', 'programs', created.id, `Created program: ${title}`, req.ip);
     return res.status(201).json({ id: created.id });
@@ -1664,27 +1848,73 @@ router.post('/programs', requireAuth, requireRole('super_admin', 'committee_memb
 });
 
 router.put('/programs/:id', requireAuth, requireRole('super_admin', 'committee_member'), async (req: AuthRequest, res) => {
-  const admin = requireSupabaseAdmin(res);
-  if (!admin) return;
-  const id = req.params.id;
-  const { title, description, program_date, start_time, venue, category, featured_photo, gallery_images, status } = req.body;
-  const payload: Record<string, any> = {};
-  if (title !== undefined) payload.title = title;
-  if (description !== undefined) payload.description = description;
-  if (program_date !== undefined) payload.program_date = program_date;
-  if (start_time !== undefined) payload.start_time = start_time;
-  if (venue !== undefined) payload.venue = venue;
-  if (category !== undefined) payload.category = category;
-  if (featured_photo !== undefined) payload.featured_photo = normalizeStorageRef(featured_photo);
-  if (gallery_images !== undefined) {
-    payload.gallery_json = Array.isArray(gallery_images) ? gallery_images.map((u: string) => normalizeStorageRef(u)).filter(Boolean) : [];
-  }
-  if (status !== undefined) payload.status = status;
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const id = req.params.id;
+    const {
+      title,
+      description,
+      program_date,
+      start_time,
+      venue,
+      category,
+      featured_photo,
+      gallery_images,
+      status,
+      poster_url,
+      whatsapp_number,
+      registration_enabled,
+      payment_required,
+      payment_amount,
+      payment_instructions,
+    } = req.body;
 
-  const { error } = await admin.from('programs').update(payload).eq('id', id).is('deleted_at', null);
-  if (error) return res.status(400).json({ error: error.message });
-  await logActivity(req.user!, 'PROGRAM_UPDATED', 'programs', id, `Updated program ${id}`, req.ip);
-  return res.json({ success: true });
+    const existingMetaMap = await getProgramMetaMap(admin, [id]);
+    const existingMeta = existingMetaMap.get(id) || defaultProgramMeta();
+
+    const nextPayReq = payment_required !== undefined ? Boolean(payment_required) : existingMeta.payment_required;
+    const nextPayAmount = nextPayReq
+      ? Number(payment_amount !== undefined ? payment_amount : existingMeta.payment_amount)
+      : 0;
+    if (nextPayReq && (Number.isNaN(nextPayAmount) || nextPayAmount <= 0)) {
+      return res.status(400).json({ error: 'Please enter a valid fixed payment amount greater than 0 when payment is ON.' });
+    }
+
+    const payload: Record<string, any> = {};
+    if (title !== undefined) payload.title = title;
+    if (description !== undefined) payload.description = description;
+    if (program_date !== undefined) payload.program_date = program_date;
+    if (start_time !== undefined) payload.start_time = start_time;
+    if (venue !== undefined) payload.venue = venue;
+    if (category !== undefined) payload.category = category;
+    if (featured_photo !== undefined) payload.featured_photo = normalizeStorageRef(featured_photo);
+    if (gallery_images !== undefined) {
+      payload.gallery_json = Array.isArray(gallery_images) ? gallery_images.map((u: string) => normalizeStorageRef(u)).filter(Boolean) : [];
+    }
+    if (status !== undefined) payload.status = status;
+
+    if (Object.keys(payload).length > 0) {
+      const { error } = await admin.from('programs').update(payload).eq('id', id).is('deleted_at', null);
+      if (error) return res.status(400).json({ error: error.message });
+    }
+
+    await upsertProgramMeta(admin, id, req.user!.id, {
+      poster_url: poster_url !== undefined ? poster_url : existingMeta.poster_url,
+      whatsapp_number: whatsapp_number !== undefined ? whatsapp_number : existingMeta.whatsapp_number,
+      registration_enabled: registration_enabled !== undefined ? Boolean(registration_enabled) : existingMeta.registration_enabled,
+      payment_required: nextPayReq,
+      payment_amount: nextPayAmount,
+      payment_instructions: payment_instructions !== undefined ? payment_instructions : existingMeta.payment_instructions,
+      sent_to_feed_count: existingMeta.sent_to_feed_count || 0,
+      last_sent_to_feed_at: existingMeta.last_sent_to_feed_at || '',
+    });
+
+    await logActivity(req.user!, 'PROGRAM_UPDATED', 'programs', id, `Updated program ${id}`, req.ip);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to update program' });
+  }
 });
 
 router.delete('/programs/:id', requireAuth, requireRole('super_admin', 'committee_member'), async (req: AuthRequest, res) => {
@@ -1695,6 +1925,278 @@ router.delete('/programs/:id', requireAuth, requireRole('super_admin', 'committe
   if (error) return res.status(400).json({ error: error.message });
   await logActivity(req.user!, 'PROGRAM_DELETED', 'programs', id, `Deleted program ${id}`, req.ip);
   return res.json({ success: true });
+});
+
+router.post('/programs/:id/send-to-feed', requireAuth, requireRole('super_admin', 'committee_member'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const id = req.params.id;
+
+    const { data: prog } = await admin.from('programs').select('*').eq('id', id).is('deleted_at', null).maybeSingle();
+    if (!prog) return res.status(404).json({ error: 'Program not found.' });
+
+    const metaMap = await getProgramMetaMap(admin, [id]);
+    const meta = metaMap.get(id) || defaultProgramMeta();
+
+    let rawGallery: string[] = [];
+    try {
+      rawGallery = typeof prog.gallery_json === 'string' ? JSON.parse(prog.gallery_json || '[]') : Array.isArray(prog.gallery_json) ? prog.gallery_json : [];
+    } catch {
+      rawGallery = [];
+    }
+
+    const mediaRefs = Array.from(
+      new Set(
+        [
+          normalizeStorageRef(meta.poster_url),
+          normalizeStorageRef(prog.featured_photo),
+          ...rawGallery.map((u) => normalizeStorageRef(u)),
+        ].filter(Boolean)
+      )
+    );
+
+    const lines: string[] = [];
+    if (prog.description) lines.push(String(prog.description).trim());
+    lines.push('');
+    lines.push(`Category: ${prog.category || 'Program'}`);
+    lines.push(`Date: ${prog.program_date}${prog.start_time ? ` | Time: ${prog.start_time}` : ''}`);
+    if (prog.venue) lines.push(`Venue: ${prog.venue}`);
+    if (meta.whatsapp_number) lines.push(`WhatsApp Contact: ${meta.whatsapp_number}`);
+    if (meta.registration_enabled) {
+      if (meta.payment_required && meta.payment_amount > 0) {
+        lines.push(`Registration Fee: Rs. ${meta.payment_amount} (Payment statement required in Programs section)`);
+      } else {
+        lines.push('Registration: Open (Free Registration in Programs section)');
+      }
+    }
+
+    const { data: createdPost, error: feedErr } = await admin
+      .from('feed_posts')
+      .insert({
+        author_id: req.user!.id,
+        title: prog.title,
+        content: lines.join('\n').trim(),
+        images_json: mediaRefs,
+      })
+      .select('id')
+      .single();
+
+    if (feedErr || !createdPost) {
+      return res.status(400).json({ error: feedErr?.message || 'Failed to send program to feed.' });
+    }
+
+    const sentAt = new Date().toISOString();
+    await upsertProgramMeta(admin, id, req.user!.id, {
+      ...meta,
+      sent_to_feed_count: (meta.sent_to_feed_count || 0) + 1,
+      last_sent_to_feed_at: sentAt,
+    });
+
+    await notifyRoles(
+      ['super_admin', 'teacher', 'parent', 'student', 'committee_member'],
+      'feed',
+      'Program Shared to Feed',
+      `${prog.title} (${prog.program_date})`,
+      'feed',
+      createdPost.id
+    );
+    await logActivity(req.user!, 'PROGRAM_SENT_TO_FEED', 'programs', id, `Sent program "${prog.title}" to activity feed`, req.ip);
+
+    return res.status(201).json({
+      success: true,
+      feedPostId: createdPost.id,
+      sent_to_feed_count: (meta.sent_to_feed_count || 0) + 1,
+      last_sent_to_feed_at: sentAt,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to send program to feed' });
+  }
+});
+
+router.post('/programs/:id/register', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const id = req.params.id;
+    const {
+      full_name,
+      father_name,
+      whatsapp_number,
+      address_or_class,
+      notes,
+      payment_statement_url,
+      payment_statement_name,
+    } = req.body as Record<string, any>;
+
+    const { data: prog } = await admin.from('programs').select('*').eq('id', id).is('deleted_at', null).maybeSingle();
+    if (!prog) return res.status(404).json({ error: 'Program not found.' });
+
+    const metaMap = await getProgramMetaMap(admin, [id]);
+    const meta = metaMap.get(id) || defaultProgramMeta();
+
+    if (meta.registration_enabled === false) {
+      return res.status(400).json({ error: 'Registration is currently closed for this program.' });
+    }
+
+    const cleanName = String(full_name || '').trim();
+    const cleanWhatsapp = String(whatsapp_number || '').trim();
+    if (!cleanName) return res.status(400).json({ error: 'Participant full name is required.' });
+    if (!cleanWhatsapp) return res.status(400).json({ error: 'WhatsApp / mobile number is required.' });
+
+    const paymentRequired = Boolean(meta.payment_required);
+    const fixedAmount = paymentRequired ? Number(meta.payment_amount || 0) : 0;
+    const statementRef = paymentRequired ? normalizeStorageRef(String(payment_statement_url || '').trim()) : '';
+
+    if (paymentRequired && !statementRef) {
+      return res.status(400).json({
+        error: `Please upload your payment statement / receipt for the fixed amount of Rs. ${fixedAmount}.`,
+      });
+    }
+
+    const regPayload = {
+      program_id: id,
+      program_title: prog.title,
+      user_id: req.user!.id,
+      username: req.user!.username || '',
+      registered_by_role: req.user!.role_slug,
+      full_name: cleanName,
+      father_name: String(father_name || '').trim(),
+      whatsapp_number: cleanWhatsapp,
+      address_or_class: String(address_or_class || '').trim(),
+      notes: String(notes || '').trim(),
+      payment_required: paymentRequired,
+      payment_amount: fixedAmount,
+      payment_statement_url: statementRef,
+      payment_statement_name: paymentRequired ? String(payment_statement_name || 'Payment Statement').trim() : '',
+      created_at: new Date().toISOString(),
+    };
+
+    const { data: inserted, error } = await admin
+      .from('documents')
+      .insert({
+        entity_type: 'general',
+        entity_id: id,
+        title: 'PROGRAM_REGISTRATION',
+        file_url: JSON.stringify(regPayload),
+        file_type: 'program_registration',
+        uploaded_by: req.user!.id,
+      })
+      .select('id, created_at')
+      .single();
+
+    if (error || !inserted) {
+      return res.status(400).json({ error: error?.message || 'Failed to save registration details.' });
+    }
+
+    await notifyRoles(
+      ['super_admin', 'committee_member'],
+      'program',
+      'New Program Registration',
+      `${cleanName} registered for ${prog.title}${paymentRequired ? ` (Paid Rs. ${fixedAmount})` : ' (Free)'}`,
+      'programs',
+      id
+    );
+    await logActivity(req.user!, 'PROGRAM_REGISTERED', 'programs', id, `Registered ${cleanName} for program ${prog.title}`, req.ip);
+
+    return res.status(201).json({
+      success: true,
+      registration: {
+        ...regPayload,
+        id: inserted.id,
+        created_at: inserted.created_at,
+        payment_statement_url: statementRef ? await resolveStorageUrl(statementRef) : '',
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to register for program' });
+  }
+});
+
+router.get('/programs/:id/registrations', requireAuth, requireRole('super_admin', 'committee_member'), async (req, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const id = req.params.id;
+
+    const [{ data: prog }, metaMap, { data: docs }] = await Promise.all([
+      admin.from('programs').select('id, title, program_date, venue').eq('id', id).is('deleted_at', null).maybeSingle(),
+      getProgramMetaMap(admin, [id]),
+      admin
+        .from('documents')
+        .select('id, file_url, uploaded_by, created_at')
+        .eq('entity_type', 'general')
+        .eq('title', 'PROGRAM_REGISTRATION')
+        .eq('entity_id', id)
+        .order('created_at', { ascending: false }),
+    ]);
+
+    if (!prog) return res.status(404).json({ error: 'Program not found.' });
+    const meta = metaMap.get(id) || defaultProgramMeta();
+
+    const registrations = await Promise.all(
+      (docs || []).map(async (doc: any) => {
+        let parsed: any = {};
+        try {
+          parsed = JSON.parse(doc.file_url || '{}');
+        } catch {
+          parsed = {};
+        }
+        const resolvedStatement = parsed.payment_statement_url
+          ? await resolveStorageUrl(String(parsed.payment_statement_url))
+          : '';
+        return {
+          id: doc.id,
+          program_id: id,
+          user_id: parsed.user_id || doc.uploaded_by || '',
+          username: parsed.username || '',
+          registered_by_role: parsed.registered_by_role || '',
+          full_name: parsed.full_name || 'Participant',
+          father_name: parsed.father_name || '',
+          whatsapp_number: parsed.whatsapp_number || '',
+          address_or_class: parsed.address_or_class || '',
+          notes: parsed.notes || '',
+          payment_required: Boolean(parsed.payment_required),
+          payment_amount: Number(parsed.payment_amount || 0),
+          payment_statement_url: resolvedStatement,
+          payment_statement_name: parsed.payment_statement_name || '',
+          created_at: parsed.created_at || doc.created_at,
+        };
+      })
+    );
+
+    return res.json({
+      program: {
+        ...prog,
+        payment_required: meta.payment_required,
+        payment_amount: meta.payment_amount,
+        whatsapp_number: meta.whatsapp_number,
+      },
+      registrations,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to load registrations' });
+  }
+});
+
+router.delete('/programs/:id/registrations/:regId', requireAuth, requireRole('super_admin', 'committee_member'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const { id, regId } = req.params;
+    const { error } = await admin
+      .from('documents')
+      .delete()
+      .eq('id', regId)
+      .eq('entity_type', 'general')
+      .eq('title', 'PROGRAM_REGISTRATION')
+      .eq('entity_id', id);
+    if (error) return res.status(400).json({ error: error.message });
+    await logActivity(req.user!, 'PROGRAM_REG_DELETED', 'programs', id, `Removed registration ${regId}`, req.ip);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to remove registration' });
+  }
 });
 
 // ==================== ACTIVITY FEED ====================

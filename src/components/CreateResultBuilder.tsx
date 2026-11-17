@@ -79,7 +79,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
   const [selectedExamId, setSelectedExamId] = useState('');
 
   const [admNo, setAdmNo] = useState('');
-  const [roll, setRoll] = useState('1');
   const [studentName, setStudentName] = useState('');
   const [division, setDivision] = useState('A');
   const [teacher, setTeacher] = useState('Class Teacher');
@@ -242,7 +241,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
     setSelectedExamId(String(editingResult.examination_id || ''));
     setStudentSearch('');
     setAdmNo(meta.admNo || editingResult.admission_no || editingResult.student_code || '');
-    setRoll(String(meta.roll ?? editingResult.position ?? 1));
     setStudentName(meta.studentName || editingResult.student_name || '');
     setDivision(meta.division || 'A');
     setTeacher(meta.teacher || 'Class Teacher');
@@ -361,17 +359,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
     setStudentName(st.full_name || '');
     setPhoto(st.photo_url || savedForExam?.card_meta?.photo || '');
 
-    // Compute deterministic Roll No within the student's class
-    const classRoster = students
-      .filter((x) => !targetClassId || String(x.class_id || '') === targetClassId)
-      .sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || '')));
-    const stIdx = classRoster.findIndex((x) => String(x.id) === String(st.id));
-    const dbRoll =
-      st.roll_no ||
-      savedForExam?.card_meta?.roll ||
-      (stIdx >= 0 ? stIdx + 1 : 1);
-    setRoll(String(dbRoll));
-
     // Resolve Class Teacher from DB (student join -> class record -> saved result -> default)
     const dbTeacher =
       (cls?.class_teacher_name && cls.class_teacher_name !== 'Unassigned' ? cls.class_teacher_name : '') ||
@@ -458,7 +445,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
       setStudentName('');
       setPhoto('');
       setDivision('A');
-      setRoll('1');
       setTeacher('Class Teacher');
       return;
     }
@@ -480,7 +466,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
       setStudentName('');
       setPhoto('');
       setDivision('A');
-      setRoll('1');
     }
   };
 
@@ -659,7 +644,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
       admNo: admNo || '-',
       studentName: studentName || 'Select Student',
       division: division || 'A',
-      roll: roll || 1,
       teacher: teacher || 'Class Teacher',
       photo,
       remarks: customRemarks,
@@ -679,7 +663,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
       admNo,
       studentName,
       division,
-      roll,
       teacher,
       photo,
       customRemarks,
@@ -737,7 +720,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
           schoolName,
           schoolAddress,
           admNo,
-          roll: Number(roll || 1),
           studentName,
           division,
           teacher,
@@ -961,13 +943,13 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-bold text-slate-200 mb-1">Roll No</label>
-                <input
-                  type="text"
-                  value={roll}
-                  onChange={(e) => setRoll(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-white/15 bg-white/10 text-xs text-white font-mono-num"
-                />
+                <label className="block text-[11px] font-bold text-slate-200 mb-1">
+                  Rank (Auto by Marks &amp; %)
+                </label>
+                <div className="w-full px-3 py-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 text-xs text-emerald-200 font-bold font-mono-num flex items-center justify-between">
+                  <span>#{liveRankInfo.rank} / {liveRankInfo.totalStudents}</span>
+                  <span className="text-[10px] font-normal text-emerald-300">Auto</span>
+                </div>
               </div>
             </div>
 
@@ -1050,7 +1032,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
                       (r) => String(r.student_id) === String(selectedStudentId) && String(r.examination_id) === eid
                     );
                     if (savedForThisExam?.card_meta) {
-                      if (savedForThisExam.card_meta.roll) setRoll(String(savedForThisExam.card_meta.roll));
                       if (savedForThisExam.card_meta.division) setDivision(String(savedForThisExam.card_meta.division));
                       if (savedForThisExam.card_meta.teacher) setTeacher(String(savedForThisExam.card_meta.teacher));
                     }

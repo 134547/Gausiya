@@ -152,6 +152,14 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
     }
   };
 
+  const [downloadReady, setDownloadReady] = useState<{ url: string; name: string } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (downloadReady?.url) URL.revokeObjectURL(downloadReady.url);
+    };
+  }, [downloadReady]);
+
   const handleDownloadPdf = async (r: any) => {
     const key = `pdf-${r.id}`;
     const el = cardRefs.current[String(r.id)];
@@ -159,10 +167,14 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
     setExportingKey(key);
     setError('');
     try {
-      await exportResultCardPdf(
+      const out = await exportResultCardPdf(
         el,
-        `${report?.student?.full_name || 'result'}-${r.exam_name || 'card'}`
+        `Result_Grade_Card_-_${report?.student?.full_name || 'Student'}_-_${r.exam_name || 'Examination'}`
       );
+      setDownloadReady((prev) => {
+        if (prev?.url) URL.revokeObjectURL(prev.url);
+        return { url: out.blobUrl, name: out.fileName };
+      });
     } catch (e: any) {
       setError(e?.message || 'Failed to download PDF');
     } finally {
@@ -177,10 +189,14 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
     setExportingKey(key);
     setError('');
     try {
-      await exportResultCardPng(
+      const out = await exportResultCardPng(
         el,
-        `${report?.student?.full_name || 'result'}-${r.exam_name || 'card'}`
+        `Result_Grade_Card_-_${report?.student?.full_name || 'Student'}_-_${r.exam_name || 'Examination'}`
       );
+      setDownloadReady((prev) => {
+        if (prev?.url) URL.revokeObjectURL(prev.url);
+        return { url: out.dataUrl, name: out.fileName };
+      });
     } catch (e: any) {
       setError(e?.message || 'Failed to download PNG');
     } finally {
@@ -241,7 +257,7 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
           </div>
           <h2 className="text-xl font-bold text-[#171717]">Check Examination Result</h2>
           <p className="text-xs text-[#737373]">
-            Enter the student&apos;s portal username (or Student ID) and password to view, print &amp; download your official result card.
+            Enter the student&apos;s portal username (or Student ID / Admission No) and password to view, print &amp; download your full official Grade Card.
           </p>
         </div>
 
@@ -262,13 +278,13 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           <div className="space-y-1">
-            <label className="block font-medium text-[#171717]">Student Username / ID *</label>
+            <label className="block font-medium text-[#171717]">Student Username / Adm No *</label>
             <input
               type="text"
               required
               disabled={isLocked}
               autoComplete="off"
-              placeholder="Username or Student ID"
+              placeholder="Username or Adm No"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full px-3 py-2.5 rounded-lg border border-neutral-200 text-sm focus:outline-none focus:border-[#DC1726] disabled:bg-neutral-100"
@@ -315,7 +331,7 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
           className="w-full inline-flex items-center justify-center gap-2 py-2.5 rounded-lg gold-gradient text-white text-sm font-semibold shadow-sm hover:opacity-95 disabled:opacity-60 cursor-pointer"
         >
           <Search className="w-4 h-4" />
-          <span>{loading ? 'Checking Result...' : 'View Result Card'}</span>
+          <span>{loading ? 'Checking Result...' : 'View Full Result Card'}</span>
         </button>
       </form>
     );
@@ -324,25 +340,50 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
   const printCardData = printResult ? buildCardDataFromSavedResult(printResult, settings) : null;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {error && (
         <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-[#DC1726] font-medium">
           {error}
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => {
-            setReport(null);
-            setError('');
-            setPassword('');
-          }}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 cursor-pointer"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" /> Check Another Student
-        </button>
+      {downloadReady && (
+        <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-medium flex flex-wrap items-center justify-between gap-2">
+          <span>Result card file ready: {downloadReady.name}</span>
+          <a
+            href={downloadReady.url}
+            download={downloadReady.name}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-700 text-white font-semibold hover:bg-emerald-800 whitespace-nowrap"
+          >
+            <Download className="w-3.5 h-3.5" /> Save File Again
+          </a>
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl border border-neutral-200 px-4 py-3 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setReport(null);
+              setError('');
+              setPassword('');
+              setDownloadReady(null);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 cursor-pointer"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Check Another Student
+          </button>
+          <div className="text-[#525252]">
+            <strong className="text-[#171717]">{report.student?.full_name}</strong> ·{' '}
+            <span className="font-mono-num">{report.student?.admission_no || report.student?.student_code}</span> ·{' '}
+            <span>{report.student?.class_name}</span> ·{' '}
+            <span className="font-mono-num text-[#10B981] font-semibold">
+              Attendance: {report.attendanceSummary?.present || 0}/{report.attendanceSummary?.total || 0}
+            </span>
+          </div>
+        </div>
+
         {report.results[0] && (
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -368,45 +409,10 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
               onClick={() => setPrintResult(report.results[0])}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 cursor-pointer"
             >
-              <Printer className="w-4 h-4" /> Print Result
+              <Printer className="w-4 h-4" /> Print / Full View
             </button>
           </div>
         )}
-      </div>
-
-      <div className="bg-white rounded-xl border border-neutral-200 p-5 shadow-xs grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-        <div className="flex items-center gap-3">
-          {report.student?.photo_url ? (
-            <img
-              src={report.student.photo_url}
-              alt={report.student?.full_name || 'Student'}
-              className="w-12 h-12 rounded-xl object-cover border border-neutral-200 shrink-0"
-            />
-          ) : (
-            <div className="w-12 h-12 rounded-xl green-gradient text-white flex items-center justify-center font-bold text-base shrink-0">
-              {String(report.student?.full_name || 'S').charAt(0).toUpperCase()}
-            </div>
-          )}
-          <div className="min-w-0">
-            <div className="text-[#737373]">Student Name</div>
-            <div className="text-sm font-bold text-[#171717] truncate">{report.student?.full_name}</div>
-            <div className="font-mono-num text-[#DC1726] mt-0.5">{report.student?.student_code}</div>
-          </div>
-        </div>
-        <div>
-          <div className="text-[#737373]">Class &amp; Guardian</div>
-          <div className="font-semibold text-[#171717] mt-0.5">{report.student?.class_name}</div>
-          <div className="text-[#737373] mt-0.5">S/O {report.student?.father_name}</div>
-        </div>
-        <div>
-          <div className="text-[#737373]">Attendance Record</div>
-          <div className="font-mono-num font-bold text-[#10B981] mt-0.5">
-            {report.attendanceSummary?.present || 0} Present / {report.attendanceSummary?.total || 0} Days
-          </div>
-          <div className="text-[#737373] font-mono-num mt-0.5">
-            Absent: {report.attendanceSummary?.absent || 0} · Leave: {report.attendanceSummary?.on_leave || 0}
-          </div>
-        </div>
       </div>
 
       {report.results.length === 0 ? (
@@ -418,12 +424,14 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
           {report.results.map((r) => {
             const cardData = buildCardDataFromSavedResult(r, settings);
             return (
-              <div key={r.id} className="bg-white rounded-2xl border border-neutral-200 shadow-xs overflow-hidden">
-                <div className="px-4 sm:px-5 py-3.5 bg-neutral-50 border-b border-neutral-200 flex flex-wrap items-center justify-between gap-3">
+              <div key={r.id} className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+                <div className="px-4 sm:px-5 py-3 bg-neutral-50 border-b border-neutral-200 flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-sm font-bold text-[#171717]">{r.exam_name}</h3>
+                    <h3 className="text-sm font-bold text-[#171717]">
+                      Result Grade Card — {report.student?.full_name} ({r.exam_name})
+                    </h3>
                     <p className="text-[11px] text-[#737373] font-mono-num">
-                      Score: {r.obtained_marks}/{r.total_marks} · {Number(r.percentage).toFixed(1)}% · Grade {r.grade} · Rank #{r.position}
+                      Score: {r.obtained_marks}/{r.total_marks} · {Number(r.percentage).toFixed(2)}% · Grade {r.grade} · Rank #{r.position}
                       {r.total_students ? ` / ${r.total_students}` : ''}
                     </p>
                   </div>
@@ -457,7 +465,7 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
                   </div>
                 </div>
 
-                <div className="p-3 sm:p-5 bg-neutral-100/70 overflow-x-auto">
+                <div className="p-2 sm:p-6 bg-white overflow-x-auto">
                   <div className="min-w-[680px]">
                     <ResultGradeCard
                       data={cardData}
@@ -476,22 +484,13 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
       <PrintModal
         open={Boolean(printResult)}
         standalone={true}
-        title="Official Result Grade Card"
+        title="Result Grade Card"
         subtitle={`${report.student?.full_name || ''} — ${printResult?.exam_name || ''}`}
         settings={settings}
         onClose={() => setPrintResult(null)}
         headerActions={
           printResult && (
             <>
-              <button
-                type="button"
-                disabled={exportingKey !== null}
-                onClick={() => handleDownloadPdf(printResult)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#2563eb] text-white text-sm font-medium hover:bg-blue-700 transition-colors cursor-pointer disabled:opacity-60"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Download PDF</span>
-              </button>
               <button
                 type="button"
                 disabled={exportingKey !== null}

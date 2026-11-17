@@ -686,8 +686,9 @@ router.post('/check-result', async (req, res) => {
         const { data: stByCode } = await admin
           .from('students')
           .select('id, user_id')
-          .eq('student_code', clean)
+          .or(`student_code.eq.${safeClean || clean},admission_no.eq.${safeClean || clean}`)
           .is('deleted_at', null)
+          .limit(1)
           .maybeSingle();
         if (stByCode?.user_id) {
           const { data: p } = await admin

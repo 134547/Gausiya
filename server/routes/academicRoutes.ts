@@ -578,7 +578,7 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
   const examIds = Array.from(new Set(resultsRaw.map((r: any) => r.examination_id).filter(Boolean)));
   const studentIds = Array.from(new Set(resultsRaw.map((r: any) => r.student_id).filter(Boolean)));
 
-  const [{ data: marksRaw }, { data: esRaw }, { data: metaDocs }] = await Promise.all([
+  const [{ data: marksRaw }, { data: esRaw }, { data: metaDocs }, { data: examCountsRaw }] = await Promise.all([
     examIds.length && studentIds.length
       ? admin
           .from('marks')
@@ -601,7 +601,19 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
           .in('entity_id', resultIds)
           .order('created_at', { ascending: false })
       : Promise.resolve({ data: [] as any[] }),
+    examIds.length
+      ? admin
+          .from('results')
+          .select('examination_id')
+          .in('examination_id', examIds)
+      : Promise.resolve({ data: [] as any[] }),
   ]);
+
+  const totalByExam = new Map<string, number>();
+  for (const row of examCountsRaw || []) {
+    const key = String(row.examination_id);
+    totalByExam.set(key, (totalByExam.get(key) || 0) + 1);
+  }
 
   const metaMap = new Map<string, any>();
   for (const doc of metaDocs || []) {
@@ -628,6 +640,7 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
   const results = await Promise.all(
     resultsRaw.map(async (r: any) => {
       const cardMeta = metaMap.get(r.id) || null;
+      const totalStudents = totalByExam.get(String(r.examination_id)) || undefined;
       return {
         ...r,
         student_name: r.students?.full_name || '',
@@ -640,6 +653,7 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
         exam_date: r.examinations?.start_date || '',
         session_name: r.examinations?.academic_sessions?.name || '',
         results_published: r.examinations?.results_published ? 1 : 0,
+        total_students: totalStudents,
         subjects: marks.filter((m) => m.examination_id === r.examination_id && m.student_id === r.student_id),
         card_meta: cardMeta,
       };
@@ -1239,7 +1253,6 @@ async function saveOrUpdateResultCard(
       schoolName: String(card_meta.schoolName || ''),
       schoolAddress: String(card_meta.schoolAddress || ''),
       admNo: String(card_meta.admNo || ''),
-      roll: Number(card_meta.roll || 1),
       studentName: String(card_meta.studentName || studentRow.full_name || ''),
       division: String(card_meta.division || 'A'),
       teacher: String(card_meta.teacher || 'Class Teacher'),

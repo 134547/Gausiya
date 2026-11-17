@@ -5,6 +5,7 @@ import {
   Download,
   Edit3,
   Eye,
+  FileText,
   PlusCircle,
   Power,
   Printer,
@@ -22,6 +23,7 @@ import { CreateResultBuilder } from '../components/CreateResultBuilder.tsx';
 import {
   ResultGradeCard,
   buildCardDataFromSavedResult,
+  exportResultCardPdf,
   exportResultCardPng,
 } from '../components/ResultGradeCard.tsx';
 
@@ -55,7 +57,10 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
   const [deleting, setDeleting] = useState(false);
   const [uploadingExamId, setUploadingExamId] = useState<string | null>(null);
   const [downloadingViewPng, setDownloadingViewPng] = useState(false);
+  const [downloadingViewPdf, setDownloadingViewPdf] = useState(false);
   const viewCardRef = useRef<HTMLDivElement>(null);
+  const inlineCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [inlineExportKey, setInlineExportKey] = useState<string | null>(null);
 
   const [printClassSheet, setPrintClassSheet] = useState(false);
   const [msg, setMsg] = useState('');
@@ -265,12 +270,47 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
     try {
       await exportResultCardPng(
         viewCardRef.current,
-        `${viewResult.student_name || 'result-card'}-${viewResult.student_code || ''}`
+        `Result_Grade_Card_-_${viewResult.student_name || 'Student'}_-_${viewResult.exam_name || 'Examination'}`
       );
     } catch (e: any) {
       setErr(e?.message || 'Failed to download PNG.');
     } finally {
       setDownloadingViewPng(false);
+    }
+  };
+
+  const handleDownloadViewPdf = async () => {
+    if (!viewCardRef.current || !viewResult || downloadingViewPdf) return;
+    setDownloadingViewPdf(true);
+    try {
+      await exportResultCardPdf(
+        viewCardRef.current,
+        `Result_Grade_Card_-_${viewResult.student_name || 'Student'}_-_${viewResult.exam_name || 'Examination'}`
+      );
+    } catch (e: any) {
+      setErr(e?.message || 'Failed to download PDF.');
+    } finally {
+      setDownloadingViewPdf(false);
+    }
+  };
+
+  const handleInlineDownload = async (r: any, type: 'pdf' | 'png') => {
+    const el = inlineCardRefs.current[String(r.id)];
+    const key = `${type}-${r.id}`;
+    if (!el || inlineExportKey) return;
+    setInlineExportKey(key);
+    setErr('');
+    try {
+      const baseName = `Result_Grade_Card_-_${r.student_name || 'Student'}_-_${r.exam_name || 'Examination'}`;
+      if (type === 'pdf') {
+        await exportResultCardPdf(el, baseName);
+      } else {
+        await exportResultCardPng(el, baseName);
+      }
+    } catch (e: any) {
+      setErr(e?.message || `Failed to download ${type.toUpperCase()}.`);
+    } finally {
+      setInlineExportKey(null);
     }
   };
 
@@ -280,8 +320,10 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
     ? {
         ...buildCardDataFromSavedResult(viewResult, settings),
         totalStudents:
+          viewResult.total_students ||
           results.filter((x) => String(x.examination_id) === String(viewResult.examination_id))
-            .length || undefined,
+            .length ||
+          undefined,
       }
     : null;
 
@@ -716,6 +758,78 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
         </div>
       )}
 
+      {tab === 'results' &&
+        (user.role_slug === 'student' || user.role_slug === 'parent') &&
+        results.length > 0 && (
+          <div className="space-y-5">
+            {results.map((r) => {
+              const inlineCardData = {
+                ...buildCardDataFromSavedResult(r, settings),
+                totalStudents:
+                  r.total_students ||
+                  results.filter((x) => String(x.examination_id) === String(r.examination_id)).length ||
+                  undefined,
+              };
+              return (
+                <div
+                  key={`inline-${r.id}`}
+                  className="bg-white rounded-2xl border border-neutral-200 shadow-xs overflow-hidden"
+                >
+                  <div className="px-4 sm:px-5 py-3 bg-neutral-50 border-b border-neutral-200 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-[#171717]">
+                        {r.student_name} — {r.exam_name}
+                      </h3>
+                      <p className="text-[11px] text-[#737373] font-mono-num">
+                        Marks: {r.obtained_marks}/{r.total_marks} · {Number(r.percentage).toFixed(2)}% · Grade {r.grade} · Rank #{r.position}
+                        {r.total_students ? ` / ${r.total_students}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={inlineExportKey !== null}
+                        onClick={() => handleInlineDownload(r, 'pdf')}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2563eb] text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-60 cursor-pointer"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>{inlineExportKey === `pdf-${r.id}` ? 'Saving PDF...' : 'Download PDF'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={inlineExportKey !== null}
+                        onClick={() => handleInlineDownload(r, 'png')}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ea580c] text-white text-xs font-semibold hover:bg-orange-600 disabled:opacity-60 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>{inlineExportKey === `png-${r.id}` ? 'Saving PNG...' : 'Download PNG'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setViewResult(r)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 cursor-pointer"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>Print</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="p-2 sm:p-5 bg-white overflow-x-auto">
+                    <div className="min-w-[680px]">
+                      <ResultGradeCard
+                        data={inlineCardData}
+                        cardRef={(el) => {
+                          inlineCardRefs.current[String(r.id)] = el;
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
       {tab === 'create' && canEnterMarks && (
         <CreateResultBuilder
           user={user}
@@ -812,6 +926,15 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
         headerActions={
           viewResult && (
             <>
+              <button
+                type="button"
+                disabled={downloadingViewPdf}
+                onClick={handleDownloadViewPdf}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#2563eb] text-white text-sm font-medium hover:bg-blue-700 transition-colors cursor-pointer disabled:opacity-60"
+              >
+                <FileText className="w-4 h-4" />
+                <span>{downloadingViewPdf ? 'Saving PDF...' : 'Download PDF'}</span>
+              </button>
               <button
                 type="button"
                 disabled={downloadingViewPng}
