@@ -1611,7 +1611,11 @@ router.delete('/notices/:id', requireAuth, requireRole('super_admin', 'committee
 // ==================== PROGRAMS & EVENTS ====================
 interface ProgramMetaPayload {
   poster_url: string;
+  end_date: string;
+  end_time: string;
   whatsapp_number: string;
+  whatsapp_channel_name: string;
+  whatsapp_channel_link: string;
   registration_enabled: boolean;
   payment_required: boolean;
   payment_amount: number;
@@ -1623,7 +1627,11 @@ interface ProgramMetaPayload {
 function defaultProgramMeta(): ProgramMetaPayload {
   return {
     poster_url: '',
+    end_date: '',
+    end_time: '',
     whatsapp_number: '',
+    whatsapp_channel_name: '',
+    whatsapp_channel_link: '',
     registration_enabled: true,
     payment_required: false,
     payment_amount: 0,
@@ -1631,6 +1639,19 @@ function defaultProgramMeta(): ProgramMetaPayload {
     sent_to_feed_count: 0,
     last_sent_to_feed_at: '',
   };
+}
+
+function normalizeChannelUrl(raw?: string): string {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  return `https://${s}`;
+}
+
+function isMissingColumnError(err: any): boolean {
+  const msg = String(err?.message || '').toLowerCase();
+  const code = String(err?.code || '').toUpperCase();
+  return code === 'PGRST204' || code === '42703' || msg.includes('column') || msg.includes('schema cache');
 }
 
 async function getProgramMetaMap(
@@ -1656,7 +1677,11 @@ async function getProgramMetaMap(
       const posterUrl = parsed?.poster_url ? await resolveStorageUrl(String(parsed.poster_url)) : '';
       map.set(pid, {
         poster_url: posterUrl,
+        end_date: String(parsed?.end_date || ''),
+        end_time: String(parsed?.end_time || ''),
         whatsapp_number: String(parsed?.whatsapp_number || ''),
+        whatsapp_channel_name: String(parsed?.whatsapp_channel_name || ''),
+        whatsapp_channel_link: String(parsed?.whatsapp_channel_link || ''),
         registration_enabled: parsed?.registration_enabled !== false,
         payment_required: Boolean(parsed?.payment_required),
         payment_amount: Number(parsed?.payment_amount || 0),
@@ -1679,7 +1704,11 @@ async function upsertProgramMeta(
 ) {
   const cleanMeta: ProgramMetaPayload = {
     poster_url: normalizeStorageRef(meta.poster_url),
+    end_date: String(meta.end_date || '').trim(),
+    end_time: String(meta.end_time || '').trim(),
     whatsapp_number: String(meta.whatsapp_number || '').trim(),
+    whatsapp_channel_name: String(meta.whatsapp_channel_name || '').trim(),
+    whatsapp_channel_link: normalizeChannelUrl(meta.whatsapp_channel_link),
     registration_enabled: meta.registration_enabled !== false,
     payment_required: Boolean(meta.payment_required),
     payment_amount: Boolean(meta.payment_required) ? Math.max(0, Number(meta.payment_amount || 0)) : 0,
@@ -1716,7 +1745,7 @@ router.get('/programs', requireAuth, async (req: AuthRequest, res) => {
   const programIds = rawList.map((p: any) => String(p.id)).filter(Boolean);
 
   const [resolved, metaMap, regDocsRes] = await Promise.all([
-    resolveStorageUrlsInRows(rawList, ['featured_photo']),
+    resolveStorageUrlsInRows(rawList, ['featured_photo', 'poster_url']),
     getProgramMetaMap(admin, programIds),
     programIds.length
       ? admin
@@ -1764,12 +1793,21 @@ router.get('/programs', requireAuth, async (req: AuthRequest, res) => {
       return {
         ...p,
         gallery_json: JSON.stringify(resolvedGallery),
-        poster_url: meta.poster_url || '',
-        whatsapp_number: meta.whatsapp_number || '',
-        registration_enabled: meta.registration_enabled,
-        payment_required: meta.payment_required,
-        payment_amount: meta.payment_amount,
-        payment_instructions: meta.payment_instructions || '',
+        poster_url: p.poster_url || meta.poster_url || '',
+        end_date: p.end_date || meta.end_date || p.program_date || '',
+        end_time: p.end_time || meta.end_time || '',
+        whatsapp_number: p.whatsapp_number || meta.whatsapp_number || '',
+        whatsapp_channel_name: p.whatsapp_channel_name || meta.whatsapp_channel_name || '',
+        whatsapp_channel_link: p.whatsapp_channel_link || meta.whatsapp_channel_link || '',
+        registration_enabled:
+          typeof p.registration_enabled === 'boolean' ? p.registration_enabled : meta.registration_enabled,
+        payment_required:
+          typeof p.payment_required === 'boolean' ? p.payment_required : meta.payment_required,
+        payment_amount:
+          p.payment_amount !== undefined && p.payment_amount !== null && Number(p.payment_amount) > 0
+            ? Number(p.payment_amount)
+            : meta.payment_amount,
+        payment_instructions: p.payment_instructions || meta.payment_instructions || '',
         sent_to_feed_count: meta.sent_to_feed_count || 0,
         last_sent_to_feed_at: meta.last_sent_to_feed_at || '',
         registrations_count: regCountByProgram.get(String(p.id)) || 0,
@@ -1789,6 +1827,8 @@ router.post('/programs', requireAuth, requireRole('super_admin', 'committee_memb
       description,
       program_date,
       start_time,
+      end_date,
+      end_time,
       venue,
       category,
       featured_photo,
@@ -1796,12 +1836,19 @@ router.post('/programs', requireAuth, requireRole('super_admin', 'committee_memb
       status,
       poster_url,
       whatsapp_number,
+      whatsapp_channel_name,
+      whatsapp_channel_link,
       registration_enabled,
       payment_required,
       payment_amount,
       payment_instructions,
     } = req.body;
-    if (!title || !program_date) return res.status(400).json({ error: 'Program title and date are required.' });
+    if (!title || !program_date) return res.status(400).json({ error: 'Program title and start date are required.' });
+
+    const cleanEndDate = String(end_date || program_date).trim();
+    if (cleanEndDate && cleanEndDate < String(program_date).trim()) {
+      return res.status(400).json({ error: 'End date cannot be earlier than start date.' });
+    }
 
     const payReq = Boolean(payment_required);
     const fixedAmount = payReq ? Number(payment_amount || 0) : 0;
@@ -1809,28 +1856,56 @@ router.post('/programs', requireAuth, requireRole('super_admin', 'committee_memb
       return res.status(400).json({ error: 'Please enter a valid fixed payment amount greater than 0 when payment is ON.' });
     }
 
-    const { data: created, error } = await admin
-      .from('programs')
-      .insert({
-        title: title.trim(),
-        description: description || '',
-        program_date,
-        start_time: start_time || '',
-        venue: venue || 'Madrasa Gausiya Razvia Campus',
-        category: category || 'Religious Gathering',
-        featured_photo: normalizeStorageRef(featured_photo),
-        gallery_json: Array.isArray(gallery_images) ? gallery_images.map((u: string) => normalizeStorageRef(u)).filter(Boolean) : [],
-        status: status || 'upcoming',
-        created_by: req.user!.id,
-      })
-      .select('id')
-      .single();
+    const cleanChannelLink = normalizeChannelUrl(whatsapp_channel_link);
+    const baseInsert = {
+      title: title.trim(),
+      description: description || '',
+      program_date,
+      start_time: start_time || '',
+      venue: venue || 'Madrasa Gausiya Razvia Campus',
+      category: category || 'Religious Gathering',
+      featured_photo: normalizeStorageRef(featured_photo),
+      gallery_json: Array.isArray(gallery_images) ? gallery_images.map((u: string) => normalizeStorageRef(u)).filter(Boolean) : [],
+      status: status || 'upcoming',
+      created_by: req.user!.id,
+    };
 
-    if (error || !created) return res.status(400).json({ error: error?.message || 'Failed to create program' });
+    const extendedInsert = {
+      ...baseInsert,
+      end_date: cleanEndDate,
+      end_time: String(end_time || '').trim(),
+      poster_url: normalizeStorageRef(poster_url),
+      whatsapp_number: String(whatsapp_number || '').trim(),
+      whatsapp_channel_name: String(whatsapp_channel_name || '').trim(),
+      whatsapp_channel_link: cleanChannelLink,
+      registration_enabled: registration_enabled !== false,
+      payment_required: payReq,
+      payment_amount: fixedAmount,
+      payment_instructions: String(payment_instructions || '').trim(),
+    };
+
+    let created: { id: string } | null = null;
+    let insertErr: any = null;
+
+    const firstAttempt = await admin.from('programs').insert(extendedInsert).select('id').single();
+    if (firstAttempt.error && isMissingColumnError(firstAttempt.error)) {
+      const fallbackAttempt = await admin.from('programs').insert(baseInsert).select('id').single();
+      created = fallbackAttempt.data;
+      insertErr = fallbackAttempt.error;
+    } else {
+      created = firstAttempt.data;
+      insertErr = firstAttempt.error;
+    }
+
+    if (insertErr || !created) return res.status(400).json({ error: insertErr?.message || 'Failed to create program' });
 
     await upsertProgramMeta(admin, created.id, req.user!.id, {
       poster_url: poster_url || '',
+      end_date: cleanEndDate,
+      end_time: String(end_time || '').trim(),
       whatsapp_number: whatsapp_number || '',
+      whatsapp_channel_name: whatsapp_channel_name || '',
+      whatsapp_channel_link: cleanChannelLink,
       registration_enabled: registration_enabled !== false,
       payment_required: payReq,
       payment_amount: fixedAmount,
@@ -1857,6 +1932,8 @@ router.put('/programs/:id', requireAuth, requireRole('super_admin', 'committee_m
       description,
       program_date,
       start_time,
+      end_date,
+      end_time,
       venue,
       category,
       featured_photo,
@@ -1864,6 +1941,8 @@ router.put('/programs/:id', requireAuth, requireRole('super_admin', 'committee_m
       status,
       poster_url,
       whatsapp_number,
+      whatsapp_channel_name,
+      whatsapp_channel_link,
       registration_enabled,
       payment_required,
       payment_amount,
@@ -1873,6 +1952,12 @@ router.put('/programs/:id', requireAuth, requireRole('super_admin', 'committee_m
     const existingMetaMap = await getProgramMetaMap(admin, [id]);
     const existingMeta = existingMetaMap.get(id) || defaultProgramMeta();
 
+    const nextStartDate = program_date !== undefined ? String(program_date).trim() : '';
+    const nextEndDate = end_date !== undefined ? String(end_date).trim() : existingMeta.end_date;
+    if (nextStartDate && nextEndDate && nextEndDate < nextStartDate) {
+      return res.status(400).json({ error: 'End date cannot be earlier than start date.' });
+    }
+
     const nextPayReq = payment_required !== undefined ? Boolean(payment_required) : existingMeta.payment_required;
     const nextPayAmount = nextPayReq
       ? Number(payment_amount !== undefined ? payment_amount : existingMeta.payment_amount)
@@ -1881,27 +1966,54 @@ router.put('/programs/:id', requireAuth, requireRole('super_admin', 'committee_m
       return res.status(400).json({ error: 'Please enter a valid fixed payment amount greater than 0 when payment is ON.' });
     }
 
-    const payload: Record<string, any> = {};
-    if (title !== undefined) payload.title = title;
-    if (description !== undefined) payload.description = description;
-    if (program_date !== undefined) payload.program_date = program_date;
-    if (start_time !== undefined) payload.start_time = start_time;
-    if (venue !== undefined) payload.venue = venue;
-    if (category !== undefined) payload.category = category;
-    if (featured_photo !== undefined) payload.featured_photo = normalizeStorageRef(featured_photo);
+    const basePayload: Record<string, any> = {};
+    if (title !== undefined) basePayload.title = title;
+    if (description !== undefined) basePayload.description = description;
+    if (program_date !== undefined) basePayload.program_date = program_date;
+    if (start_time !== undefined) basePayload.start_time = start_time;
+    if (venue !== undefined) basePayload.venue = venue;
+    if (category !== undefined) basePayload.category = category;
+    if (featured_photo !== undefined) basePayload.featured_photo = normalizeStorageRef(featured_photo);
     if (gallery_images !== undefined) {
-      payload.gallery_json = Array.isArray(gallery_images) ? gallery_images.map((u: string) => normalizeStorageRef(u)).filter(Boolean) : [];
+      basePayload.gallery_json = Array.isArray(gallery_images) ? gallery_images.map((u: string) => normalizeStorageRef(u)).filter(Boolean) : [];
     }
-    if (status !== undefined) payload.status = status;
+    if (status !== undefined) basePayload.status = status;
 
-    if (Object.keys(payload).length > 0) {
-      const { error } = await admin.from('programs').update(payload).eq('id', id).is('deleted_at', null);
-      if (error) return res.status(400).json({ error: error.message });
+    const extendedPayload: Record<string, any> = { ...basePayload };
+    if (end_date !== undefined) extendedPayload.end_date = end_date || null;
+    if (end_time !== undefined) extendedPayload.end_time = String(end_time || '').trim();
+    if (poster_url !== undefined) extendedPayload.poster_url = normalizeStorageRef(poster_url);
+    if (whatsapp_number !== undefined) extendedPayload.whatsapp_number = String(whatsapp_number || '').trim();
+    if (whatsapp_channel_name !== undefined) extendedPayload.whatsapp_channel_name = String(whatsapp_channel_name || '').trim();
+    if (whatsapp_channel_link !== undefined) extendedPayload.whatsapp_channel_link = normalizeChannelUrl(whatsapp_channel_link);
+    if (registration_enabled !== undefined) extendedPayload.registration_enabled = Boolean(registration_enabled);
+    if (payment_required !== undefined) extendedPayload.payment_required = nextPayReq;
+    if (payment_amount !== undefined || payment_required !== undefined) extendedPayload.payment_amount = nextPayAmount;
+    if (payment_instructions !== undefined) extendedPayload.payment_instructions = String(payment_instructions || '').trim();
+
+    if (Object.keys(extendedPayload).length > 0) {
+      const firstUpdate = await admin.from('programs').update(extendedPayload).eq('id', id).is('deleted_at', null);
+      if (firstUpdate.error && isMissingColumnError(firstUpdate.error)) {
+        if (Object.keys(basePayload).length > 0) {
+          const fallbackUpdate = await admin.from('programs').update(basePayload).eq('id', id).is('deleted_at', null);
+          if (fallbackUpdate.error) return res.status(400).json({ error: fallbackUpdate.error.message });
+        }
+      } else if (firstUpdate.error) {
+        return res.status(400).json({ error: firstUpdate.error.message });
+      }
     }
 
     await upsertProgramMeta(admin, id, req.user!.id, {
       poster_url: poster_url !== undefined ? poster_url : existingMeta.poster_url,
+      end_date: end_date !== undefined ? String(end_date || '').trim() : existingMeta.end_date,
+      end_time: end_time !== undefined ? String(end_time || '').trim() : existingMeta.end_time,
       whatsapp_number: whatsapp_number !== undefined ? whatsapp_number : existingMeta.whatsapp_number,
+      whatsapp_channel_name:
+        whatsapp_channel_name !== undefined ? whatsapp_channel_name : existingMeta.whatsapp_channel_name,
+      whatsapp_channel_link:
+        whatsapp_channel_link !== undefined
+          ? normalizeChannelUrl(whatsapp_channel_link)
+          : existingMeta.whatsapp_channel_link,
       registration_enabled: registration_enabled !== undefined ? Boolean(registration_enabled) : existingMeta.registration_enabled,
       payment_required: nextPayReq,
       payment_amount: nextPayAmount,
@@ -1914,6 +2026,36 @@ router.put('/programs/:id', requireAuth, requireRole('super_admin', 'committee_m
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(400).json({ error: err?.message || 'Failed to update program' });
+  }
+});
+
+router.put('/programs/:id/poster', requireAuth, requireRole('super_admin', 'committee_member'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const id = req.params.id;
+    const { poster_url } = req.body as { poster_url?: string };
+
+    const { data: prog } = await admin.from('programs').select('id, title').eq('id', id).is('deleted_at', null).maybeSingle();
+    if (!prog) return res.status(404).json({ error: 'Program not found.' });
+
+    const cleanPosterRef = normalizeStorageRef(poster_url);
+    const updateRes = await admin.from('programs').update({ poster_url: cleanPosterRef }).eq('id', id).is('deleted_at', null);
+    if (updateRes.error && !isMissingColumnError(updateRes.error)) {
+      return res.status(400).json({ error: updateRes.error.message });
+    }
+
+    const existingMetaMap = await getProgramMetaMap(admin, [id]);
+    const existingMeta = existingMetaMap.get(id) || defaultProgramMeta();
+    await upsertProgramMeta(admin, id, req.user!.id, {
+      ...existingMeta,
+      poster_url: cleanPosterRef,
+    });
+
+    await logActivity(req.user!, 'PROGRAM_POSTER_UPDATED', 'programs', id, `Updated poster for program "${prog.title}"`, req.ip);
+    return res.json({ success: true, poster_url: cleanPosterRef ? await resolveStorageUrl(cleanPosterRef) : '' });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to update program poster' });
   }
 });
 
@@ -1946,26 +2088,49 @@ router.post('/programs/:id/send-to-feed', requireAuth, requireRole('super_admin'
       rawGallery = [];
     }
 
+    const posterRef = prog.poster_url || meta.poster_url;
     const mediaRefs = Array.from(
       new Set(
         [
-          normalizeStorageRef(meta.poster_url),
+          normalizeStorageRef(posterRef),
           normalizeStorageRef(prog.featured_photo),
           ...rawGallery.map((u) => normalizeStorageRef(u)),
         ].filter(Boolean)
       )
     );
 
+    const startDate = prog.program_date || '';
+    const startTime = prog.start_time || '';
+    const endDate = prog.end_date || meta.end_date || startDate;
+    const endTime = prog.end_time || meta.end_time || '';
+    const waNumber = prog.whatsapp_number || meta.whatsapp_number || '';
+    const waChannelName = prog.whatsapp_channel_name || meta.whatsapp_channel_name || '';
+    const waChannelLink = prog.whatsapp_channel_link || meta.whatsapp_channel_link || '';
+    const regEnabled = typeof prog.registration_enabled === 'boolean' ? prog.registration_enabled : meta.registration_enabled;
+    const payRequired = typeof prog.payment_required === 'boolean' ? prog.payment_required : meta.payment_required;
+    const payAmount =
+      prog.payment_amount !== undefined && prog.payment_amount !== null && Number(prog.payment_amount) > 0
+        ? Number(prog.payment_amount)
+        : meta.payment_amount;
+
+    const startLabel = `${startDate}${startTime ? ` (${startTime})` : ''}`;
+    const endLabel = `${endDate}${endTime ? ` (${endTime})` : ''}`;
+
     const lines: string[] = [];
     if (prog.description) lines.push(String(prog.description).trim());
     lines.push('');
     lines.push(`Category: ${prog.category || 'Program'}`);
-    lines.push(`Date: ${prog.program_date}${prog.start_time ? ` | Time: ${prog.start_time}` : ''}`);
+    lines.push(`Schedule: ${startLabel} → ${endLabel}`);
     if (prog.venue) lines.push(`Venue: ${prog.venue}`);
-    if (meta.whatsapp_number) lines.push(`WhatsApp Contact: ${meta.whatsapp_number}`);
-    if (meta.registration_enabled) {
-      if (meta.payment_required && meta.payment_amount > 0) {
-        lines.push(`Registration Fee: Rs. ${meta.payment_amount} (Payment statement required in Programs section)`);
+    if (waNumber) lines.push(`WhatsApp Contact: ${waNumber}`);
+    if (waChannelName || waChannelLink) {
+      lines.push(
+        `WhatsApp Channel: ${waChannelName || 'Official Channel'}${waChannelLink ? ` (${waChannelLink})` : ''}`
+      );
+    }
+    if (regEnabled) {
+      if (payRequired && payAmount > 0) {
+        lines.push(`Registration Fee: Rs. ${payAmount} (Payment statement required in Programs section)`);
       } else {
         lines.push('Registration: Open (Free Registration in Programs section)');
       }
@@ -1989,6 +2154,12 @@ router.post('/programs/:id/send-to-feed', requireAuth, requireRole('super_admin'
     const sentAt = new Date().toISOString();
     await upsertProgramMeta(admin, id, req.user!.id, {
       ...meta,
+      poster_url: posterRef || '',
+      end_date: endDate,
+      end_time: endTime,
+      whatsapp_number: waNumber,
+      whatsapp_channel_name: waChannelName,
+      whatsapp_channel_link: waChannelLink,
       sent_to_feed_count: (meta.sent_to_feed_count || 0) + 1,
       last_sent_to_feed_at: sentAt,
     });
@@ -2035,7 +2206,9 @@ router.post('/programs/:id/register', requireAuth, async (req: AuthRequest, res)
     const metaMap = await getProgramMetaMap(admin, [id]);
     const meta = metaMap.get(id) || defaultProgramMeta();
 
-    if (meta.registration_enabled === false) {
+    const regEnabled =
+      typeof prog.registration_enabled === 'boolean' ? prog.registration_enabled : meta.registration_enabled;
+    if (regEnabled === false) {
       return res.status(400).json({ error: 'Registration is currently closed for this program.' });
     }
 
@@ -2044,8 +2217,16 @@ router.post('/programs/:id/register', requireAuth, async (req: AuthRequest, res)
     if (!cleanName) return res.status(400).json({ error: 'Participant full name is required.' });
     if (!cleanWhatsapp) return res.status(400).json({ error: 'WhatsApp / mobile number is required.' });
 
-    const paymentRequired = Boolean(meta.payment_required);
-    const fixedAmount = paymentRequired ? Number(meta.payment_amount || 0) : 0;
+    const paymentRequired = Boolean(
+      typeof prog.payment_required === 'boolean' ? prog.payment_required : meta.payment_required
+    );
+    const fixedAmount = paymentRequired
+      ? Number(
+          prog.payment_amount !== undefined && prog.payment_amount !== null && Number(prog.payment_amount) > 0
+            ? prog.payment_amount
+            : meta.payment_amount || 0
+        )
+      : 0;
     const statementRef = paymentRequired ? normalizeStorageRef(String(payment_statement_url || '').trim()) : '';
 
     if (paymentRequired && !statementRef) {

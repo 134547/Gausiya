@@ -46,6 +46,55 @@ function toWhatsAppHref(num?: string): string {
   return `https://wa.me/${normalized}`;
 }
 
+function normalizeExternalUrl(raw?: string): string {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  return `https://${s}`;
+}
+
+function toTimeInputValue(raw?: string): string {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^\d{2}:\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!m) return '';
+  let hh = Number(m[1]);
+  const mm = m[2];
+  const ap = m[3].toUpperCase();
+  if (ap === 'PM' && hh < 12) hh += 12;
+  if (ap === 'AM' && hh === 12) hh = 0;
+  return `${String(hh).padStart(2, '0')}:${mm}`;
+}
+
+function formatTimeDisplay(raw?: string): string {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const m24 = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m24) return s;
+  let hh = Number(m24[1]);
+  const mm = m24[2];
+  const ap = hh >= 12 ? 'PM' : 'AM';
+  hh = hh % 12 || 12;
+  return `${hh}:${mm} ${ap}`;
+}
+
+function formatScheduleRange(p: any): string {
+  const sd = p?.program_date || '';
+  const ed = p?.end_date || sd;
+  const st = formatTimeDisplay(p?.start_time);
+  const et = formatTimeDisplay(p?.end_time);
+  if (!sd) return '';
+  if (!ed || ed === sd) {
+    if (st && et) return `${sd} · ${st} – ${et}`;
+    if (st) return `${sd} · ${st}`;
+    return sd;
+  }
+  const left = st ? `${sd} (${st})` : sd;
+  const right = et ? `${ed} (${et})` : ed;
+  return `${left} → ${right}`;
+}
+
 function isImageUrl(url: string, name?: string): boolean {
   const check = `${url} ${name || ''}`.toLowerCase();
   if (/\.pdf(\?|$)/i.test(check)) return false;
@@ -65,6 +114,18 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
   const [uploadingAsset, setUploadingAsset] = useState<'poster' | 'featured' | 'gallery' | 'statement' | null>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+
+  // Separate Upload Poster modal state (outside Create Program)
+  const [posterModalOpen, setPosterModalOpen] = useState(false);
+  const [posterTargetMode, setPosterTargetMode] = useState<'existing' | 'new'>('existing');
+  const [posterProgramId, setPosterProgramId] = useState('');
+  const [posterUrl, setPosterUrl] = useState('');
+  const [posterNewTitle, setPosterNewTitle] = useState('');
+  const [posterNewStartDate, setPosterNewStartDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [posterNewStartTime, setPosterNewStartTime] = useState('10:00');
+  const [posterNewEndDate, setPosterNewEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [posterNewEndTime, setPosterNewEndTime] = useState('13:00');
+  const [savingPoster, setSavingPoster] = useState(false);
 
   // Registration modal state
   const [registerTarget, setRegisterTarget] = useState<any>(null);
@@ -86,17 +147,22 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
   const [previewStatement, setPreviewStatement] = useState<{ url: string; name: string; participant: string } | null>(null);
   const [deleteRegTarget, setDeleteRegTarget] = useState<any>(null);
 
+  const todayIso = () => new Date().toISOString().slice(0, 10);
+
   const emptyForm = () => ({
     title: '',
     description: '',
-    program_date: new Date().toISOString().slice(0, 10),
-    start_time: '10:00 AM',
+    program_date: todayIso(),
+    start_time: '10:00',
+    end_date: todayIso(),
+    end_time: '13:00',
     venue: 'Madrasa Gausiya Razvia Campus, Islamnagar',
     category: 'Religious Gathering',
-    poster_url: '',
     featured_photo: '',
     gallery_images: [] as string[],
     whatsapp_number: '',
+    whatsapp_channel_name: '',
+    whatsapp_channel_link: '',
     registration_enabled: true,
     payment_required: false,
     payment_amount: '',
@@ -135,6 +201,11 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
     e.preventDefault();
     setErr('');
     setMsg('');
+    const effectiveEndDate = form.end_date || form.program_date;
+    if (form.program_date && effectiveEndDate && effectiveEndDate < form.program_date) {
+      setErr('End Date cannot be earlier than Start Date.');
+      return;
+    }
     if (form.payment_required && (!form.payment_amount || Number(form.payment_amount) <= 0)) {
       setErr('Please enter a fixed payment amount greater than Rs. 0 when Payment is ON.');
       return;
@@ -144,6 +215,8 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
     try {
       const payload = {
         ...form,
+        end_date: effectiveEndDate,
+        whatsapp_channel_link: normalizeExternalUrl(form.whatsapp_channel_link),
         payment_amount: form.payment_required ? Number(form.payment_amount || 0) : 0,
       };
       if (editingId) {
@@ -159,6 +232,98 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
       setErr(e.message || 'Failed to save program');
     } finally {
       setSavingProgram(false);
+    }
+  };
+
+  const openPosterUploadModal = (program?: any) => {
+    setErr('');
+    setMsg('');
+    if (program) {
+      setPosterTargetMode('existing');
+      setPosterProgramId(program.id);
+      setPosterUrl(program.poster_url || '');
+    } else if (programs.length > 0) {
+      setPosterTargetMode('existing');
+      setPosterProgramId(programs[0].id);
+      setPosterUrl(programs[0].poster_url || '');
+    } else {
+      setPosterTargetMode('new');
+      setPosterProgramId('');
+      setPosterUrl('');
+    }
+    setPosterNewTitle('');
+    setPosterNewStartDate(todayIso());
+    setPosterNewStartTime('10:00');
+    setPosterNewEndDate(todayIso());
+    setPosterNewEndTime('13:00');
+    setPosterModalOpen(true);
+  };
+
+  const handleSavePoster = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (savingPoster) return;
+    setErr('');
+    setMsg('');
+
+    if (posterTargetMode === 'new') {
+      if (!posterNewTitle.trim()) {
+        setErr('Please enter a Program Title for this poster.');
+        return;
+      }
+      if (!posterUrl) {
+        setErr('Please upload a poster image first.');
+        return;
+      }
+      if (posterNewEndDate && posterNewStartDate && posterNewEndDate < posterNewStartDate) {
+        setErr('End Date cannot be earlier than Start Date.');
+        return;
+      }
+      setSavingPoster(true);
+      try {
+        await apiRequest('/api/programs', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: posterNewTitle.trim(),
+            program_date: posterNewStartDate,
+            start_time: posterNewStartTime,
+            end_date: posterNewEndDate || posterNewStartDate,
+            end_time: posterNewEndTime,
+            venue: 'Madrasa Gausiya Razvia Campus, Islamnagar',
+            category: 'Religious Gathering',
+            poster_url: posterUrl,
+            registration_enabled: true,
+            payment_required: false,
+            status: 'upcoming',
+          }),
+        });
+        setMsg(`Program "${posterNewTitle.trim()}" created with poster.`);
+        setPosterModalOpen(false);
+        await load();
+      } catch (saveErr: any) {
+        setErr(saveErr.message || 'Failed to save poster program');
+      } finally {
+        setSavingPoster(false);
+      }
+      return;
+    }
+
+    if (!posterProgramId) {
+      setErr('Please select a program.');
+      return;
+    }
+    setSavingPoster(true);
+    try {
+      await apiRequest(`/api/programs/${posterProgramId}/poster`, {
+        method: 'PUT',
+        body: JSON.stringify({ poster_url: posterUrl }),
+      });
+      setMsg(posterUrl ? 'Program poster uploaded and saved.' : 'Program poster removed.');
+      setPosterModalOpen(false);
+      await load();
+    } catch (saveErr: any) {
+      setErr(saveErr.message || 'Failed to save program poster');
+    } finally {
+      setSavingPoster(false);
     }
   };
 
@@ -260,18 +425,27 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
           </p>
         </div>
         {canManage && (
-          <button
-            type="button"
-            onClick={() => {
-              setEditingId(null);
-              setForm(emptyForm());
-              setErr('');
-              setFormOpen(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 whitespace-nowrap cursor-pointer"
-          >
-            <Plus className="w-4 h-4" /> Create Program
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openPosterUploadModal()}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-[#DC1726] bg-red-50 text-[#DC1726] text-xs font-semibold hover:bg-red-100 whitespace-nowrap cursor-pointer"
+            >
+              <ImageIcon className="w-4 h-4" /> Upload Poster
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditingId(null);
+                setForm(emptyForm());
+                setErr('');
+                setFormOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 whitespace-nowrap cursor-pointer"
+            >
+              <Plus className="w-4 h-4" /> Create Program
+            </button>
+          </div>
         )}
       </div>
 
@@ -345,16 +519,9 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
                       {p.description}
                     </p>
                     <div className="pt-2 space-y-1.5 text-xs text-[#737373]">
-                      <div className="flex items-center gap-1.5 font-mono-num">
-                        <Calendar className="w-3.5 h-3.5 text-[#171717]" />
-                        <span>{p.program_date}</span>
-                        {p.start_time && (
-                          <>
-                            <span>·</span>
-                            <Clock className="w-3.5 h-3.5 text-[#171717]" />
-                            <span>{p.start_time}</span>
-                          </>
-                        )}
+                      <div className="flex items-start gap-1.5 font-mono-num">
+                        <Calendar className="w-3.5 h-3.5 text-[#171717] shrink-0 mt-0.5" />
+                        <span>{formatScheduleRange(p)}</span>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <MapPin className="w-3.5 h-3.5 text-[#171717] shrink-0" />
@@ -373,9 +540,29 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
                           </a>
                         </div>
                       )}
+                      {(p.whatsapp_channel_name || p.whatsapp_channel_link) && (
+                        <div className="flex items-center gap-1.5">
+                          <ExternalLink className="w-3.5 h-3.5 text-[#16a34a] shrink-0" />
+                          {p.whatsapp_channel_link ? (
+                            <a
+                              href={normalizeExternalUrl(p.whatsapp_channel_link)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-semibold text-[#16a34a] hover:underline truncate"
+                              title={p.whatsapp_channel_link}
+                            >
+                              Channel: {p.whatsapp_channel_name || 'Join WhatsApp Channel'}
+                            </a>
+                          ) : (
+                            <span className="font-semibold text-[#16a34a] truncate">
+                              Channel: {p.whatsapp_channel_name}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Registration + Per-Program Feed Action Row */}
+                    {/* Registration + Poster + Per-Program Feed Action Row */}
                     <div className="pt-2 flex flex-wrap items-center gap-2">
                       {p.registration_enabled !== false && (
                         <button
@@ -395,26 +582,38 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
                       )}
 
                       {canManage && (
-                        <button
-                          type="button"
-                          disabled={sendingFeedId === p.id}
-                          onClick={() => handleSendToFeed(p)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0EA5E9] hover:bg-sky-600 text-white text-[11px] font-semibold cursor-pointer disabled:opacity-60"
-                          title="Send this individual program to Activity Feed"
-                        >
-                          {sendingFeedId === p.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Rss className="w-3.5 h-3.5" />
-                          )}
-                          <span>
-                            {sendingFeedId === p.id
-                              ? 'Sending...'
-                              : p.sent_to_feed_count > 0
-                                ? `Send to Feed (${p.sent_to_feed_count})`
-                                : 'Send to Feed'}
-                          </span>
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => openPosterUploadModal(p)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-[#DC1726] text-[11px] font-semibold cursor-pointer"
+                            title="Upload or change poster for this program"
+                          >
+                            <ImageIcon className="w-3.5 h-3.5" />
+                            <span>{p.poster_url ? 'Change Poster' : 'Upload Poster'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={sendingFeedId === p.id}
+                            onClick={() => handleSendToFeed(p)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0EA5E9] hover:bg-sky-600 text-white text-[11px] font-semibold cursor-pointer disabled:opacity-60"
+                            title="Send this individual program to Activity Feed"
+                          >
+                            {sendingFeedId === p.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Rss className="w-3.5 h-3.5" />
+                            )}
+                            <span>
+                              {sendingFeedId === p.id
+                                ? 'Sending...'
+                                : p.sent_to_feed_count > 0
+                                  ? `Send to Feed (${p.sent_to_feed_count})`
+                                  : 'Send to Feed'}
+                            </span>
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -451,14 +650,17 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
                           setForm({
                             title: p.title || '',
                             description: p.description || '',
-                            program_date: p.program_date || '',
-                            start_time: p.start_time || '',
+                            program_date: p.program_date || todayIso(),
+                            start_time: toTimeInputValue(p.start_time) || '10:00',
+                            end_date: p.end_date || p.program_date || todayIso(),
+                            end_time: toTimeInputValue(p.end_time) || '13:00',
                             venue: p.venue || '',
                             category: p.category || 'Religious Gathering',
-                            poster_url: p.poster_url || '',
                             featured_photo: p.featured_photo || '',
                             gallery_images: gallery,
                             whatsapp_number: p.whatsapp_number || '',
+                            whatsapp_channel_name: p.whatsapp_channel_name || '',
+                            whatsapp_channel_link: p.whatsapp_channel_link || '',
                             registration_enabled: p.registration_enabled !== false,
                             payment_required: Boolean(p.payment_required),
                             payment_amount: p.payment_amount ? String(p.payment_amount) : '',
@@ -543,22 +745,49 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
                   </select>
                 </div>
                 <div>
-                  <label className="block font-medium mb-1">Program Date *</label>
+                  <label className="block font-medium mb-1">Start Date *</label>
                   <input
                     type="date"
                     required
                     value={form.program_date}
-                    onChange={(e) => setForm({ ...form, program_date: e.target.value })}
+                    onChange={(e) => {
+                      const nextStart = e.target.value;
+                      setForm((prev) => ({
+                        ...prev,
+                        program_date: nextStart,
+                        end_date: !prev.end_date || prev.end_date < nextStart ? nextStart : prev.end_date,
+                      }));
+                    }}
                     className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num"
                   />
                 </div>
                 <div>
                   <label className="block font-medium mb-1">Start Time</label>
                   <input
-                    type="text"
+                    type="time"
                     value={form.start_time}
                     onChange={(e) => setForm({ ...form, start_time: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-neutral-200"
+                    className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium mb-1">End Date *</label>
+                  <input
+                    type="date"
+                    required
+                    min={form.program_date}
+                    value={form.end_date}
+                    onChange={(e) => setForm({ ...form, end_date: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium mb-1">End Time</label>
+                  <input
+                    type="time"
+                    value={form.end_time}
+                    onChange={(e) => setForm({ ...form, end_time: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num"
                   />
                 </div>
                 <div>
@@ -577,6 +806,26 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
                     type="text"
                     value={form.venue}
                     onChange={(e) => setForm({ ...form, venue: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-neutral-200"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium mb-1">WhatsApp Channel Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Madrasa Gausiya Razvia Channel"
+                    value={form.whatsapp_channel_name}
+                    onChange={(e) => setForm({ ...form, whatsapp_channel_name: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-neutral-200"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium mb-1">WhatsApp Channel Link</label>
+                  <input
+                    type="url"
+                    placeholder="https://whatsapp.com/channel/..."
+                    value={form.whatsapp_channel_link}
+                    onChange={(e) => setForm({ ...form, whatsapp_channel_link: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-neutral-200"
                   />
                 </div>
@@ -684,34 +933,9 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
                 )}
               </div>
 
-              {/* Poster Upload + Featured Photo + Gallery Photos */}
+              {/* Featured Photo + Gallery Photos (Poster Upload is separated into its own button & modal) */}
               <div className="space-y-3 pt-1">
                 <div className="flex flex-wrap items-center gap-2.5">
-                  <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-red-200 bg-red-50 text-[#DC1726] font-semibold cursor-pointer hover:bg-red-100">
-                    <ImageIcon className="w-3.5 h-3.5" />
-                    <span>{uploadingAsset === 'poster' ? 'Uploading Poster...' : 'Upload Poster'}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0];
-                        if (!f) return;
-                        setErr('');
-                        setUploadingAsset('poster');
-                        try {
-                          const up = await uploadFile(f, 'programs');
-                          setForm((prev) => ({ ...prev, poster_url: up.url }));
-                        } catch (err: any) {
-                          setErr(err.message || 'Failed to upload poster');
-                        } finally {
-                          setUploadingAsset(null);
-                          e.target.value = '';
-                        }
-                      }}
-                      className="hidden"
-                    />
-                  </label>
-
                   <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 cursor-pointer hover:bg-neutral-100">
                     <FileUp className="w-3.5 h-3.5" />
                     <span>
@@ -776,26 +1000,6 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
                     />
                   </label>
                 </div>
-
-                {form.poster_url && (
-                  <div className="p-2 rounded-lg border border-red-200 bg-red-50/40 space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-[#DC1726]">
-                      <span>Program Poster Preview</span>
-                      <button
-                        type="button"
-                        onClick={() => setForm((prev) => ({ ...prev, poster_url: '' }))}
-                        className="hover:underline cursor-pointer"
-                      >
-                        Remove Poster
-                      </button>
-                    </div>
-                    <img
-                      src={form.poster_url}
-                      alt="Poster preview"
-                      className="w-full max-h-44 object-contain rounded-lg bg-white border border-neutral-200"
-                    />
-                  </div>
-                )}
 
                 {form.featured_photo && (
                   <div className="p-2 rounded-lg border border-neutral-200 bg-neutral-50 space-y-1.5">
@@ -865,6 +1069,224 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
         </div>
       )}
 
+      {/* Separate Upload Program Poster Modal (outside Create Program) */}
+      {posterModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 overflow-y-auto p-4">
+          <div className="mx-auto max-w-lg bg-white rounded-xl border border-neutral-200 shadow-xl p-6 space-y-4 text-xs my-4">
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-[#171717]">Upload Program Poster</h3>
+                <p className="text-[11px] text-[#737373]">
+                  Upload a dedicated poster for an existing program or publish a new poster entry.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPosterModalOpen(false)}
+                className="p-1 rounded hover:bg-neutral-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePoster} className="space-y-3.5">
+              {programs.length > 0 && (
+                <div className="inline-flex items-center gap-1 p-1 bg-neutral-100 rounded-lg">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPosterTargetMode('existing');
+                      const selected = programs.find((pr) => pr.id === posterProgramId) || programs[0];
+                      if (selected) {
+                        setPosterProgramId(selected.id);
+                        setPosterUrl(selected.poster_url || '');
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer ${
+                      posterTargetMode === 'existing'
+                        ? 'bg-white text-[#171717] shadow-xs'
+                        : 'text-[#737373] hover:text-[#171717]'
+                    }`}
+                  >
+                    For Existing Program
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPosterTargetMode('new');
+                      setPosterUrl('');
+                    }}
+                    className={`px-3 py-1.5 rounded-md font-semibold cursor-pointer ${
+                      posterTargetMode === 'new'
+                        ? 'bg-white text-[#171717] shadow-xs'
+                        : 'text-[#737373] hover:text-[#171717]'
+                    }`}
+                  >
+                    New Poster Program
+                  </button>
+                </div>
+              )}
+
+              {posterTargetMode === 'existing' && programs.length > 0 ? (
+                <div>
+                  <label className="block font-medium mb-1">Select Program *</label>
+                  <select
+                    required
+                    value={posterProgramId}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      setPosterProgramId(nextId);
+                      const matched = programs.find((pr) => pr.id === nextId);
+                      setPosterUrl(matched?.poster_url || '');
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white"
+                  >
+                    {programs.map((pr) => (
+                      <option key={pr.id} value={pr.id}>
+                        {pr.title} ({pr.program_date})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block font-medium mb-1">Program Title *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Annual Jalsa-e-Dastarbandi Poster"
+                      value={posterNewTitle}
+                      onChange={(e) => setPosterNewTitle(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-neutral-200"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-medium mb-1">Start Date *</label>
+                      <input
+                        type="date"
+                        required
+                        value={posterNewStartDate}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setPosterNewStartDate(v);
+                          if (!posterNewEndDate || posterNewEndDate < v) setPosterNewEndDate(v);
+                        }}
+                        className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium mb-1">Start Time</label>
+                      <input
+                        type="time"
+                        value={posterNewStartTime}
+                        onChange={(e) => setPosterNewStartTime(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium mb-1">End Date *</label>
+                      <input
+                        type="date"
+                        required
+                        min={posterNewStartDate}
+                        value={posterNewEndDate}
+                        onChange={(e) => setPosterNewEndDate(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium mb-1">End Time</label>
+                      <input
+                        type="time"
+                        value={posterNewEndTime}
+                        onChange={(e) => setPosterNewEndTime(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2.5">
+                <label className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg border border-red-200 bg-red-50 text-[#DC1726] font-semibold cursor-pointer hover:bg-red-100">
+                  <ImageIcon className="w-4 h-4" />
+                  <span>
+                    {uploadingAsset === 'poster'
+                      ? 'Uploading Poster...'
+                      : posterUrl
+                        ? 'Choose Another Poster Image'
+                        : 'Choose Poster Image'}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      setErr('');
+                      setUploadingAsset('poster');
+                      try {
+                        const up = await uploadFile(f, 'programs');
+                        setPosterUrl(up.url);
+                      } catch (uploadErr: any) {
+                        setErr(uploadErr.message || 'Failed to upload poster');
+                      } finally {
+                        setUploadingAsset(null);
+                        e.target.value = '';
+                      }
+                    }}
+                    className="hidden"
+                  />
+                </label>
+
+                {posterUrl ? (
+                  <div className="p-2.5 rounded-lg border border-red-200 bg-red-50/40 space-y-2">
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-[#DC1726]">
+                      <span>Poster Preview</span>
+                      <button
+                        type="button"
+                        onClick={() => setPosterUrl('')}
+                        className="hover:underline cursor-pointer"
+                      >
+                        Remove Poster
+                      </button>
+                    </div>
+                    <img
+                      src={posterUrl}
+                      alt="Program poster preview"
+                      className="w-full max-h-60 object-contain rounded-lg bg-white border border-neutral-200"
+                    />
+                  </div>
+                ) : (
+                  <div className="p-5 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 text-center text-[#737373]">
+                    No poster uploaded yet. Choose an image file above.
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPosterModalOpen(false)}
+                  className="px-4 py-2 rounded-lg bg-neutral-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingPoster || uploadingAsset === 'poster'}
+                  className="px-5 py-2 rounded-lg bg-[#DC1726] text-white font-semibold disabled:opacity-60 cursor-pointer"
+                >
+                  {savingPoster ? 'Saving Poster...' : 'Save Poster'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Program Details Modal */}
       {viewItem && (
         <div className="fixed inset-0 z-50 bg-black/50 overflow-y-auto p-4">
@@ -873,7 +1295,7 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
               <div>
                 <h3 className="text-base font-bold text-[#171717]">{viewItem.title}</h3>
                 <p className="text-xs text-[#737373] font-mono-num">
-                  {viewItem.program_date} · {viewItem.start_time} · {viewItem.venue}
+                  {formatScheduleRange(viewItem)} · {viewItem.venue}
                 </p>
               </div>
               <button type="button" onClick={() => setViewItem(null)} className="p-1 rounded hover:bg-neutral-100">
@@ -929,18 +1351,42 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
                   <div className="text-[11px] text-[#525252] mt-1">{viewItem.payment_instructions}</div>
                 )}
               </div>
-              {viewItem.whatsapp_number && (
-                <div>
-                  <div className="text-[#737373]">Organizer WhatsApp</div>
-                  <a
-                    href={toWhatsAppHref(viewItem.whatsapp_number)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-0.5 inline-flex items-center gap-1.5 font-bold font-mono-num text-[#10B981] hover:underline"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" />
-                    <span>{viewItem.whatsapp_number}</span>
-                  </a>
+              {(viewItem.whatsapp_number || viewItem.whatsapp_channel_name || viewItem.whatsapp_channel_link) && (
+                <div className="space-y-1.5">
+                  {viewItem.whatsapp_number && (
+                    <div>
+                      <div className="text-[#737373]">Organizer WhatsApp</div>
+                      <a
+                        href={toWhatsAppHref(viewItem.whatsapp_number)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-0.5 inline-flex items-center gap-1.5 font-bold font-mono-num text-[#10B981] hover:underline"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>{viewItem.whatsapp_number}</span>
+                      </a>
+                    </div>
+                  )}
+                  {(viewItem.whatsapp_channel_name || viewItem.whatsapp_channel_link) && (
+                    <div>
+                      <div className="text-[#737373]">WhatsApp Channel</div>
+                      {viewItem.whatsapp_channel_link ? (
+                        <a
+                          href={normalizeExternalUrl(viewItem.whatsapp_channel_link)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-0.5 inline-flex items-center gap-1.5 font-bold text-[#16a34a] hover:underline"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>{viewItem.whatsapp_channel_name || 'Join WhatsApp Channel'}</span>
+                        </a>
+                      ) : (
+                        <div className="mt-0.5 font-bold text-[#16a34a]">
+                          {viewItem.whatsapp_channel_name}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -992,8 +1438,8 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
             <div className="flex items-start justify-between gap-3 border-b border-neutral-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-[#171717]">Program Registration</h3>
-                <p className="text-xs text-[#737373] mt-0.5">
-                  {registerTarget.title} · {registerTarget.program_date}
+                <p className="text-xs text-[#737373] mt-0.5 font-mono-num">
+                  {registerTarget.title} · {formatScheduleRange(registerTarget)}
                 </p>
               </div>
               <button
@@ -1005,19 +1451,47 @@ export const ProgramsPage: React.FC<ProgramsPageProps> = ({ user }) => {
               </button>
             </div>
 
-            {registerTarget.whatsapp_number && (
-              <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-2">
-                <span className="text-[11px] text-emerald-900 font-medium">
-                  Organizer WhatsApp Help:
-                </span>
-                <a
-                  href={toWhatsAppHref(registerTarget.whatsapp_number)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 font-bold font-mono-num text-[#10B981] hover:underline"
-                >
-                  <MessageCircle className="w-3.5 h-3.5" /> {registerTarget.whatsapp_number}
-                </a>
+            {(registerTarget.whatsapp_number ||
+              registerTarget.whatsapp_channel_name ||
+              registerTarget.whatsapp_channel_link) && (
+              <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 space-y-1.5">
+                {registerTarget.whatsapp_number && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-emerald-900 font-medium">
+                      Organizer WhatsApp Help:
+                    </span>
+                    <a
+                      href={toWhatsAppHref(registerTarget.whatsapp_number)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 font-bold font-mono-num text-[#10B981] hover:underline"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" /> {registerTarget.whatsapp_number}
+                    </a>
+                  </div>
+                )}
+                {(registerTarget.whatsapp_channel_name || registerTarget.whatsapp_channel_link) && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-emerald-900 font-medium">
+                      WhatsApp Channel:
+                    </span>
+                    {registerTarget.whatsapp_channel_link ? (
+                      <a
+                        href={normalizeExternalUrl(registerTarget.whatsapp_channel_link)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 font-bold text-[#16a34a] hover:underline"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>{registerTarget.whatsapp_channel_name || 'Join Channel'}</span>
+                      </a>
+                    ) : (
+                      <span className="font-bold text-[#16a34a]">
+                        {registerTarget.whatsapp_channel_name}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
