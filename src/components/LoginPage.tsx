@@ -819,6 +819,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <Mail className="w-3.5 h-3.5" />
               <span>dil.dil.a.1345@gmail.com</span>
             </a>
+            <a
+              href="mailto:gausiyamadarsa92@gmail.com"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-[#DC1726] font-semibold hover:bg-red-100 transition-colors"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>gausiyamadarsa92@gmail.com</span>
+            </a>
           </div>
         </div>
       </div>

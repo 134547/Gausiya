@@ -33,28 +33,34 @@ router.get('/attendance', requireAuth, async (req: AuthRequest, res) => {
     let q = admin.from('attendance').select('attendance_date, class_id, student_id, status, classes(name)').order('attendance_date', { ascending: false }).limit(2000);
     if (classId) q = q.eq('class_id', classId);
 
+    let stSummaryQ = admin
+      .from('students')
+      .select('id, student_code, full_name, class_id, classes(name)')
+      .is('deleted_at', null)
+      .eq('status', 'active')
+      .order('full_name', { ascending: true });
+    if (classId) stSummaryQ = stSummaryQ.eq('class_id', classId);
+
     if (user.role_slug === 'teacher') {
       const tid = await getTeacherIdForUser(user);
       const classIds = tid ? await getTeacherAssignedClassIds(tid) : [];
       if (!classIds.length) return res.json({ daily: [], studentWise: [] });
       q = q.in('class_id', classIds);
+      stSummaryQ = stSummaryQ.in('class_id', classIds);
     } else if (user.role_slug === 'student') {
       const stId = await getStudentIdForUser(user);
       if (!stId) return res.json({ daily: [], studentWise: [] });
       q = q.eq('student_id', stId);
+      stSummaryQ = stSummaryQ.eq('id', stId);
     } else if (user.role_slug === 'parent') {
       const pid = await getParentIdForUser(user);
       const childIds = pid ? await getParentStudentIds(pid) : [];
       if (!childIds.length) return res.json({ daily: [], studentWise: [] });
       q = q.in('student_id', childIds);
+      stSummaryQ = stSummaryQ.in('id', childIds);
     }
 
-    const [{ data: attRows }, { data: studentsRaw }] = await Promise.all([
-      q,
-      classId
-        ? admin.from('students').select('id, student_code, full_name, class_id, classes(name)').eq('class_id', classId).is('deleted_at', null).eq('status', 'active').order('full_name', { ascending: true })
-        : admin.from('students').select('id, student_code, full_name, class_id, classes(name)').is('deleted_at', null).eq('status', 'active').order('full_name', { ascending: true }),
-    ]);
+    const [{ data: attRows }, { data: studentsRaw }] = await Promise.all([q, stSummaryQ]);
 
     const dailyMap = new Map<string, { attendance_date: string; class_name: string; present: number; absent: number; late: number; on_leave: number; total: number }>();
     for (const a of attRows || []) {
@@ -98,9 +104,26 @@ router.get('/attendance', requireAuth, async (req: AuthRequest, res) => {
   // Student or Parent viewing personal attendance history
   if (user.role_slug === 'student' || user.role_slug === 'parent' || studentId) {
     let targetIds: string[] = [];
+    let studentInfo: { id: string; full_name: string; student_code: string; class_name: string } | null = null;
     if (user.role_slug === 'student') {
       const stId = await getStudentIdForUser(user);
-      if (stId) targetIds = [stId];
+      if (stId) {
+        targetIds = [stId];
+        const { data: stRow } = await admin
+          .from('students')
+          .select('id, full_name, student_code, classes(name)')
+          .eq('id', stId)
+          .is('deleted_at', null)
+          .maybeSingle();
+        if (stRow) {
+          studentInfo = {
+            id: stRow.id,
+            full_name: stRow.full_name,
+            student_code: stRow.student_code,
+            class_name: (stRow as any).classes?.name || 'Unassigned',
+          };
+        }
+      }
     } else if (user.role_slug === 'parent') {
       const pid = await getParentIdForUser(user);
       targetIds = pid ? await getParentStudentIds(pid) : [];
@@ -108,14 +131,20 @@ router.get('/attendance', requireAuth, async (req: AuthRequest, res) => {
       targetIds = [studentId];
     }
 
-    if (!targetIds.length) return res.json({ history: [] });
+    if (!targetIds.length) {
+      return res.json({
+        history: [],
+        student: studentInfo,
+        summary: { total: 0, present: 0, absent: 0, late: 0, on_leave: 0, percentage: 0 },
+      });
+    }
 
     const { data: histRaw } = await admin
       .from('attendance')
       .select('*, students(full_name, student_code), classes(name)')
       .in('student_id', targetIds)
       .order('attendance_date', { ascending: false })
-      .limit(120);
+      .limit(200);
 
     const history = (histRaw || []).map((h: any) => ({
       ...h,
@@ -123,7 +152,19 @@ router.get('/attendance', requireAuth, async (req: AuthRequest, res) => {
       student_code: h.students?.student_code || '',
       class_name: h.classes?.name || '',
     }));
-    return res.json({ history });
+
+    const total = history.length;
+    const present = history.filter((h: any) => h.status === 'present').length;
+    const absent = history.filter((h: any) => h.status === 'absent').length;
+    const late = history.filter((h: any) => h.status === 'late').length;
+    const on_leave = history.filter((h: any) => h.status === 'leave').length;
+    const percentage = total > 0 ? Math.round(((present + late) / total) * 100) : 0;
+
+    return res.json({
+      history,
+      student: studentInfo,
+      summary: { total, present, absent, late, on_leave, percentage },
+    });
   }
 
   if (!classId) {

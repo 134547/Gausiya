@@ -12,15 +12,15 @@ const WHATSAPP_DISPLAY = '+91 72096 29509 (7209629509)';
 const WHATSAPP_URL = 'https://wa.me/917209629509';
 const SECONDARY_NUMBER = '6202736648';
 const SECONDARY_DISPLAY = '+91 62027 36648 (6202736648)';
-const CONTACT_GMAIL = 'dil.dil.a.1345@gmail.com';
+const CONTACT_GMAILS = ['dil.dil.a.1345@gmail.com', 'gausiyamadarsa92@gmail.com'] as const;
 const FOUNDER_NAME = 'Dilshad Ansari';
 const FOUNDER_FATHER = 'S/o MD Ayub Ansari';
 const DEFAULT_ADDRESS = 'Islamnagar, Ramgarh, (P.S.) Ramgarh, (P.O.) Ramgarh, Palamu, Jharkhand, India, 822110';
 
 export const ContactUsPage: React.FC<ContactUsPageProps> = ({ settings }) => {
-  const [copiedField, setCopiedField] = useState<'whatsapp' | 'secondary' | 'gmail' | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const handleCopy = async (value: string, field: 'whatsapp' | 'secondary' | 'gmail') => {
+  const handleCopy = async (value: string, field: string) => {
     try {
       await navigator.clipboard.writeText(value);
       setCopiedField(field);
@@ -29,6 +29,15 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({ settings }) => {
       // ignore clipboard errors in restricted iframes
     }
   };
+
+  const officialGmails = Array.from(
+    new Set(
+      [
+        ...CONTACT_GMAILS,
+        ...(settings?.email && settings.email.trim() ? [settings.email.trim()] : []),
+      ]
+    )
+  );
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -143,27 +152,49 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({ settings }) => {
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold uppercase tracking-wider text-[#DC1726]">Official Gmail</div>
-              <h3 className="text-base font-bold text-[#171717] mt-0.5 break-all">{CONTACT_GMAIL}</h3>
-              <p className="text-xs text-[#737373] mt-1">Email us anytime for documents, results, or official correspondence.</p>
+              <div className="mt-1 space-y-1.5">
+                {officialGmails.map((gmail) => (
+                  <div key={gmail} className="flex items-center justify-between gap-2">
+                    <a
+                      href={`mailto:${gmail}`}
+                      className="text-sm font-bold text-[#171717] hover:text-[#DC1726] break-all transition-colors"
+                    >
+                      {gmail}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(gmail, `gmail:${gmail}`)}
+                      title={`Copy ${gmail}`}
+                      className="p-1.5 rounded-md border border-neutral-200 bg-neutral-50 text-[#737373] hover:text-[#171717] shrink-0"
+                    >
+                      {copiedField === `gmail:${gmail}` ? (
+                        <Check className="w-3.5 h-3.5 text-[#10B981]" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-[#737373] mt-2">Email us anytime for documents, results, or official correspondence.</p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-neutral-100">
-            <a
-              href={`mailto:${CONTACT_GMAIL}`}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 transition-colors"
-            >
-              <Mail className="w-3.5 h-3.5" />
-              <span>Send Email</span>
-            </a>
-            <button
-              type="button"
-              onClick={() => handleCopy(CONTACT_GMAIL, 'gmail')}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-medium text-[#737373] hover:text-[#171717] hover:bg-neutral-50"
-            >
-              {copiedField === 'gmail' ? <Check className="w-3.5 h-3.5 text-[#10B981]" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedField === 'gmail' ? 'Copied' : 'Copy Gmail'}</span>
-            </button>
+            {officialGmails.map((gmail, idx) => (
+              <a
+                key={gmail}
+                href={`mailto:${gmail}`}
+                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                  idx === 0
+                    ? 'bg-[#DC1726] text-white hover:bg-red-700'
+                    : 'border border-red-200 bg-red-50 text-[#DC1726] hover:bg-red-100'
+                }`}
+              >
+                <Mail className="w-3.5 h-3.5" />
+                <span>{idx === 0 ? 'Send Email' : 'Official Madrasa Gmail'}</span>
+              </a>
+            ))}
           </div>
         </div>
       </div>

@@ -839,19 +839,29 @@ export const HomePage: React.FC<HomePageProps> = ({
               </div>
             </a>
 
-            <a
-              href="mailto:dil.dil.a.1345@gmail.com"
-              className="flex items-center gap-3.5 p-4 rounded-xl bg-white border border-neutral-200 shadow-xs hover:border-[#DC1726] transition-colors"
-            >
+            <div className="flex items-start gap-3.5 p-4 rounded-xl bg-white border border-neutral-200 shadow-xs hover:border-[#DC1726] transition-colors">
               <div className="w-11 h-11 rounded-xl bg-red-50 text-[#DC1726] flex items-center justify-center shrink-0">
                 <Mail className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#DC1726]">Gmail</div>
-                <div className="text-sm font-bold text-[#171717] break-all">dil.dil.a.1345@gmail.com</div>
-                <div className="text-xs text-[#737373]">Send an official email</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-[#DC1726]">Official Gmail</div>
+                <div className="space-y-0.5 mt-0.5">
+                  <a
+                    href="mailto:dil.dil.a.1345@gmail.com"
+                    className="block text-sm font-bold text-[#171717] hover:text-[#DC1726] break-all transition-colors"
+                  >
+                    dil.dil.a.1345@gmail.com
+                  </a>
+                  <a
+                    href="mailto:gausiyamadarsa92@gmail.com"
+                    className="block text-sm font-bold text-[#171717] hover:text-[#DC1726] break-all transition-colors"
+                  >
+                    gausiyamadarsa92@gmail.com
+                  </a>
+                </div>
+                <div className="text-xs text-[#737373] mt-0.5">Send an official email</div>
               </div>
-            </a>
+            </div>
           </div>
 
           <div className="mt-6 space-y-2.5 text-sm text-[#737373]">
@@ -891,7 +901,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           <p className="text-xs text-white/90 font-medium">Founder: Dilshad Ansari S/o MD Ayub Ansari</p>
           <p className="text-xs text-white/80">{addressText}</p>
           <p className="text-xs font-mono-num text-white/75">
-            Contact: 7209629509 · 6202736648 · Gmail: dil.dil.a.1345@gmail.com
+            Contact: 7209629509 · 6202736648 · Gmail: dil.dil.a.1345@gmail.com · gausiyamadarsa92@gmail.com
           </p>
           <div className="pt-3 flex flex-wrap items-center justify-center gap-4 text-xs">
             <button type="button" onClick={onOpenLogin} className="hover:text-white underline">
@@ -909,7 +919,10 @@ export const HomePage: React.FC<HomePageProps> = ({
               WhatsApp Us
             </a>
             <a href="mailto:dil.dil.a.1345@gmail.com" className="hover:text-white underline">
-              Email Us
+              dil.dil.a.1345@gmail.com
+            </a>
+            <a href="mailto:gausiyamadarsa92@gmail.com" className="hover:text-white underline">
+              gausiyamadarsa92@gmail.com
             </a>
           </div>
           <p className="pt-3 text-[11px] text-white/55">Ilm · Akhlaq · Taleem · Mustaqbil</p>

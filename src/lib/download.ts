@@ -353,8 +353,8 @@ export async function downloadFeedPostCard(
   ctx.fillText('Founder: Dilshad Ansari S/o MD Ayub Ansari', padX, footerY + 38);
 
   ctx.fillStyle = '#737373';
-  ctx.font = '500 17px "Plus Jakarta Sans", system-ui, -apple-system, sans-serif';
-  ctx.fillText('Contact: 7209629509 · 6202736648 · Email: dil.dil.a.1345@gmail.com', padX, footerY + 66);
+  ctx.font = '500 16px "Plus Jakarta Sans", system-ui, -apple-system, sans-serif';
+  ctx.fillText('Contact: 7209629509 · 6202736648 · Email: dil.dil.a.1345@gmail.com, gausiyamadarsa92@gmail.com', padX, footerY + 66);
 
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
   if (!blob) {

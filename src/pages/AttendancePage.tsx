@@ -12,6 +12,7 @@ interface AttendancePageProps {
 
 export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }) => {
   const canMark = user.role_slug === 'super_admin' || user.role_slug === 'teacher';
+  const isStudent = user.role_slug === 'student';
   const [tab, setTab] = useState<'mark' | 'reports'>(canMark ? 'mark' : 'reports');
   const [sessions, setSessions] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
@@ -21,14 +22,32 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }
 
   const [records, setRecords] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
+  const [personalStudent, setPersonalStudent] = useState<{
+    id: string;
+    full_name: string;
+    student_code: string;
+    class_name: string;
+  } | null>(null);
+  const [personalSummary, setPersonalSummary] = useState<{
+    total: number;
+    present: number;
+    absent: number;
+    late: number;
+    on_leave: number;
+    percentage: number;
+  }>({ total: 0, present: 0, absent: 0, late: 0, on_leave: 0, percentage: 0 });
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all');
+  const [historyMonthFilter, setHistoryMonthFilter] = useState<string>('');
   const [dailySummary, setDailySummary] = useState<any[]>([]);
   const [studentWise, setStudentWise] = useState<any[]>([]);
   const [printOpen, setPrintOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loadingPersonal, setLoadingPersonal] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
   useEffect(() => {
+    if (!canMark) return;
     Promise.all([
       apiRequest<{ sessions: any[] }>('/api/settings'),
       apiRequest<{ classes: any[] }>('/api/classes'),
@@ -41,7 +60,7 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }
         if (cRes.classes[0]) setClassId(String(cRes.classes[0].id));
       })
       .catch((e: any) => setErr(e.message || 'Failed to load attendance configuration'));
-  }, []);
+  }, [canMark]);
 
   const loadSheet = async () => {
     if (!canMark || !classId) return;
@@ -61,8 +80,32 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }
     setErr('');
     try {
       if (!canMark) {
-        const res = await apiRequest<{ history: any[] }>('/api/attendance');
-        setHistory(res.history || []);
+        setLoadingPersonal(true);
+        const res = await apiRequest<{
+          history: any[];
+          student?: { id: string; full_name: string; student_code: string; class_name: string } | null;
+          summary?: { total: number; present: number; absent: number; late: number; on_leave: number; percentage: number };
+        }>('/api/attendance');
+        const list = res.history || [];
+        setHistory(list);
+        setPersonalStudent(res.student || null);
+        if (res.summary) {
+          setPersonalSummary(res.summary);
+        } else {
+          const total = list.length;
+          const present = list.filter((h: any) => h.status === 'present').length;
+          const absent = list.filter((h: any) => h.status === 'absent').length;
+          const late = list.filter((h: any) => h.status === 'late').length;
+          const on_leave = list.filter((h: any) => h.status === 'leave').length;
+          setPersonalSummary({
+            total,
+            present,
+            absent,
+            late,
+            on_leave,
+            percentage: total > 0 ? Math.round(((present + late) / total) * 100) : 0,
+          });
+        }
       } else {
         const qs = new URLSearchParams({ mode: 'summary' });
         if (classId) qs.set('classId', classId);
@@ -72,13 +115,15 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }
       }
     } catch (e: any) {
       setErr(e.message);
+    } finally {
+      setLoadingPersonal(false);
     }
   };
 
   useEffect(() => {
-    if (tab === 'mark' && classId) loadSheet();
-    if (tab === 'reports') loadReports();
-  }, [tab, classId, date, sessionId]);
+    if (canMark && tab === 'mark' && classId) loadSheet();
+    if (!canMark || tab === 'reports') loadReports();
+  }, [canMark, tab, classId, date, sessionId]);
 
   const markAllPresent = () => {
     setRecords((prev) => prev.map((r) => ({ ...r, status: 'present' })));
@@ -106,7 +151,18 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }
     }
   };
 
+  const filteredHistory = history.filter((h) => {
+    if (historyStatusFilter !== 'all' && h.status !== historyStatusFilter) return false;
+    if (historyMonthFilter && !String(h.attendance_date || '').startsWith(historyMonthFilter)) return false;
+    return true;
+  });
+
   const selectedClassName = classes.find((c) => String(c.id) === classId)?.name || 'All Classes';
+  const printSubtitle = canMark
+    ? `${selectedClassName} · ${date}`
+    : isStudent
+      ? `${personalStudent?.full_name || user.full_name}${personalStudent?.student_code ? ` (${personalStudent.student_code})` : ''}${personalStudent?.class_name ? ` · ${personalStudent.class_name}` : ''}`
+      : 'Student Attendance History';
 
   return (
     <div className="space-y-5">
@@ -124,7 +180,18 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }
             </button>
           </div>
         ) : (
-          <h2 className="text-sm font-bold text-[#171717]">Attendance History</h2>
+          <div>
+            <h2 className="text-sm font-bold text-[#171717]">
+              {isStudent ? 'My Attendance' : 'Attendance History'}
+            </h2>
+            {isStudent && (
+              <p className="text-xs text-[#737373]">
+                {personalStudent?.full_name || user.full_name}
+                {personalStudent?.student_code ? ` · ${personalStudent.student_code}` : ''}
+                {personalStudent?.class_name ? ` · Class ${personalStudent.class_name}` : ''}
+              </p>
+            )}
+          </div>
         )}
 
         <div className="flex items-center gap-2">
@@ -138,11 +205,11 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }
           <button
             type="button"
             onClick={() => {
-              const rows = tab === 'mark'
+              const rows = tab === 'mark' && canMark
                 ? records.map((r) => ({ ID: r.student_code, Student: r.full_name, Father: r.father_name, Date: date, Class: selectedClassName, Status: r.status, Remark: r.remark }))
                 : canMark
                   ? studentWise.map((s) => ({ ID: s.student_code, Student: s.full_name, Class: s.class_name, Present: s.present, Absent: s.absent, Late: s.late, Leave: s.on_leave, Total: s.total_days }))
-                  : history.map((h) => ({ Date: h.attendance_date, Student: h.student_name, Class: h.class_name, Status: h.status, Remark: h.remark }));
+                  : filteredHistory.map((h) => ({ Date: h.attendance_date, Student: h.student_name, Class: h.class_name, Status: h.status, Remark: h.remark }));
               exportToExcel(rows, `attendance-${date}`, 'Attendance');
             }}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-medium hover:bg-neutral-50"
@@ -323,47 +390,166 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }
       )}
 
       {!canMark && (
-        <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
-          <table className="w-full text-xs">
-            <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
-              <tr>
-                <th className="px-4 py-3 text-start">Date</th>
-                <th className="px-4 py-3 text-start">Student</th>
-                <th className="px-4 py-3 text-start">Class</th>
-                <th className="px-4 py-3 text-start">Status</th>
-                <th className="px-4 py-3 text-start">Remark</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              {history.map((h) => (
-                <tr key={h.id}>
-                  <td className="px-4 py-3 font-mono-num">{h.attendance_date}</td>
-                  <td className="px-4 py-3 font-medium">{h.student_name}</td>
-                  <td className="px-4 py-3">{h.class_name}</td>
-                  <td className="px-4 py-3 font-semibold uppercase">{h.status}</td>
-                  <td className="px-4 py-3 text-[#737373]">{h.remark || '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-5">
+          {/* Personal Summary Strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="bg-white rounded-xl border border-neutral-200 p-4 shadow-xs">
+              <div className="text-[11px] text-[#737373] font-medium">Attendance Rate</div>
+              <div className="text-xl font-bold font-mono-num text-[#10B981] mt-1">{personalSummary.percentage}%</div>
+            </div>
+            <div className="bg-white rounded-xl border border-neutral-200 p-4 shadow-xs">
+              <div className="text-[11px] text-[#737373] font-medium">Total Marked</div>
+              <div className="text-xl font-bold font-mono-num text-[#171717] mt-1">{personalSummary.total}</div>
+            </div>
+            <div className="bg-white rounded-xl border border-neutral-200 p-4 shadow-xs">
+              <div className="text-[11px] text-[#737373] font-medium">Present</div>
+              <div className="text-xl font-bold font-mono-num text-[#10B981] mt-1">{personalSummary.present}</div>
+            </div>
+            <div className="bg-white rounded-xl border border-neutral-200 p-4 shadow-xs">
+              <div className="text-[11px] text-[#737373] font-medium">Absent</div>
+              <div className="text-xl font-bold font-mono-num text-[#DC1726] mt-1">{personalSummary.absent}</div>
+            </div>
+            <div className="bg-white rounded-xl border border-neutral-200 p-4 shadow-xs">
+              <div className="text-[11px] text-[#737373] font-medium">Late</div>
+              <div className="text-xl font-bold font-mono-num text-[#F59E0B] mt-1">{personalSummary.late}</div>
+            </div>
+            <div className="bg-white rounded-xl border border-neutral-200 p-4 shadow-xs">
+              <div className="text-[11px] text-[#737373] font-medium">On Leave</div>
+              <div className="text-xl font-bold font-mono-num text-[#0EA5E9] mt-1">{personalSummary.on_leave}</div>
+            </div>
+          </div>
+
+          {/* Month & Status Filters */}
+          <div className="bg-white rounded-xl border border-neutral-200 p-4 shadow-xs flex flex-wrap items-center gap-3">
+            <div>
+              <label className="block text-[11px] font-medium text-[#737373] mb-1">Filter Month</label>
+              <input
+                type="month"
+                value={historyMonthFilter}
+                onChange={(e) => setHistoryMonthFilter(e.target.value)}
+                className="px-3 py-1.5 text-xs rounded-lg border border-neutral-200 font-mono-num"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-[#737373] mb-1">Status</label>
+              <select
+                value={historyStatusFilter}
+                onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                className="px-3 py-1.5 text-xs rounded-lg border border-neutral-200 bg-white"
+              >
+                <option value="all">All Status</option>
+                <option value="present">Present</option>
+                <option value="absent">Absent</option>
+                <option value="late">Late</option>
+                <option value="leave">Leave</option>
+              </select>
+            </div>
+            {(historyMonthFilter || historyStatusFilter !== 'all') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHistoryMonthFilter('');
+                  setHistoryStatusFilter('all');
+                }}
+                className="self-end px-3 py-1.5 text-xs font-medium text-[#DC1726] hover:underline"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
+                  <tr>
+                    <th className="px-4 py-3 text-start">Date</th>
+                    {!isStudent && <th className="px-4 py-3 text-start">Student</th>}
+                    <th className="px-4 py-3 text-start">Class</th>
+                    <th className="px-4 py-3 text-start">Status</th>
+                    <th className="px-4 py-3 text-start">Remark</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {loadingPersonal ? (
+                    <tr>
+                      <td colSpan={isStudent ? 4 : 5} className="p-6 text-center text-[#737373]">
+                        Loading your attendance...
+                      </td>
+                    </tr>
+                  ) : filteredHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan={isStudent ? 4 : 5} className="p-6 text-center text-[#737373]">
+                        No attendance records found.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredHistory.map((h) => {
+                      const badgeCls =
+                        h.status === 'present'
+                          ? 'bg-emerald-50 border-emerald-200 text-[#10B981]'
+                          : h.status === 'absent'
+                            ? 'bg-red-50 border-red-200 text-[#DC1726]'
+                            : h.status === 'late'
+                              ? 'bg-amber-50 border-amber-200 text-[#F59E0B]'
+                              : 'bg-sky-50 border-sky-200 text-[#0EA5E9]';
+                      return (
+                        <tr key={h.id} className="hover:bg-neutral-50">
+                          <td className="px-4 py-3 font-mono-num">{h.attendance_date}</td>
+                          {!isStudent && <td className="px-4 py-3 font-medium">{h.student_name}</td>}
+                          <td className="px-4 py-3">{h.class_name}</td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-0.5 rounded border text-[11px] font-bold uppercase ${badgeCls}`}>
+                              {h.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-[#737373]">{h.remark || '-'}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
-      <PrintModal open={printOpen} title="Official Attendance Sheet" subtitle={`${selectedClassName} · ${date}`} settings={settings} onClose={() => setPrintOpen(false)}>
+      <PrintModal open={printOpen} title="Official Attendance Sheet" subtitle={printSubtitle} settings={settings} onClose={() => setPrintOpen(false)}>
         <table className="w-full text-xs border-collapse border border-neutral-300">
           <thead>
             <tr className="bg-neutral-100">
-              <th className="border border-neutral-300 px-3 py-2 text-start">Student ID</th>
-              <th className="border border-neutral-300 px-3 py-2 text-start">Student Name</th>
+              {canMark ? (
+                <>
+                  <th className="border border-neutral-300 px-3 py-2 text-start">Student ID</th>
+                  <th className="border border-neutral-300 px-3 py-2 text-start">Student Name</th>
+                </>
+              ) : (
+                <>
+                  <th className="border border-neutral-300 px-3 py-2 text-start">Date</th>
+                  <th className="border border-neutral-300 px-3 py-2 text-start">Student</th>
+                  <th className="border border-neutral-300 px-3 py-2 text-start">Class</th>
+                </>
+              )}
               <th className="border border-neutral-300 px-3 py-2 text-start">Status</th>
               <th className="border border-neutral-300 px-3 py-2 text-start">Remark</th>
             </tr>
           </thead>
           <tbody>
-            {(canMark ? records : history).map((r, i) => (
+            {(canMark ? records : filteredHistory).map((r, i) => (
               <tr key={i}>
-                <td className="border border-neutral-300 px-3 py-2 font-mono-num">{r.student_code}</td>
-                <td className="border border-neutral-300 px-3 py-2">{r.full_name || r.student_name}</td>
+                {canMark ? (
+                  <>
+                    <td className="border border-neutral-300 px-3 py-2 font-mono-num">{r.student_code}</td>
+                    <td className="border border-neutral-300 px-3 py-2">{r.full_name}</td>
+                  </>
+                ) : (
+                  <>
+                    <td className="border border-neutral-300 px-3 py-2 font-mono-num">{r.attendance_date}</td>
+                    <td className="border border-neutral-300 px-3 py-2">{r.student_name}</td>
+                    <td className="border border-neutral-300 px-3 py-2">{r.class_name}</td>
+                  </>
+                )}
                 <td className="border border-neutral-300 px-3 py-2 uppercase font-semibold">{r.status}</td>
                 <td className="border border-neutral-300 px-3 py-2">{r.remark || '-'}</td>
               </tr>

@@ -374,6 +374,10 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
         <a href="mailto:dil.dil.a.1345@gmail.com" className="font-semibold text-[#DC1726] hover:underline">
           dil.dil.a.1345@gmail.com
         </a>
+        <span> · </span>
+        <a href="mailto:gausiyamadarsa92@gmail.com" className="font-semibold text-[#DC1726] hover:underline">
+          gausiyamadarsa92@gmail.com
+        </a>
       </footer>
 
       <PrintModal

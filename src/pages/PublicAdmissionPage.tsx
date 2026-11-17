@@ -288,9 +288,17 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
                 <Phone className="w-3.5 h-3.5 text-[#DC1726] shrink-0" />
                 <span>{settings?.phone || '+91 62027 36648'}</span>
               </div>
-              <div className="flex items-center justify-center gap-2">
+              <div className="flex flex-wrap items-center justify-center gap-2">
                 <Mail className="w-3.5 h-3.5 text-[#DC1726] shrink-0" />
-                <span>{settings?.email || 'dil.dil.a.1345@gmail.com'}</span>
+                <span>
+                  {Array.from(
+                    new Set([
+                      ...(settings?.email ? [settings.email] : []),
+                      'dil.dil.a.1345@gmail.com',
+                      'gausiyamadarsa92@gmail.com',
+                    ])
+                  ).join(' · ')}
+                </span>
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -1060,6 +1068,10 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
         <span> · </span>
         <a href="mailto:dil.dil.a.1345@gmail.com" className="font-semibold text-[#DC1726] hover:underline">
           dil.dil.a.1345@gmail.com
+        </a>
+        <span> · </span>
+        <a href="mailto:gausiyamadarsa92@gmail.com" className="font-semibold text-[#DC1726] hover:underline">
+          gausiyamadarsa92@gmail.com
         </a>
       </footer>
 
