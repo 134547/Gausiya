@@ -345,7 +345,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({
                   <MadrasaLogo logoUrl={settings?.logo_url} size={64} />
                   <div>
                     <h1 className="text-xl font-bold text-[#171717]">
-                      {settings?.name || 'Madrasa Ghausia Razvia'}
+                      {settings?.name || 'Madrasa Gausiya Razvia'}
                     </h1>
                     <p className="text-xs text-[#737373] mt-0.5">
                       {settings?.address ||

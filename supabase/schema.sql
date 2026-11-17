@@ -1,5 +1,5 @@
 -- ============================================================================
--- Madrasa Ghausia Razvia — Complete PostgreSQL Schema for Supabase
+-- Madrasa Gausiya Razvia — Complete PostgreSQL Schema for Supabase
 -- Run in Supabase SQL Editor (Stage 1: Schema)
 -- ============================================================================
 

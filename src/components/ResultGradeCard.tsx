@@ -319,7 +319,7 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
         <div className="w-[72px] sm:w-[100px] h-[80px] sm:h-[96px] flex items-center justify-center mx-auto">
           <img
             src={logoSrc}
-            alt="Madrasa Ghausia Razvia Logo"
+            alt="Madrasa Gausiya Razvia Logo"
             referrerPolicy="no-referrer"
             className="w-[68px] sm:w-[92px] h-[68px] sm:h-[92px] object-contain select-none"
           />

@@ -960,7 +960,7 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ user, onSettings
                     </span>
                   </h2>
                   <p className="text-xs text-[#737373] mt-0.5">
-                    Hide the Chat button for everyone except Super Admin.
+                    ON = visible to all portal users; OFF = Super Admin only.
                   </p>
                 </div>
               </div>

@@ -23,7 +23,7 @@ interface LoginCredentialsSheetProps {
 }
 
 export const LoginCredentialsSheet: React.FC<LoginCredentialsSheetProps> = ({ settings, data }) => {
-  const englishName = (settings?.name || 'MADRASA GHAUSIA RAZVIA').toUpperCase();
+  const englishName = (settings?.name || 'MADRASA GAUSIYA RAZVIA').toUpperCase();
   const urduName = settings?.name_urdu || 'مدرسہ غوثیہ رضویہ';
   const addressText =
     settings?.address ||
@@ -118,7 +118,7 @@ export const LoginCredentialsSheet: React.FC<LoginCredentialsSheetProps> = ({ se
 
       <div className="pt-2 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-neutral-500">
         <span>Founder: Dilshad Ansari S/o MD Ayub Ansari · Contact: 7209629509 / 6202736648</span>
-        <span>{settings?.name || 'Madrasa Ghausia Razvia'}</span>
+        <span>{settings?.name || 'Madrasa Gausiya Razvia'}</span>
       </div>
     </div>
   );

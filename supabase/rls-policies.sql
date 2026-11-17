@@ -1,5 +1,5 @@
 -- ============================================================================
--- Madrasa Ghausia Razvia — Row Level Security (RLS) Policies
+-- Madrasa Gausiya Razvia — Row Level Security (RLS) Policies
 -- Run in Supabase SQL Editor AFTER schema.sql (Stage 2: RLS)
 -- ============================================================================
 

@@ -1,5 +1,5 @@
 -- ============================================================================
--- Madrasa Ghausia Razvia — Supabase Storage Buckets & Policies
+-- Madrasa Gausiya Razvia — Supabase Storage Buckets & Policies
 -- Run in Supabase SQL Editor AFTER rls-policies.sql (Stage 3: Storage)
 -- ============================================================================
 

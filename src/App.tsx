@@ -325,7 +325,7 @@ export default function App() {
       <div className="min-h-screen bg-[#FAFAFA] flex items-center justify-center">
         <div className="text-center space-y-2">
           <div className="w-8 h-8 rounded-full border-2 border-[#DC1726] border-t-transparent animate-spin mx-auto" />
-          <p className="text-xs font-medium text-[#737373]">Loading Madrasa Ghausia Razvia Portal...</p>
+          <p className="text-xs font-medium text-[#737373]">Loading Madrasa Gausiya Razvia Portal...</p>
         </div>
       </div>
     );
@@ -341,7 +341,7 @@ export default function App() {
           <h1 className="text-lg font-bold text-[#171717]">Account Pending Approval</h1>
           <p className="text-xs text-[#737373] leading-relaxed">{pendingNotice}</p>
           <p className="text-xs text-[#737373]">
-            Please contact the Madrasa Ghausia Razvia Super Admin to assign your role and activate portal access.
+            Please contact the Madrasa Gausiya Razvia Super Admin to assign your role and activate portal access.
           </p>
           <div className="flex items-center justify-center gap-2 pt-2">
             <button

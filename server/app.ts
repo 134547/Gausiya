@@ -88,7 +88,7 @@ export async function createApiApp(): Promise<express.Express> {
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
-      institution: 'Madrasa Ghausia Razvia',
+      institution: 'Madrasa Gausiya Razvia',
       supabaseConfigured: isSupabaseServerConfigured,
       imgbbConfigured: isImgbbConfigured(),
     });

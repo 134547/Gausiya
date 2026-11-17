@@ -45,7 +45,7 @@ export const AdmissionPaperSheet: React.FC<AdmissionPaperSheetProps> = ({ settin
     .filter((v) => String(v || '').trim().length > 0)
     .join(', ');
 
-  const englishName = (settings?.name || 'MADRASA GHAUSIA RAZVIA').toUpperCase();
+  const englishName = (settings?.name || 'MADRASA GAUSIYA RAZVIA').toUpperCase();
   const urduName = settings?.name_urdu || 'مدرسہ غوثیہ رضویہ';
   const addressText =
     settings?.address ||
@@ -231,7 +231,7 @@ export const AdmissionPaperSheet: React.FC<AdmissionPaperSheetProps> = ({ settin
       <div className="pt-2 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-neutral-500">
         <span className="font-mono-num">Website: {websiteUrl}</span>
         <span>
-          Admission Application Form - {settings?.name || 'Madrasa Ghausia Razvia'}
+          Admission Application Form - {settings?.name || 'Madrasa Gausiya Razvia'}
         </span>
       </div>
     </div>

@@ -130,7 +130,7 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
           <MadrasaLogo logoUrl={settings?.logo_url} size={38} />
           <div>
             <div className="text-sm font-bold text-[#171717] whitespace-nowrap">
-              {settings?.name || 'Madrasa Ghausia Razvia'}
+              {settings?.name || 'Madrasa Gausiya Razvia'}
             </div>
             <div className="text-[11px] text-[#737373]">Student Result Verification</div>
           </div>
@@ -163,7 +163,7 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
             <div>
               <h1 className="text-xl font-bold text-[#171717]">Online Results Currently Unavailable</h1>
               <p className="text-xs sm:text-sm text-[#737373] mt-2 leading-relaxed">
-                Public online result checking is currently turned off by {settings?.name || 'Madrasa Ghausia Razvia'} administration.
+                Public online result checking is currently turned off by {settings?.name || 'Madrasa Gausiya Razvia'} administration.
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-3 pt-1">

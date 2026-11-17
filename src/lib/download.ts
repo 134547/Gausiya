@@ -245,7 +245,7 @@ export async function downloadFeedPostCard(
 
   ctx.fillStyle = '#FFFFFF';
   ctx.font = '700 32px "Plus Jakarta Sans", system-ui, -apple-system, sans-serif';
-  ctx.fillText(post.institutionName || 'Madrasa Ghausia Razvia', padX, 62);
+  ctx.fillText(post.institutionName || 'Madrasa Gausiya Razvia', padX, 62);
 
   ctx.fillStyle = 'rgba(255,255,255,0.82)';
   ctx.font = '500 19px "Plus Jakarta Sans", system-ui, -apple-system, sans-serif';
@@ -409,7 +409,7 @@ export async function downloadLoginCredentialsCard(creds: DownloadableCredential
 
   ctx.fillStyle = '#FFFFFF';
   ctx.font = '700 30px "Plus Jakarta Sans", system-ui, -apple-system, sans-serif';
-  ctx.fillText(creds.institutionName || 'Madrasa Ghausia Razvia', pad, 56);
+  ctx.fillText(creds.institutionName || 'Madrasa Gausiya Razvia', pad, 56);
 
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = '500 18px "Plus Jakarta Sans", system-ui, -apple-system, sans-serif';

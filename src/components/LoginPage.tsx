@@ -317,7 +317,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         <div className="flex items-center gap-3">
           <MadrasaLogo size={44} />
           <div>
-            <div className="text-sm font-bold text-[#171717]">Madrasa Ghausia Razvia</div>
+            <div className="text-sm font-bold text-[#171717]">Madrasa Gausiya Razvia</div>
             <div className="text-xs text-[#737373]">Islamnagar, Ramgarh, (P.S.) Ramgarh, (P.O.) Ramgarh, Palamu, Jharkhand, India, 822110</div>
           </div>
         </div>
@@ -745,7 +745,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         {mode === 'reset' && (
           <form onSubmit={handleReset} className="space-y-4">
             <p className="text-xs text-[#737373]">
-              Set a new password for your Madrasa Ghausia Razvia Portal account.
+              Set a new password for your Madrasa Gausiya Razvia Portal account.
             </p>
             <div>
               <label className="block text-xs font-medium text-[#171717] mb-1.5">New Password (min 6 chars)</label>
@@ -824,7 +824,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       </div>
 
       <div className="text-center text-xs text-[#737373]">
-        Madrasa Ghausia Razvia · Founder: Dilshad Ansari S/o MD Ayub Ansari · Islamnagar, Ramgarh, Palamu, Jharkhand, 822110 · Contact: 7209629509 / 6202736648
+        Madrasa Gausiya Razvia · Founder: Dilshad Ansari S/o MD Ayub Ansari · Islamnagar, Ramgarh, Palamu, Jharkhand, 822110 · Contact: 7209629509 / 6202736648
       </div>
     </div>
   );

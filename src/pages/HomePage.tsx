@@ -153,7 +153,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         { id: '5', name: 'Class 5', code: 'CLS-05' },
       ];
 
-  const institutionName = lang === 'ur' ? (settings?.name_urdu || 'مدرسہ غوثیہ رضویہ') : (settings?.name || 'Madrasa Ghausia Razvia');
+  const institutionName = lang === 'ur' ? (settings?.name_urdu || 'مدرسہ غوثیہ رضویہ') : (settings?.name || 'Madrasa Gausiya Razvia');
   const addressText = lang === 'ur' ? (settings?.address_urdu || 'اسلام نگر، رام گڑھ، پلاموں، جھارکھنڈ، انڈیا') : (settings?.address || 'Islamnagar, Ramgarh, (P.S.) Ramgarh, (P.O.) Ramgarh, Palamu, Jharkhand, India, 822110');
 
   const formatDate = (d?: string) => {
@@ -202,7 +202,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           author_role: post.author_role,
           created_at: post.created_at,
           images,
-          institutionName: settings?.name || 'Madrasa Ghausia Razvia',
+          institutionName: settings?.name || 'Madrasa Gausiya Razvia',
         },
         imgIdx
       );
@@ -450,7 +450,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               {lang === 'ur' ? 'علم اور ایمان کی آبیاری' : 'Nurturing Knowledge & Faith'}
             </h2>
             <p className="mt-5 text-[#737373] leading-relaxed text-base sm:text-lg">
-              Madrasa Ghausia Razvia, located in Islamnagar, Ramgarh, Palamu, Jharkhand, is dedicated to providing quality Islamic and modern education. Founded by{' '}
+              Madrasa Gausiya Razvia, located in Islamnagar, Ramgarh, Palamu, Jharkhand, is dedicated to providing quality Islamic and modern education. Founded by{' '}
               <span className="font-semibold text-[#171717]">Dilshad Ansari S/o MD Ayub Ansari</span>, we nurture students from Class 1 to 5 with a balanced curriculum that builds both Deeni knowledge and worldly understanding, shaping young minds for a bright future.
             </p>
             <div className="mt-5 inline-flex flex-col sm:flex-row items-center gap-1.5 sm:gap-3 px-5 py-3 rounded-xl bg-white border border-neutral-200 shadow-xs text-sm">
@@ -798,7 +798,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             Contact Us
           </h2>
           <p className="mt-2 text-xs text-[#737373]">
-            Reach Madrasa Ghausia Razvia directly via phone, WhatsApp, or Gmail.
+            Reach Madrasa Gausiya Razvia directly via phone, WhatsApp, or Gmail.
           </p>
 
           <div className="mt-5 inline-flex flex-col sm:flex-row items-center gap-1.5 sm:gap-3 px-5 py-3 rounded-xl bg-white border border-neutral-200 shadow-xs text-sm">

@@ -1,5 +1,5 @@
 -- ============================================================================
--- Madrasa Ghausia Razvia Portal — Complete Idempotent Database Update Script
+-- Madrasa Gausiya Razvia Portal — Complete Idempotent Database Update Script
 -- Run this once in Supabase Dashboard -> SQL Editor -> New Query
 -- Safe to re-run: preserves all existing tables and data.
 -- ============================================================================
@@ -23,11 +23,15 @@ ON CONFLICT (slug) DO UPDATE SET
   name = EXCLUDED.name,
   description = EXCLUDED.description;
 
--- 2. Institutional Portal Toggles in madrasa_settings
+-- 2. Institutional Portal Toggles & Name Update in madrasa_settings
 ALTER TABLE public.madrasa_settings
   ADD COLUMN IF NOT EXISTS admissions_open BOOLEAN NOT NULL DEFAULT TRUE,
   ADD COLUMN IF NOT EXISTS results_open BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS chats_open BOOLEAN NOT NULL DEFAULT TRUE;
+
+UPDATE public.madrasa_settings
+SET name = regexp_replace(name, 'Ghausia', 'Gausiya', 'gi')
+WHERE name ~* 'Ghausia';
 
 -- 3. Profiles: Student admission automatic account + approval tracking columns
 ALTER TABLE public.profiles

@@ -36,7 +36,7 @@ export const ContactUsPage: React.FC<ContactUsPageProps> = ({ settings }) => {
         <MadrasaLogo logoUrl={settings?.logo_url} size={58} />
         <div className="min-w-0 flex-1">
           <h2 className="text-lg font-bold text-[#171717]">
-            {settings?.name || 'Madrasa Ghausia Razvia'} — Contact Us
+            {settings?.name || 'Madrasa Gausiya Razvia'} — Contact Us
           </h2>
           <p className="urdu-text text-sm text-[#DC1726] font-semibold mt-0.5">
             {settings?.name_urdu || 'مدرسہ غوثیہ رضویہ'}

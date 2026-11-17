@@ -170,7 +170,7 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
     setDownloadingCreds(true);
     try {
       await downloadLoginCredentialsCard({
-        institutionName: settings?.name || 'Madrasa Ghausia Razvia',
+        institutionName: settings?.name || 'Madrasa Gausiya Razvia',
         student_name: submitted.student_name,
         father_name: submitted.father_name,
         reference_no: submitted.reference_no || submitted.admission_no,
@@ -243,7 +243,7 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
           <MadrasaLogo logoUrl={settings?.logo_url} size={38} />
           <div>
             <div className="text-sm font-bold text-[#171717] whitespace-nowrap">
-              {settings?.name || 'Madrasa Ghausia Razvia'}
+              {settings?.name || 'Madrasa Gausiya Razvia'}
             </div>
             <div className="text-[11px] text-[#737373]">Online Admission &amp; Iqrar Nama</div>
           </div>
@@ -276,7 +276,7 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
             <div>
               <h1 className="text-xl font-bold text-[#171717]">Online Admissions Currently Closed</h1>
               <p className="text-xs sm:text-sm text-[#737373] mt-2 max-w-md mx-auto leading-relaxed">
-                Online admission applications and status checking are currently closed by {settings?.name || 'Madrasa Ghausia Razvia'} administration. Please check back later or contact the Madrasa office directly for assistance.
+                Online admission applications and status checking are currently closed by {settings?.name || 'Madrasa Gausiya Razvia'} administration. Please check back later or contact the Madrasa office directly for assistance.
               </p>
             </div>
             <div className="max-w-md mx-auto bg-neutral-50 rounded-xl border border-neutral-200 p-4 text-xs text-[#737373] space-y-2">
@@ -832,7 +832,7 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
                   <div>
                     <h1 className="text-xl font-bold text-[#171717]">Online Admission Application Form</h1>
                     <p className="text-xs text-[#737373] mt-1">
-                      Apply for admission at {settings?.name || 'Madrasa Ghausia Razvia'}, Islamnagar, Ramgarh, Palamu, Jharkhand.
+                      Apply for admission at {settings?.name || 'Madrasa Gausiya Razvia'}, Islamnagar, Ramgarh, Palamu, Jharkhand.
                     </p>
                   </div>
                   <button

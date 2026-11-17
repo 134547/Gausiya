@@ -613,7 +613,7 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
               <div className="bg-[#171717] text-white p-3 flex items-center gap-2.5">
                 <MadrasaLogo logoUrl={settings?.logo_url} size={34} surface="dark" />
                 <div>
-                  <div className="text-xs font-bold">{settings?.name || 'Madrasa Ghausia Razvia'}</div>
+                  <div className="text-xs font-bold">{settings?.name || 'Madrasa Gausiya Razvia'}</div>
                   <div className="text-[10px] text-neutral-300">Islamnagar, Ramgarh, Palamu, Jharkhand - 822110</div>
                 </div>
               </div>

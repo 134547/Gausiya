@@ -3,7 +3,7 @@ export type Language = 'en' | 'ur';
 export const translations = {
   en: {
     portalTitle: 'Madarsa Portal',
-    institutionName: 'Madrasa Ghausia Razvia',
+    institutionName: 'Madrasa Gausiya Razvia',
     institutionSub: 'Islamnagar, Ramgarh, (P.S.) Ramgarh, (P.O.) Ramgarh, Palamu, Jharkhand, India, 822110',
     superAdminOverview: 'Super Admin Overview',
     nav: {

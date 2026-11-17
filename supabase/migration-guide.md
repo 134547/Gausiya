@@ -1,4 +1,4 @@
-# Madrasa Ghausia Razvia — Supabase Migration Guide
+# Madrasa Gausiya Razvia — Supabase Migration Guide
 
 This guide covers setting up your Supabase project, applying the PostgreSQL schema and security policies, configuring Google OAuth, and safely migrating existing SQLite (`data/madrasa.db`) records into Supabase without data loss or duplication.
 

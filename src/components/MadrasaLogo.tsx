@@ -20,7 +20,7 @@ export const MadrasaLogo: React.FC<MadrasaLogoProps> = ({
   return (
     <img
       src={src}
-      alt="Madrasa Ghausia Razvia"
+      alt="Madrasa Gausiya Razvia"
       referrerPolicy="no-referrer"
       style={{ width: size, height: size }}
       className={`object-contain bg-transparent shrink-0 select-none ${

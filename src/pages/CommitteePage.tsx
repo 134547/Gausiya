@@ -90,7 +90,7 @@ export const CommitteePage: React.FC<CommitteePageProps> = ({ user, settings }) 
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-bold text-[#171717]">Madrasa Ghausia Razvia Management Committee</h2>
+          <h2 className="text-sm font-bold text-[#171717]">Madrasa Gausiya Razvia Management Committee</h2>
           <p className="text-xs text-[#737373]">Official office bearers and executive committee members.</p>
         </div>
         <div className="flex items-center gap-2">

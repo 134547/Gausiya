@@ -1,4 +1,4 @@
-# Madrasa Ghausia Razvia — Complete Madrasa Management Portal
+# Madrasa Gausiya Razvia — Complete Madrasa Management Portal
 
 Full-stack institutional management portal built with **React + TypeScript + Tailwind CSS**, **Express (`server.ts`)**, **Supabase PostgreSQL + Auth**, and **ImgBB API** for server-side image hosting.
 

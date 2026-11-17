@@ -156,11 +156,12 @@ router.delete('/committee/:id', requireAuth, requireRole('super_admin'), async (
 
 // ==================== CHATS & MESSAGING ====================
 function getAllowedContactRoleSlugs(roleSlug: string): string[] {
-  if (roleSlug === 'super_admin') return ['super_admin', 'teacher', 'parent', 'committee_member'];
-  if (roleSlug === 'teacher') return ['super_admin', 'teacher', 'parent'];
+  if (roleSlug === 'super_admin') return ['super_admin', 'teacher', 'parent', 'student', 'committee_member', 'public'];
+  if (roleSlug === 'teacher') return ['super_admin', 'teacher', 'parent', 'student'];
   if (roleSlug === 'parent') return ['super_admin', 'teacher'];
   if (roleSlug === 'committee_member') return ['super_admin', 'committee_member', 'teacher'];
-  return ['super_admin', 'teacher'];
+  if (roleSlug === 'student') return ['super_admin', 'teacher'];
+  return ['super_admin'];
 }
 
 router.get('/chats/status', requireAuth, async (_req, res) => {
@@ -206,7 +207,7 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
   const [{ data: contactsRaw }, { data: myPartRows }] = await Promise.all([
     admin
       .from('profiles')
-      .select('id, full_name, username, photo_url, roles!inner(name, slug)')
+      .select('id, full_name, username, mobile, photo_url, roles!inner(name, slug)')
       .neq('id', uid)
       .eq('status', 'active')
       .is('deleted_at', null)
@@ -220,6 +221,7 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
     id: c.id,
     full_name: c.full_name,
     username: c.username,
+    mobile: c.mobile || '',
     role_name: c.roles?.name || '',
     role_slug: c.roles?.slug || '',
     photo_url: c.photo_url || '',
@@ -230,18 +232,29 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
 
   const [{ data: convs }, { data: allParticipants }, { data: recentMsgs }] = await Promise.all([
     admin.from('conversations').select('*').in('id', convIds),
-    admin.from('conversation_participants').select('conversation_id, user_id, profiles(full_name, roles(name, slug))').in('conversation_id', convIds),
-    admin.from('messages').select('id, conversation_id, sender_id, content, created_at').in('conversation_id', convIds).order('created_at', { ascending: false }),
+    admin
+      .from('conversation_participants')
+      .select('conversation_id, user_id, profiles(full_name, username, mobile, photo_url, roles(name, slug))')
+      .in('conversation_id', convIds),
+    admin
+      .from('messages')
+      .select('id, conversation_id, sender_id, content, attachment_name, created_at')
+      .in('conversation_id', convIds)
+      .order('created_at', { ascending: false }),
   ]);
 
   const myLastReadMap = new Map((myPartRows || []).map((p) => [p.conversation_id, p.last_read_at]));
-  const participants = (allParticipants || []).map((p: any) => ({
+  const rawParticipants = (allParticipants || []).map((p: any) => ({
     conversation_id: p.conversation_id,
     user_id: p.user_id,
     full_name: p.profiles?.full_name || '',
+    username: p.profiles?.username || '',
+    mobile: p.profiles?.mobile || '',
+    photo_url: p.profiles?.photo_url || '',
     role_name: p.profiles?.roles?.name || '',
     role_slug: p.profiles?.roles?.slug || '',
   }));
+  const participants = await resolveStorageUrlsInRows(rawParticipants, ['photo_url']);
 
   const conversations = (convs || [])
     .map((conv: any) => {
@@ -251,10 +264,19 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
       const unread_count = msgs.filter((m) => m.sender_id !== uid && m.created_at > lastRead).length;
       const convParts = participants.filter((p) => p.conversation_id === conv.id);
       const other = convParts.find((p) => p.user_id !== uid);
-      const display_title = conv.type === 'private' && !conv.title ? (other ? `${other.full_name} (${other.role_name})` : 'Direct Message') : conv.title || 'Group Conversation';
+      const is_personal_channel = convParts.length === 1 && convParts[0]?.user_id === uid;
+      const display_title = is_personal_channel
+        ? conv.title || 'My Personal Channel'
+        : conv.type === 'private' && !conv.title
+          ? other
+            ? other.full_name
+            : 'Direct Message'
+          : conv.title || 'Group Conversation';
       return {
         ...conv,
-        last_message: lastMsg?.content || '',
+        is_personal_channel,
+        other_user: other || null,
+        last_message: lastMsg?.content || (lastMsg?.attachment_name ? `📎 ${lastMsg.attachment_name}` : ''),
         last_message_at: lastMsg?.created_at || conv.created_at,
         unread_count,
         participants: convParts,
@@ -264,6 +286,194 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
     .sort((a: any, b: any) => String(b.last_message_at).localeCompare(String(a.last_message_at)));
 
   return res.json({ conversations, contacts });
+});
+
+// Connect / find registered active portal users by Contact Number, Username, or Name
+router.get('/chats/lookup', requireAuth, async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  }
+
+  const rawQ = String(req.query.q || req.query.phone || '').trim();
+  if (!rawQ) return res.json({ matches: [] });
+
+  const uid = req.user!.id;
+  const digits = rawQ.replace(/\D/g, '');
+  const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
+  const qLower = rawQ.toLowerCase();
+
+  const { data: allActiveRaw } = await admin
+    .from('profiles')
+    .select('id, full_name, username, mobile, user_code, photo_url, roles(name, slug)')
+    .neq('id', uid)
+    .eq('status', 'active')
+    .is('deleted_at', null)
+    .order('full_name', { ascending: true });
+
+  let extraPhonesByUserId = new Map<string, string>();
+  if (digits.length >= 4) {
+    const [{ data: stRows }, { data: trRows }, { data: prRows }] = await Promise.all([
+      admin.from('students').select('user_id, mobile').not('user_id', 'is', null).is('deleted_at', null),
+      admin.from('teachers').select('user_id, mobile').not('user_id', 'is', null).is('deleted_at', null),
+      admin.from('parents').select('user_id, mobile').not('user_id', 'is', null).is('deleted_at', null),
+    ]);
+    for (const row of [...(stRows || []), ...(trRows || []), ...(prRows || [])]) {
+      if (row.user_id && row.mobile && !extraPhonesByUserId.has(row.user_id)) {
+        extraPhonesByUserId.set(row.user_id, String(row.mobile));
+      }
+    }
+  }
+
+  const matchedRaw = (allActiveRaw || []).filter((p: any) => {
+    const profileDigits = String(p.mobile || '').replace(/\D/g, '');
+    const linkedDigits = String(extraPhonesByUserId.get(p.id) || '').replace(/\D/g, '');
+    if (digits.length >= 4) {
+      const pMatch =
+        profileDigits &&
+        (profileDigits === digits ||
+          (last10.length >= 6 && profileDigits.endsWith(last10)) ||
+          profileDigits.includes(digits));
+      const lMatch =
+        linkedDigits &&
+        (linkedDigits === digits ||
+          (last10.length >= 6 && linkedDigits.endsWith(last10)) ||
+          linkedDigits.includes(digits));
+      if (pMatch || lMatch) return true;
+    }
+    if (
+      String(p.username || '').toLowerCase().includes(qLower) ||
+      String(p.user_code || '').toLowerCase().includes(qLower) ||
+      String(p.full_name || '').toLowerCase().includes(qLower)
+    ) {
+      return true;
+    }
+    return false;
+  });
+
+  const resolved = await resolveStorageUrlsInRows(matchedRaw.slice(0, 25), ['photo_url']);
+  const matches = resolved.map((c: any) => ({
+    id: c.id,
+    full_name: c.full_name,
+    username: c.username,
+    mobile: c.mobile || extraPhonesByUserId.get(c.id) || '',
+    role_name: c.roles?.name || '',
+    role_slug: c.roles?.slug || '',
+    photo_url: c.photo_url || '',
+  }));
+
+  return res.json({ matches });
+});
+
+// 24-Hour WhatsApp-style Status Updates (stored in public.documents)
+const CHAT_STATUS_ENTITY_ID = '00000000-0000-0000-0000-000000000002';
+
+router.get('/chats/statuses', requireAuth, async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  }
+
+  const cutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: rows } = await admin
+    .from('documents')
+    .select('id, file_url, uploaded_by, created_at, profiles:uploaded_by(full_name, username, photo_url, roles(name))')
+    .eq('entity_type', 'general')
+    .eq('title', 'CHAT_STATUS')
+    .gte('created_at', cutoffIso)
+    .order('created_at', { ascending: false });
+
+  const statuses: any[] = [];
+  for (const r of rows || []) {
+    let payload: any = {};
+    try {
+      payload = JSON.parse(r.file_url || '{}');
+    } catch {
+      payload = { text: r.file_url || '' };
+    }
+    const imageUrl = payload.image_url ? await resolveStorageUrl(payload.image_url) : '';
+    const authorPhoto = (r as any).profiles?.photo_url ? await resolveStorageUrl((r as any).profiles.photo_url) : '';
+    statuses.push({
+      id: r.id,
+      user_id: r.uploaded_by,
+      author_name: (r as any).profiles?.full_name || 'Portal User',
+      author_username: (r as any).profiles?.username || '',
+      author_role: (r as any).profiles?.roles?.name || '',
+      author_photo: authorPhoto,
+      text: payload.text || '',
+      image_url: imageUrl,
+      bg_color: payload.bg_color || '#008069',
+      created_at: r.created_at,
+    });
+  }
+
+  return res.json({ statuses });
+});
+
+router.post('/chats/statuses', requireAuth, async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  }
+
+  const { text, image_url, bg_color } = req.body as {
+    text?: string;
+    image_url?: string;
+    bg_color?: string;
+  };
+
+  const cleanText = String(text || '').trim();
+  const cleanImage = normalizeStorageRef(image_url);
+  if (!cleanText && !cleanImage) {
+    return res.status(400).json({ error: 'Status text or photo is required.' });
+  }
+
+  const payloadJson = JSON.stringify({
+    text: cleanText,
+    image_url: cleanImage,
+    bg_color: bg_color || '#008069',
+  });
+
+  const { data: created, error } = await admin
+    .from('documents')
+    .insert({
+      entity_type: 'general',
+      entity_id: CHAT_STATUS_ENTITY_ID,
+      title: 'CHAT_STATUS',
+      file_url: payloadJson,
+      file_type: 'chat_status',
+      uploaded_by: req.user!.id,
+    })
+    .select('id')
+    .single();
+
+  if (error || !created) return res.status(400).json({ error: error?.message || 'Failed to post status' });
+  return res.status(201).json({ id: created.id });
+});
+
+router.delete('/chats/statuses/:id', requireAuth, async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  const id = req.params.id;
+
+  const { data: existing } = await admin
+    .from('documents')
+    .select('id, uploaded_by')
+    .eq('id', id)
+    .eq('title', 'CHAT_STATUS')
+    .maybeSingle();
+
+  if (!existing) return res.status(404).json({ error: 'Status not found' });
+  if (existing.uploaded_by !== req.user!.id && req.user!.role_slug !== 'super_admin') {
+    return res.status(403).json({ error: 'You can only delete your own status.' });
+  }
+
+  const { error } = await admin.from('documents').delete().eq('id', id);
+  if (error) return res.status(400).json({ error: error.message });
+  return res.json({ success: true });
 });
 
 router.get('/chats/:id/messages', requireAuth, async (req: AuthRequest, res) => {
@@ -302,22 +512,55 @@ router.post('/chats', requireAuth, async (req: AuthRequest, res) => {
       return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
     }
     const uid = req.user!.id;
-    const { title, type, participant_ids, initial_message } = req.body as {
+    const { title, type, participant_ids, initial_message, is_personal, connect_by_phone } = req.body as {
       title?: string;
-      type: 'private' | 'group';
-      participant_ids: string[];
+      type?: 'private' | 'group' | 'channel';
+      participant_ids?: string[];
       initial_message?: string;
+      is_personal?: boolean;
+      connect_by_phone?: boolean;
     };
+
+    const personalChannel = Boolean(is_personal || type === 'channel');
+    const cleanTitle = (title || '').trim();
+
+    if (personalChannel) {
+      const channelTitle = cleanTitle || 'My Personal Channel';
+      const { data: createdConv, error: convErr } = await admin
+        .from('conversations')
+        .insert({ title: channelTitle, type: 'group', created_by: uid })
+        .select('id')
+        .single();
+      if (convErr || !createdConv) return res.status(500).json({ error: 'Failed to create personal channel' });
+
+      await admin.from('conversation_participants').insert({ conversation_id: createdConv.id, user_id: uid });
+      if (initial_message?.trim()) {
+        await admin.from('messages').insert({
+          conversation_id: createdConv.id,
+          sender_id: uid,
+          content: initial_message.trim(),
+        });
+      }
+      return res.status(201).json({ id: createdConv.id, is_personal_channel: true });
+    }
+
     const uniqueIds = Array.from(new Set([uid, ...(participant_ids || [])]));
     if (uniqueIds.length < 2) return res.status(400).json({ error: 'Select at least one recipient.' });
 
     const allowedSlugs = getAllowedContactRoleSlugs(req.user!.role_slug);
     const otherIds = uniqueIds.filter((id) => id !== uid);
 
-    const { data: targets } = await admin.from('profiles').select('id, roles(slug)').in('id', otherIds);
+    const { data: targets } = await admin
+      .from('profiles')
+      .select('id, status, deleted_at, roles(slug)')
+      .in('id', otherIds);
     for (const oid of otherIds) {
       const t = (targets || []).find((x: any) => x.id === oid) as any;
-      if (!t?.roles?.slug || !allowedSlugs.includes(t.roles.slug)) {
+      if (!t || t.status !== 'active' || t.deleted_at) {
+        return res.status(404).json({ error: 'Selected user account is not active.' });
+      }
+      const allowViaPhone = Boolean(connect_by_phone && (type || 'private') === 'private' && otherIds.length === 1);
+      if (!allowViaPhone && (!t?.roles?.slug || !allowedSlugs.includes(t.roles.slug))) {
         return res.status(403).json({ error: 'Role-based messaging policy restricts contacting one of the selected users.' });
       }
     }
@@ -342,9 +585,10 @@ router.post('/chats', requireAuth, async (req: AuthRequest, res) => {
       }
     }
 
+    const dbType = type === 'group' ? 'group' : 'private';
     const { data: createdConv, error: convErr } = await admin
       .from('conversations')
-      .insert({ title: title || '', type: type || 'private', created_by: uid })
+      .insert({ title: cleanTitle, type: dbType, created_by: uid })
       .select('id')
       .single();
     if (convErr || !createdConv) return res.status(500).json({ error: 'Failed to create conversation' });
@@ -399,6 +643,55 @@ router.post('/chats/:id/messages', requireAuth, async (req: AuthRequest, res) =>
     await createNotification(o.user_id, 'message', 'New Message', `${req.user!.full_name}: ${(content || attachment_name || 'Attachment').slice(0, 80)}`, 'chats', convId);
   }
   return res.status(201).json({ id: createdMsg.id });
+});
+
+router.delete('/chats/:id/messages/:messageId', requireAuth, async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  }
+  const { id: convId, messageId } = req.params;
+  const uid = req.user!.id;
+
+  const { data: msgRow } = await admin
+    .from('messages')
+    .select('id, sender_id, conversation_id')
+    .eq('id', messageId)
+    .eq('conversation_id', convId)
+    .maybeSingle();
+
+  if (!msgRow) return res.status(404).json({ error: 'Message not found' });
+  if (msgRow.sender_id !== uid) return res.status(403).json({ error: 'You can only delete your own saved messages.' });
+
+  const { error } = await admin.from('messages').delete().eq('id', messageId).eq('sender_id', uid);
+  if (error) return res.status(400).json({ error: error.message });
+  return res.json({ success: true });
+});
+
+router.delete('/chats/:id', requireAuth, async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  }
+  const convId = req.params.id;
+  const uid = req.user!.id;
+
+  const [{ data: conv }, { data: parts }] = await Promise.all([
+    admin.from('conversations').select('id, created_by').eq('id', convId).maybeSingle(),
+    admin.from('conversation_participants').select('user_id').eq('conversation_id', convId),
+  ]);
+
+  if (!conv) return res.status(404).json({ error: 'Channel not found' });
+  const isPersonal = (parts || []).length === 1 && parts?.[0]?.user_id === uid && conv.created_by === uid;
+  if (!isPersonal) {
+    return res.status(403).json({ error: 'Only your own Personal Channel can be deleted.' });
+  }
+
+  const { error } = await admin.from('conversations').delete().eq('id', convId);
+  if (error) return res.status(400).json({ error: error.message });
+  return res.json({ success: true });
 });
 
 // ==================== NOTICES ====================
@@ -554,7 +847,7 @@ router.post('/programs', requireAuth, requireRole('super_admin', 'committee_memb
         description: description || '',
         program_date,
         start_time: start_time || '',
-        venue: venue || 'Madrasa Ghausia Razvia Campus',
+        venue: venue || 'Madrasa Gausiya Razvia Campus',
         category: category || 'Religious Gathering',
         featured_photo: normalizeStorageRef(featured_photo),
         gallery_json: Array.isArray(gallery_images) ? gallery_images.map((u: string) => normalizeStorageRef(u)).filter(Boolean) : [],

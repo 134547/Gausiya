@@ -19,7 +19,7 @@ const CAPTCHA_TTL_MS = 5 * 60 * 1000;
 
 const SECURITY_SECRET = crypto
   .createHash('sha256')
-  .update(SUPABASE_SERVICE_ROLE_KEY || process.env.CAPTCHA_SECRET || 'madrasa-ghausia-razvia-auth-guard-v1')
+  .update(SUPABASE_SERVICE_ROLE_KEY || process.env.CAPTCHA_SECRET || 'madrasa-gausiya-razvia-auth-guard-v1')
   .digest();
 
 interface AttemptState {

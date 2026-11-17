@@ -1,5 +1,5 @@
 -- ============================================================================
--- Madrasa Ghausia Razvia — Initial Seed Data (Roles, Permissions, Settings ONLY)
+-- Madrasa Gausiya Razvia — Initial Seed Data (Roles, Permissions, Settings ONLY)
 -- IMPORTANT: Contains NO fake student, teacher, or parent records.
 -- Run in Supabase SQL Editor AFTER schema.sql, rls-policies.sql, storage-policies.sql
 -- ============================================================================
@@ -106,7 +106,7 @@ INSERT INTO public.madrasa_settings (
 )
 VALUES (
   1,
-  'Madrasa Ghausia Razvia',
+  'Madrasa Gausiya Razvia',
   'مدرسہ غوثیہ رضویہ',
   'Islamnagar, Ramgarh, (P.S.) Ramgarh, (P.O.) Ramgarh, Palamu, Jharkhand, India, 822110',
   'اسلام نگر، رام گڑھ، پلاموں، جھارکھنڈ، انڈیا',
