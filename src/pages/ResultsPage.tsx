@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
+  Clock,
   Download,
   Edit3,
   Eye,
@@ -9,6 +10,9 @@ import {
   Printer,
   Save,
   Trash2,
+  Trophy,
+  UploadCloud,
+  Users,
   X,
 } from 'lucide-react';
 import { apiRequest } from '../lib/api.ts';
@@ -45,8 +49,11 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
   // View / Edit / Delete Grade Card state
   const [viewResult, setViewResult] = useState<any>(null);
   const [editingResult, setEditingResult] = useState<any>(null);
+  const [preselectStudentId, setPreselectStudentId] = useState('');
+  const [preselectExamId, setPreselectExamId] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
+  const [uploadingExamId, setUploadingExamId] = useState<string | null>(null);
   const [downloadingViewPng, setDownloadingViewPng] = useState(false);
   const viewCardRef = useRef<HTMLDivElement>(null);
 
@@ -168,20 +175,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
         method: 'POST',
         body: JSON.stringify({ examId: selectedExamId, entries, teacherRemarks: remarksMap }),
       });
-      setMsg('Marks saved and totals, percentages, grades, and class positions calculated automatically.');
-      loadResults(selectedExamId);
-    } catch (e: any) {
-      setErr(e.message);
-    }
-  };
-
-  const handlePublish = async (examId: string, publish: boolean) => {
-    try {
-      await apiRequest(`/api/results/publish/${examId}`, {
-        method: 'POST',
-        body: JSON.stringify({ publish }),
-      });
-      setMsg(publish ? 'Results approved and published to students & parents.' : 'Results unpublished.');
+      setMsg('Marks saved and totals, percentages, grades, and class ranks calculated automatically.');
       await loadExaminations();
       loadResults(selectedExamId);
     } catch (e: any) {
@@ -189,23 +183,59 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
     }
   };
 
+  const handlePublish = async (examId: string, publish: boolean) => {
+    setErr('');
+    setMsg('');
+    setUploadingExamId(examId);
+    try {
+      await apiRequest(`/api/results/publish/${examId}`, {
+        method: 'POST',
+        body: JSON.stringify({ publish }),
+      });
+      setMsg(
+        publish
+          ? 'All students’ results verified, ranks finalized by highest marks, and results uploaded to students & parents.'
+          : 'Results moved back to Draft.'
+      );
+      await loadExaminations();
+      await loadResults(selectedExamId || undefined);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setUploadingExamId(null);
+    }
+  };
+
   const handleCardSaved = async (_savedId: string, savedExamId: string) => {
     const wasEditing = Boolean(editingResult);
     setEditingResult(null);
+    setPreselectStudentId('');
+    setPreselectExamId('');
     await loadExaminations();
     setSelectedExamId(savedExamId || '');
     await loadResults(savedExamId || undefined);
     setTab('results');
     setMsg(
       wasEditing
-        ? 'Result updated in the Result section.'
-        : 'New Result Card saved to the Result section.'
+        ? 'Result updated and class ranks & percentages recalculated.'
+        : 'Result card saved to Draft. Class ranks & percentages updated automatically.'
     );
   };
 
   const handleEditResult = (r: any) => {
     setViewResult(null);
+    setPreselectStudentId('');
+    setPreselectExamId('');
     setEditingResult(r);
+    setTab('create');
+    setErr('');
+    setMsg('');
+  };
+
+  const handleCreateForStudent = (studentId: string, examId: string) => {
+    setEditingResult(null);
+    setPreselectStudentId(studentId);
+    setPreselectExamId(examId);
     setTab('create');
     setErr('');
     setMsg('');
@@ -218,8 +248,9 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
     setMsg('');
     try {
       await apiRequest(`/api/results/${deleteTarget.id}`, { method: 'DELETE' });
-      setMsg(`Result for ${deleteTarget.student_name} deleted.`);
+      setMsg(`Result for ${deleteTarget.student_name} deleted and class ranks recalculated.`);
       setDeleteTarget(null);
+      await loadExaminations();
       await loadResults(selectedExamId || undefined);
     } catch (e: any) {
       setErr(e.message || 'Failed to delete result.');
@@ -331,6 +362,8 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
                 type="button"
                 onClick={() => {
                   setEditingResult(null);
+                  setPreselectStudentId('');
+                  setPreselectExamId('');
                   setTab('create');
                 }}
                 className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-md cursor-pointer ${
@@ -366,7 +399,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
               <option value="">All Examinations</option>
               {exams.map((ex) => (
                 <option key={ex.id} value={ex.id}>
-                  {ex.name} — {ex.class_name} ({ex.results_published ? 'Published' : 'Draft'})
+                  {ex.name} — {ex.class_name} ({ex.results_published ? 'Uploaded' : `${ex.created_results_count ?? 0}/${ex.total_students ?? 0} Draft`})
                 </option>
               ))}
             </select>
@@ -379,6 +412,8 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
               type="button"
               onClick={() => {
                 setEditingResult(null);
+                setPreselectStudentId('');
+                setPreselectExamId('');
                 setTab('create');
               }}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#16a34a] hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer"
@@ -387,17 +422,45 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
               <span>Create Result</span>
             </button>
           )}
-          {isAdmin && selectedExam && tab !== 'create' && (
-            <button
-              type="button"
-              onClick={() => handlePublish(selectedExam.id, !selectedExam.results_published)}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-white cursor-pointer ${
-                selectedExam.results_published ? 'bg-[#171717] hover:bg-neutral-800' : 'bg-[#10B981] hover:bg-emerald-600'
-              }`}
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{selectedExam.results_published ? 'Unpublish Results' : 'Approve & Publish Results'}</span>
-            </button>
+          {canEnterMarks && selectedExam && tab !== 'create' && (
+            selectedExam.results_published ? (
+              isAdmin && (
+                <button
+                  type="button"
+                  disabled={uploadingExamId === String(selectedExam.id)}
+                  onClick={() => handlePublish(selectedExam.id, false)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-[#171717] hover:bg-neutral-800 cursor-pointer disabled:opacity-60"
+                >
+                  <Clock className="w-4 h-4" />
+                  <span>{uploadingExamId === String(selectedExam.id) ? 'Updating...' : 'Move to Draft (Unpublish)'}</span>
+                </button>
+              )
+            ) : (
+              <button
+                type="button"
+                disabled={!selectedExam.all_results_created || uploadingExamId === String(selectedExam.id)}
+                onClick={() => handlePublish(selectedExam.id, true)}
+                title={
+                  selectedExam.all_results_created
+                    ? 'All students created — Upload & Publish Results now'
+                    : `Create remaining ${selectedExam.pending_students?.length || 0} student results first`
+                }
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-white transition-colors ${
+                  selectedExam.all_results_created
+                    ? 'bg-[#10B981] hover:bg-emerald-600 cursor-pointer shadow-xs'
+                    : 'bg-neutral-300 text-neutral-600 cursor-not-allowed'
+                }`}
+              >
+                <UploadCloud className="w-4 h-4" />
+                <span>
+                  {uploadingExamId === String(selectedExam.id)
+                    ? 'Uploading Results...'
+                    : selectedExam.all_results_created
+                      ? 'Upload Result'
+                      : `Upload Result (${selectedExam.created_results_count ?? 0}/${selectedExam.total_students ?? 0})`}
+                </span>
+              </button>
+            )
           )}
           {results.length > 0 && tab === 'results' && (
             <button
@@ -410,6 +473,133 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
           )}
         </div>
       </div>
+
+      {canEnterMarks && tab === 'results' && selectedExam && (
+        <div
+          className={`rounded-xl border p-4 shadow-xs space-y-3 ${
+            selectedExam.results_published
+              ? 'bg-emerald-50/70 border-emerald-200'
+              : selectedExam.all_results_created
+                ? 'bg-emerald-50/50 border-emerald-200'
+                : 'bg-amber-50/70 border-amber-200'
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                  selectedExam.results_published || selectedExam.all_results_created
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-amber-100 text-amber-700'
+                }`}
+              >
+                {selectedExam.results_published ? (
+                  <CheckCircle2 className="w-5 h-5" />
+                ) : selectedExam.all_results_created ? (
+                  <UploadCloud className="w-5 h-5" />
+                ) : (
+                  <Users className="w-5 h-5" />
+                )}
+              </div>
+              <div>
+                <div className="text-xs font-bold text-[#171717] flex flex-wrap items-center gap-2">
+                  <span>
+                    {selectedExam.name} — {selectedExam.class_name}
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                      selectedExam.results_published
+                        ? 'bg-emerald-600 text-white'
+                        : selectedExam.all_results_created
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-amber-100 text-amber-800'
+                    }`}
+                  >
+                    {selectedExam.results_published
+                      ? 'Uploaded'
+                      : selectedExam.all_results_created
+                        ? 'Ready to Upload'
+                        : 'Draft (Pending All Students)'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#525252] mt-0.5">
+                  {selectedExam.results_published
+                    ? `All ${selectedExam.created_results_count ?? selectedExam.total_saved_results ?? 0} students' results are uploaded. Ranks are ordered by highest marks & percentage.`
+                    : selectedExam.all_results_created
+                      ? `All ${selectedExam.total_students || selectedExam.created_results_count} students' results are created! Click "Upload Result" to finalize ranks by highest marks and publish.`
+                      : `${selectedExam.created_results_count ?? 0} of ${selectedExam.total_students ?? 0} active students created. Complete the remaining ${selectedExam.pending_students?.length ?? 0} student(s) before uploading results.`}
+                </p>
+              </div>
+            </div>
+
+            {!selectedExam.results_published && (
+              <div className="flex items-center gap-2">
+                {selectedExam.pending_students?.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleCreateForStudent(selectedExam.pending_students[0].id, String(selectedExam.id))}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#16a34a] text-white text-xs font-semibold hover:bg-emerald-700 cursor-pointer"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    <span>Create Next ({selectedExam.pending_students[0].full_name})</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={!selectedExam.all_results_created || uploadingExamId === String(selectedExam.id)}
+                  onClick={() => handlePublish(selectedExam.id, true)}
+                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold text-white transition-colors ${
+                    selectedExam.all_results_created
+                      ? 'bg-[#10B981] hover:bg-emerald-600 cursor-pointer shadow-xs'
+                      : 'bg-neutral-300 text-neutral-600 cursor-not-allowed'
+                  }`}
+                >
+                  <UploadCloud className="w-4 h-4" />
+                  <span>{uploadingExamId === String(selectedExam.id) ? 'Uploading...' : 'Upload Result'}</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {(selectedExam.total_students ?? 0) > 0 && (
+            <div className="space-y-1.5">
+              <div className="w-full h-2 rounded-full bg-white/80 overflow-hidden border border-black/5">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    selectedExam.all_results_created ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round(((selectedExam.created_results_count || 0) / Math.max(1, selectedExam.total_students)) * 100)
+                    )}%`,
+                  }}
+                />
+              </div>
+              {selectedExam.pending_students?.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <span className="text-[11px] font-semibold text-amber-800">Remaining students:</span>
+                  {selectedExam.pending_students.slice(0, 8).map((st: any) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => handleCreateForStudent(st.id, String(selectedExam.id))}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-amber-300 text-[11px] font-medium text-amber-900 hover:bg-amber-100 cursor-pointer"
+                    >
+                      + {st.full_name}
+                    </button>
+                  ))}
+                  {selectedExam.pending_students.length > 8 && (
+                    <span className="text-[11px] text-amber-800 font-medium">
+                      +{selectedExam.pending_students.length - 8} more
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {tab === 'results' && (
         <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
@@ -437,7 +627,22 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
                 ) : (
                   results.map((r) => (
                     <tr key={r.id} className="hover:bg-neutral-50">
-                      <td className="px-4 py-3 font-mono-num font-bold text-[#171717]">#{r.position}</td>
+                      <td className="px-4 py-3 font-mono-num font-bold">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] ${
+                            r.position === 1
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                              : r.position === 2
+                                ? 'bg-slate-100 text-slate-700 border border-slate-300'
+                                : r.position === 3
+                                  ? 'bg-orange-100 text-orange-800 border border-orange-300'
+                                  : 'text-[#171717]'
+                          }`}
+                        >
+                          {r.position <= 3 && <Trophy className="w-3 h-3" />}
+                          #{r.position}
+                        </span>
+                      </td>
                       <td className="px-4 py-3">
                         <div className="font-semibold text-[#171717]">{r.student_name}</div>
                         <div className="text-[11px] text-[#737373] font-mono-num">
@@ -453,7 +658,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
                               : 'bg-amber-50 text-amber-700'
                           }`}
                         >
-                          {r.is_published ? 'Published' : 'Draft'}
+                          {r.is_published ? 'Uploaded' : 'Draft (Not Uploaded)'}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-end font-mono-num font-semibold">
@@ -518,8 +723,12 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
           exams={exams}
           existingResults={results}
           editingResult={editingResult}
+          initialStudentId={preselectStudentId}
+          initialExamId={preselectExamId}
           onCancelEdit={() => {
             setEditingResult(null);
+            setPreselectStudentId('');
+            setPreselectExamId('');
             setTab('results');
           }}
           onSaved={handleCardSaved}

@@ -113,6 +113,7 @@ export default function App() {
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [targetChatConvId, setTargetChatConvId] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.dir = 'ltr';
@@ -270,7 +271,14 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     const timer = window.setInterval(loadNotifications, 25000);
-    return () => window.clearInterval(timer);
+    const onNotifsUpdated = () => {
+      loadNotifications();
+    };
+    window.addEventListener('madrasa:notifications-updated', onNotifsUpdated);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('madrasa:notifications-updated', onNotifsUpdated);
+    };
   }, [user, loadNotifications]);
 
   const handleLoginSuccess = async (loggedInUser: User) => {
@@ -332,6 +340,14 @@ export default function App() {
   };
 
   const handleMarkNotificationRead = async (id: string) => {
+    const clicked = notifications.find((n) => n.id === id);
+    if (clicked?.link_module === 'chats' && clicked.reference_id) {
+      setTargetChatConvId(clicked.reference_id);
+    }
+    if (clicked && !clicked.is_read) {
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: 1 } : n)));
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+    }
     try {
       await apiRequest(`/api/notifications/${id}/read`, { method: 'POST' });
       loadNotifications();
@@ -341,6 +357,8 @@ export default function App() {
   };
 
   const handleMarkAllNotificationsRead = async () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: 1 })));
+    setUnreadCount(0);
     try {
       await apiRequest('/api/notifications/read-all', { method: 'POST' });
       loadNotifications();
@@ -493,6 +511,8 @@ export default function App() {
             user={user}
             settings={settings}
             onSettingsUpdated={(s) => setSettings(s)}
+            initialConvId={targetChatConvId}
+            onInitialConvHandled={() => setTargetChatConvId(null)}
           />
         ) : (
           <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} />

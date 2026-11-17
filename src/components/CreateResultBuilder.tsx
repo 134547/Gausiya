@@ -40,6 +40,8 @@ interface CreateResultBuilderProps {
   exams: any[];
   existingResults: any[];
   editingResult?: any | null;
+  initialStudentId?: string;
+  initialExamId?: string;
   onCancelEdit?: () => void;
   onSaved: (savedId: string, examId: string) => void;
 }
@@ -54,10 +56,11 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
   exams,
   existingResults,
   editingResult,
+  initialStudentId,
+  initialExamId,
   onCancelEdit,
   onSaved,
 }) => {
-  const isAdmin = user.role_slug === 'super_admin';
   const cardRef = useRef<HTMLDivElement>(null);
 
   const [classes, setClasses] = useState<any[]>([]);
@@ -88,7 +91,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
   );
   const [photo, setPhoto] = useState('');
   const [customRemarks, setCustomRemarks] = useState('');
-  const [publishNow, setPublishNow] = useState<boolean>(isAdmin);
 
   const [subjectRows, setSubjectRows] = useState<SubjectRowState[]>([]);
   const [saving, setSaving] = useState(false);
@@ -250,7 +252,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
     setIssueTime(meta.issueTime || '');
     setPhoto(meta.photo || editingResult.photo_url || '');
     setCustomRemarks(meta.remarks || editingResult.teacher_remarks || '');
-    setPublishNow(Boolean(editingResult.is_published));
 
     const savedSubs: SubjectRowState[] = (editingResult.subjects || []).map((s: any) => ({
       uid: makeUid(),
@@ -416,9 +417,25 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
     }
   };
 
-  // Initialize first class subjects + first student once data finishes loading (Create mode)
+  // Initialize first class subjects + student (or pre-selected pending student/exam) once data finishes loading
   useEffect(() => {
-    if (loadingData || editingResult || !selectedClassId) return;
+    if (loadingData || editingResult) return;
+
+    if (initialStudentId) {
+      const targetSt = students.find((s) => String(s.id) === String(initialStudentId));
+      if (targetSt) {
+        const clsId = String(targetSt.class_id || selectedClassId || '');
+        const pickedExam = initialExamId
+          ? exams.find((e) => String(e.id) === String(initialExamId))
+          : exams.find((e) => String(e.class_id) === clsId);
+        if (clsId) setSelectedClassId(clsId);
+        applyClassSubjects(clsId, false, pickedExam);
+        applyStudentSelection(String(targetSt.id), students, pickedExam ? String(pickedExam.id) : initialExamId);
+        return;
+      }
+    }
+
+    if (!selectedClassId) return;
     if (subjectRows.length === 0) {
       applyClassSubjects(selectedClassId);
     }
@@ -430,7 +447,7 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
         applyStudentSelection(String(firstSt.id), students);
       }
     }
-  }, [loadingData, selectedClassId, editingResult]);
+  }, [loadingData, selectedClassId, editingResult, initialStudentId, initialExamId]);
 
   const handleClassChange = (newClassId: string) => {
     setSelectedClassId(newClassId);
@@ -565,7 +582,25 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
 
   const stats = useMemo(() => computeCardStats(cardSubjects), [cardSubjects]);
 
-  // Compute live dynamic rank among classmates saved in the same exam
+  const savedStudentIdsForCurrentExam = useMemo(() => {
+    const targetExamName = examSession.trim().toLowerCase();
+    const set = new Set<string>();
+    for (const r of allDbResults) {
+      if (String(r.class_id) !== String(selectedClassId)) continue;
+      const matchesExam = selectedExamId
+        ? String(r.examination_id) === String(selectedExamId)
+        : String(r.exam_name || '').trim().toLowerCase() === targetExamName;
+      if (matchesExam) set.add(String(r.student_id));
+    }
+    return set;
+  }, [allDbResults, selectedClassId, selectedExamId, examSession]);
+
+  const currentExamObj = useMemo(
+    () => exams.find((e) => String(e.id) === String(selectedExamId)) || null,
+    [exams, selectedExamId]
+  );
+
+  // Compute live dynamic rank among classmates saved in the same exam (highest marks first, tie-aware)
   const liveRankInfo = useMemo(() => {
     const targetExamName = examSession.trim().toLowerCase();
     const peers = allDbResults.filter(
@@ -577,22 +612,36 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
         String(r.student_id) !== String(selectedStudentId)
     );
 
+    const roundedPct = Math.round(stats.overallPercent * 100) / 100;
     const combined = [
       ...peers.map((p) => ({
         student_id: String(p.student_id),
-        pct: Number(p.percentage || 0),
         total: Number(p.obtained_marks || 0),
+        pct: Math.round(Number(p.percentage || 0) * 100) / 100,
       })),
       {
         student_id: String(selectedStudentId || 'current'),
-        pct: stats.overallPercent,
         total: stats.total,
+        pct: roundedPct,
       },
-    ].sort((a, b) => b.pct - a.pct || b.total - a.total);
+    ].sort((a, b) => b.total - a.total || b.pct - a.pct);
 
-    const idx = combined.findIndex((x) => x.student_id === String(selectedStudentId || 'current'));
+    let rank = 1;
+    let prevTotal: number | null = null;
+    let prevPct: number | null = null;
+    for (let i = 0; i < combined.length; i += 1) {
+      const item = combined[i];
+      if (prevTotal === null || item.total !== prevTotal || item.pct !== prevPct) {
+        rank = i + 1;
+        prevTotal = item.total;
+        prevPct = item.pct;
+      }
+      if (item.student_id === String(selectedStudentId || 'current')) {
+        return { rank, totalStudents: combined.length };
+      }
+    }
     return {
-      rank: idx >= 0 ? idx + 1 : 1,
+      rank: 1,
       totalStudents: combined.length,
     };
   }, [allDbResults, selectedClassId, selectedExamId, examSession, selectedStudentId, stats]);
@@ -679,7 +728,6 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
         class_id: selectedClassId,
         student_id: selectedStudentId,
         examination_id: selectedExamId || null,
-        is_published: isAdmin ? publishNow : undefined,
         subjects: validRows.map((r) => ({
           subject_id: r.subject_id,
           obtained_marks: Number(r.score || 0),
@@ -862,9 +910,16 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-200 mb-1">
-                Select Student * ({classStudents.length})
-              </label>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <label className="block text-[11px] font-bold text-slate-200">
+                  Select Student * ({classStudents.length})
+                </label>
+                {selectedClassId && (
+                  <span className="text-[10px] font-semibold text-emerald-300">
+                    {savedStudentIdsForCurrentExam.size} / {classStudents.length} Created
+                  </span>
+                )}
+              </div>
               <select
                 value={selectedStudentId}
                 onChange={(e) => applyStudentSelection(e.target.value, classStudents)}
@@ -875,11 +930,16 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
                     ? 'No students in this class'
                     : '-- Select Database Student --'}
                 </option>
-                {classStudents.map((s) => (
-                  <option key={s.id} value={s.id} className="text-black">
-                    {s.full_name} ({s.admission_no || s.student_code})
-                  </option>
-                ))}
+                {classStudents.map((s) => {
+                  const hasSaved = savedStudentIdsForCurrentExam.has(String(s.id));
+                  return (
+                    <option key={s.id} value={s.id} className="text-black">
+                      {hasSaved ? '✓ ' : '○ '}
+                      {s.full_name} ({s.admission_no || s.student_code})
+                      {hasSaved ? ' [Saved]' : ' [Pending]'}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           </div>
@@ -1070,17 +1130,17 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
               />
             </div>
 
-            {isAdmin && (
-              <label className="flex items-center gap-2 text-xs text-emerald-200 cursor-pointer pt-1">
-                <input
-                  type="checkbox"
-                  checked={publishNow}
-                  onChange={(e) => setPublishNow(e.target.checked)}
-                  className="rounded border-white/30"
-                />
-                <span>Publish Result immediately (visible to student &amp; parent)</span>
-              </label>
-            )}
+            <div className="p-2.5 rounded-xl border border-white/10 bg-white/[0.04] text-[11px] leading-relaxed text-slate-300">
+              {currentExamObj?.results_published ? (
+                <span className="text-emerald-300">
+                  <strong>Uploaded Exam:</strong> Saving updates this student and recalculates all class ranks &amp; percentages automatically.
+                </span>
+              ) : (
+                <span>
+                  <strong className="text-amber-300">Draft Mode:</strong> Results stay in Draft until all students&apos; results are created. Once all students are ready, click <strong>Upload Result</strong> on the Results tab.
+                </span>
+              )}
+            </div>
           </div>
 
           {/* 4. Subjects & Marks (Strictly Real Database Subjects) */}

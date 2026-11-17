@@ -573,12 +573,18 @@ router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
     const conversations = (convs || [])
       .map((conv: any) => {
         const clearedAt = clearedMeta.map[conv.id] || '';
-        const msgs = (recentMsgs || []).filter(
-          (m) => m.conversation_id === conv.id && (!clearedAt || m.created_at > clearedAt)
-        );
+        const clearedTs = clearedAt ? new Date(clearedAt).getTime() : 0;
+        const msgs = (recentMsgs || []).filter((m) => {
+          if (m.conversation_id !== conv.id) return false;
+          if (!clearedTs) return true;
+          return new Date(m.created_at).getTime() > clearedTs;
+        });
         const lastMsg = msgs[0];
-        const lastRead = myLastReadMap.get(conv.id) || '1970-01-01';
-        const unread_count = msgs.filter((m) => m.sender_id !== uid && m.created_at > lastRead).length;
+        const lastReadRaw = myLastReadMap.get(conv.id);
+        const lastReadTs = lastReadRaw ? new Date(lastReadRaw).getTime() : 0;
+        const unread_count = msgs.filter(
+          (m) => m.sender_id !== uid && new Date(m.created_at).getTime() > lastReadTs
+        ).length;
         const convParts = participants.filter((p) => p.conversation_id === conv.id);
         const other = convParts.find((p) => p.user_id !== uid);
         const is_personal_channel = convParts.length === 1 && convParts[0]?.user_id === uid;
@@ -829,9 +835,8 @@ router.get('/chats/:id/messages', requireAuth, async (req: AuthRequest, res) => 
     const { data: isPart } = await admin.from('conversation_participants').select('id').eq('conversation_id', convId).eq('user_id', uid).maybeSingle();
     if (!isPart) return res.status(403).json({ error: 'Access denied to this conversation' });
 
-    const [, { data: msgsRaw }, { data: metaRows }, { data: partRows }, { data: convMeta }, clearedMeta] =
+    const [{ data: msgsRaw }, { data: metaRows }, { data: partRows }, { data: convMeta }, clearedMeta] =
       await Promise.all([
-        admin.from('conversation_participants').update({ last_read_at: new Date().toISOString() }).eq('conversation_id', convId).eq('user_id', uid),
         admin
           .from('messages')
           .select('*, profiles(full_name, roles(name))')
@@ -852,8 +857,32 @@ router.get('/chats/:id/messages', requireAuth, async (req: AuthRequest, res) => 
         getClearedChatMap(admin, uid),
       ]);
 
+    const latestMsgTs = (msgsRaw || []).reduce((maxTs: number, m: any) => {
+      const ts = m.created_at ? new Date(m.created_at).getTime() : 0;
+      return ts > maxTs ? ts : maxTs;
+    }, 0);
+    const readIso = new Date(Math.max(Date.now(), latestMsgTs + 1)).toISOString();
+
+    await Promise.all([
+      admin
+        .from('conversation_participants')
+        .update({ last_read_at: readIso })
+        .eq('conversation_id', convId)
+        .eq('user_id', uid),
+      admin
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', uid)
+        .eq('link_module', 'chats')
+        .eq('reference_id', convId)
+        .eq('is_read', false),
+    ]);
+
     const clearedAt = clearedMeta.map[convId] || '';
-    const visibleMsgsRaw = clearedAt ? (msgsRaw || []).filter((m: any) => m.created_at > clearedAt) : msgsRaw || [];
+    const clearedTs = clearedAt ? new Date(clearedAt).getTime() : 0;
+    const visibleMsgsRaw = clearedTs
+      ? (msgsRaw || []).filter((m: any) => new Date(m.created_at).getTime() > clearedTs)
+      : msgsRaw || [];
 
     const metaMap = new Map<string, ChatMsgMeta>();
     for (const row of metaRows || []) {

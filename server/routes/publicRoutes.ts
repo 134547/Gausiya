@@ -758,31 +758,99 @@ router.post('/check-result', async (req, res) => {
 
     const { data: resultsRaw } = await admin
       .from('results')
-      .select('*, examinations!inner(name, exam_type, start_date, deleted_at)')
+      .select('*, classes(name), examinations!inner(name, exam_type, start_date, deleted_at, academic_sessions(name))')
       .eq('student_id', studentId)
       .eq('is_published', true)
       .is('examinations.deleted_at', null)
       .order('created_at', { ascending: false });
 
-    const { data: marksRaw } = await admin
-      .from('marks')
-      .select('*, subjects(name, passing_marks)')
-      .eq('student_id', studentId);
+    const resultIds = (resultsRaw || []).map((r: any) => r.id).filter(Boolean);
+    const examIds = Array.from(new Set((resultsRaw || []).map((r: any) => r.examination_id).filter(Boolean)));
 
-    const results = (resultsRaw || []).map((r: any) => ({
-      ...r,
-      exam_name: r.examinations?.name || '',
-      exam_type: r.examinations?.exam_type || '',
-      start_date: r.examinations?.start_date || '',
-      subject_marks: (marksRaw || [])
-        .filter((m: any) => m.examination_id === r.examination_id)
-        .map((m: any) => ({
-          ...m,
-          subject_name: m.subjects?.name || '',
-          passing_marks: m.subjects?.passing_marks ?? 33,
-        }))
-        .sort((a: any, b: any) => a.subject_name.localeCompare(b.subject_name)),
+    const [{ data: marksRaw }, { data: esRaw }, { data: metaDocs }, { data: peerCountsRaw }] = await Promise.all([
+      examIds.length
+        ? admin
+            .from('marks')
+            .select('*, subjects(name, code, passing_marks)')
+            .eq('student_id', studentId)
+            .in('examination_id', examIds)
+        : Promise.resolve({ data: [] as any[] }),
+      examIds.length
+        ? admin
+            .from('examination_subjects')
+            .select('examination_id, subject_id, passing_marks')
+            .in('examination_id', examIds)
+        : Promise.resolve({ data: [] as any[] }),
+      resultIds.length
+        ? admin
+            .from('documents')
+            .select('entity_id, file_url, created_at')
+            .eq('entity_type', 'general')
+            .eq('title', 'RESULT_CARD_META')
+            .in('entity_id', resultIds)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [] as any[] }),
+      examIds.length
+        ? admin
+            .from('results')
+            .select('examination_id')
+            .in('examination_id', examIds)
+        : Promise.resolve({ data: [] as any[] }),
+    ]);
+
+    const metaMap = new Map<string, any>();
+    for (const doc of metaDocs || []) {
+      if (metaMap.has(doc.entity_id)) continue;
+      try {
+        const parsed = JSON.parse(doc.file_url || '{}');
+        if (parsed?.photo) {
+          parsed.photo = await resolveStorageUrl(parsed.photo);
+        }
+        metaMap.set(doc.entity_id, parsed);
+      } catch {
+        // ignore invalid metadata JSON
+      }
+    }
+
+    const totalByExam = new Map<string, number>();
+    for (const pr of peerCountsRaw || []) {
+      const k = String(pr.examination_id);
+      totalByExam.set(k, (totalByExam.get(k) || 0) + 1);
+    }
+
+    const esPassMap = new Map((esRaw || []).map((es: any) => [`${es.examination_id}_${es.subject_id}`, es.passing_marks]));
+    const formattedMarks = (marksRaw || []).map((m: any) => ({
+      ...m,
+      subject_name: m.subjects?.name || '',
+      subject_code: m.subjects?.code || '',
+      passing_marks: esPassMap.get(`${m.examination_id}_${m.subject_id}`) ?? m.subjects?.passing_marks ?? 33,
     }));
+
+    const results = (resultsRaw || []).map((r: any) => {
+      const examSubjects = formattedMarks
+        .filter((m: any) => m.examination_id === r.examination_id)
+        .sort((a: any, b: any) => a.subject_name.localeCompare(b.subject_name));
+      const cardMeta = metaMap.get(r.id) || null;
+      const totalStudents = totalByExam.get(String(r.examination_id)) || undefined;
+      return {
+        ...r,
+        student_name: student.full_name || '',
+        student_code: student.student_code || '',
+        admission_no: student.admission_no || '',
+        father_name: student.father_name || '',
+        photo_url: student.photo_url || '',
+        class_name: r.classes?.name || student.class_name || '',
+        exam_name: r.examinations?.name || '',
+        exam_type: r.examinations?.exam_type || '',
+        start_date: r.examinations?.start_date || '',
+        exam_date: r.examinations?.start_date || '',
+        session_name: r.examinations?.academic_sessions?.name || '',
+        total_students: totalStudents,
+        subjects: examSubjects,
+        subject_marks: examSubjects,
+        card_meta: cardMeta ? { ...cardMeta, totalStudents } : totalStudents ? { totalStudents } : null,
+      };
+    });
 
     const { data: attRows } = await admin
       .from('attendance')

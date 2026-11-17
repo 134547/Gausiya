@@ -27,9 +27,67 @@ export const SUPABASE_SERVICE_ROLE_KEY = (
 
 export const isSupabaseServerConfigured = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 
+function isTransientFetchError(err: any): boolean {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const code = String(err?.code || err?.cause?.code || '').toLowerCase();
+  return (
+    msg.includes('fetch failed') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('socket') ||
+    msg.includes('network') ||
+    code === 'econnreset' ||
+    code === 'etimedout' ||
+    code === 'und_err_socket' ||
+    code === 'und_err_connect_timeout' ||
+    code === 'epipe'
+  );
+}
+
+const resilientSupabaseFetch: typeof fetch = async (input, init) => {
+  const isStreamBody =
+    init?.body &&
+    typeof ReadableStream !== 'undefined' &&
+    init.body instanceof ReadableStream;
+  const maxAttempts = isStreamBody ? 1 : 3;
+  let lastError: any;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let controller: AbortController | undefined;
+    try {
+      let signal = init?.signal;
+      if (!signal) {
+        controller = new AbortController();
+        signal = controller.signal;
+        timeoutId = setTimeout(() => controller?.abort(), 25000);
+      }
+
+      const response = await fetch(input, { ...init, signal });
+      if ((response.status === 502 || response.status === 503 || response.status === 504) && attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, attempt * 250));
+        continue;
+      }
+      return response;
+    } catch (err: any) {
+      lastError = err;
+      if (attempt < maxAttempts && (isTransientFetchError(err) || err?.name === 'AbortError')) {
+        await new Promise((r) => setTimeout(r, attempt * 250));
+        continue;
+      }
+      throw err;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+
+  throw lastError || new Error('Database connection failed');
+}
+
 export const supabaseAdmin: SupabaseClient | null = isSupabaseServerConfigured
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
+      global: { fetch: resilientSupabaseFetch },
     })
   : null;
 
@@ -37,6 +95,7 @@ export function createSupabaseAuthClient(): SupabaseClient | null {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
+    global: { fetch: resilientSupabaseFetch },
   });
 }
 

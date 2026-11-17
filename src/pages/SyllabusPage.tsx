@@ -23,6 +23,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 
 export interface SyllabusItem {
   id: string;
+  item_type?: 'book' | 'syllabus_pdf';
   class_id: string;
   class_name: string;
   class_code: string;
@@ -30,6 +31,8 @@ export interface SyllabusItem {
   subject_id: string;
   subject_name: string;
   book_name: string;
+  syllabus_title?: string;
+  syllabus_type?: string;
   author_name: string;
   academic_year: string;
   cover_page_url: string;
@@ -47,6 +50,7 @@ interface SyllabusPageProps {
 }
 
 const DEFAULT_SUBJECT_PRESETS = [
+  'All Subjects',
   'English',
   'Urdu',
   'Arabic',
@@ -58,6 +62,15 @@ const DEFAULT_SUBJECT_PRESETS = [
   'Fiqh',
   'Science',
   'Social Studies',
+];
+
+const SYLLABUS_TYPES = [
+  'Annual Syllabus',
+  'Half-Yearly / Term',
+  'Monthly Syllabus',
+  'Weekly Plan',
+  'Chapter-wise',
+  'Exam Syllabus',
 ];
 
 async function downloadFileFromUrl(url: string, preferredName: string) {
@@ -97,10 +110,12 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [activeSection, setActiveSection] = useState<'all' | 'syllabus_pdfs' | 'books'>('all');
   const [classFilter, setClassFilter] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('all');
   const [search, setSearch] = useState('');
 
+  // Book Modal State
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -118,6 +133,22 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
     cover_page_url: '',
     book_pdf_url: '',
     book_pdf_name: '',
+    syllabus_pdf_url: '',
+    syllabus_pdf_name: '',
+    weekly_plan: '',
+  });
+
+  // Separate Syllabus PDF Modal State
+  const [syllabusModalOpen, setSyllabusModalOpen] = useState(false);
+  const [editingSyllabusId, setEditingSyllabusId] = useState<string | null>(null);
+  const [savingSyllabus, setSavingSyllabus] = useState(false);
+  const [uploadingStandalonePdf, setUploadingStandalonePdf] = useState(false);
+  const [syllabusForm, setSyllabusForm] = useState({
+    class_id: '',
+    subject_name: 'All Subjects',
+    syllabus_title: '',
+    syllabus_type: 'Annual Syllabus',
+    academic_year: '',
     syllabus_pdf_url: '',
     syllabus_pdf_name: '',
     weekly_plan: '',
@@ -182,6 +213,8 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
       if (!q) return true;
       return (
         item.book_name.toLowerCase().includes(q) ||
+        String(item.syllabus_title || '').toLowerCase().includes(q) ||
+        String(item.syllabus_type || '').toLowerCase().includes(q) ||
         item.subject_name.toLowerCase().includes(q) ||
         item.class_name.toLowerCase().includes(q) ||
         item.class_teacher_name.toLowerCase().includes(q) ||
@@ -191,7 +224,22 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
     });
   }, [items, classFilter, subjectFilter, search]);
 
-  const openAddForm = () => {
+  // Separate Section 1: Syllabus PDFs (standalone Syllabus PDFs + any book items that have a Syllabus PDF attached)
+  const syllabusPdfItems = useMemo(
+    () =>
+      filteredItems.filter(
+        (item) => item.item_type === 'syllabus_pdf' || Boolean(item.syllabus_pdf_url)
+      ),
+    [filteredItems]
+  );
+
+  // Separate Section 2: Books & Kitabs (excludes standalone syllabus_pdf entries)
+  const bookItems = useMemo(
+    () => filteredItems.filter((item) => item.item_type !== 'syllabus_pdf'),
+    [filteredItems]
+  );
+
+  const openAddBookForm = () => {
     const activeSession = sessions.find((s) => s.is_active) || sessions[0];
     setEditingId(null);
     setErr('');
@@ -212,7 +260,7 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
     setFormOpen(true);
   };
 
-  const openEditForm = (item: SyllabusItem) => {
+  const openEditBookForm = (item: SyllabusItem) => {
     setEditingId(item.id);
     setErr('');
     setForm({
@@ -230,6 +278,39 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
       weekly_plan: item.weekly_plan || '',
     });
     setFormOpen(true);
+  };
+
+  const openAddSyllabusPdfModal = () => {
+    const activeSession = sessions.find((s) => s.is_active) || sessions[0];
+    setEditingSyllabusId(null);
+    setErr('');
+    setSyllabusForm({
+      class_id: classFilter || '',
+      subject_name: 'All Subjects',
+      syllabus_title: '',
+      syllabus_type: 'Annual Syllabus',
+      academic_year: activeSession?.name || '',
+      syllabus_pdf_url: '',
+      syllabus_pdf_name: '',
+      weekly_plan: '',
+    });
+    setSyllabusModalOpen(true);
+  };
+
+  const openEditSyllabusPdfModal = (item: SyllabusItem) => {
+    setEditingSyllabusId(item.id);
+    setErr('');
+    setSyllabusForm({
+      class_id: item.class_id || '',
+      subject_name: item.subject_name || 'All Subjects',
+      syllabus_title: item.syllabus_title || item.book_name || '',
+      syllabus_type: item.syllabus_type || 'Annual Syllabus',
+      academic_year: item.academic_year || '',
+      syllabus_pdf_url: item.syllabus_pdf_url || '',
+      syllabus_pdf_name: item.syllabus_pdf_name || '',
+      weekly_plan: item.weekly_plan || '',
+    });
+    setSyllabusModalOpen(true);
   };
 
   const handleUploadCover = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -250,7 +331,7 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
 
   const handleUploadPdf = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    kind: 'book' | 'syllabus'
+    kind: 'book' | 'syllabus' | 'standalone_syllabus'
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -261,25 +342,34 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
       return;
     }
     if (kind === 'book') setUploadingBookPdf(true);
-    else setUploadingSyllabusPdf(true);
+    else if (kind === 'syllabus') setUploadingSyllabusPdf(true);
+    else setUploadingStandalonePdf(true);
 
     try {
       const up = await uploadFile(file, 'notices');
       if (kind === 'book') {
         setForm((prev) => ({ ...prev, book_pdf_url: up.url, book_pdf_name: file.name }));
-      } else {
+      } else if (kind === 'syllabus') {
         setForm((prev) => ({ ...prev, syllabus_pdf_url: up.url, syllabus_pdf_name: file.name }));
+      } else {
+        setSyllabusForm((prev) => ({
+          ...prev,
+          syllabus_pdf_url: up.url,
+          syllabus_pdf_name: file.name,
+          syllabus_title: prev.syllabus_title || file.name.replace(/\.pdf$/i, ''),
+        }));
       }
     } catch (ex: any) {
       setErr(ex?.message || 'Failed to upload PDF file.');
     } finally {
       if (kind === 'book') setUploadingBookPdf(false);
-      else setUploadingSyllabusPdf(false);
+      else if (kind === 'syllabus') setUploadingSyllabusPdf(false);
+      else setUploadingStandalonePdf(false);
       e.target.value = '';
     }
   };
 
-  const handleSave = async (e: React.FormEvent) => {
+  const handleSaveBook = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdmin) return;
     setErr('');
@@ -297,6 +387,7 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
       );
       const payload = {
         ...form,
+        item_type: 'book',
         class_name: selectedCls?.name || 'All Classes',
         subject_id: form.subject_id || (matchedSub?.id ? String(matchedSub.id) : ''),
       };
@@ -306,20 +397,77 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
           method: 'PUT',
           body: JSON.stringify(payload),
         });
-        setMsg('Syllabus & book updated successfully.');
+        setMsg('Book updated successfully.');
       } else {
         await apiRequest('/api/syllabus', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
-        setMsg('Syllabus & book added successfully.');
+        setMsg('Book added successfully.');
       }
       setFormOpen(false);
       await loadAll();
     } catch (ex: any) {
-      setErr(ex?.message || 'Failed to save syllabus item.');
+      setErr(ex?.message || 'Failed to save book.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveSyllabusPdf = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin) return;
+    setErr('');
+    setMsg('');
+    if (!syllabusForm.syllabus_title.trim()) {
+      setErr('Please enter a Syllabus Title (e.g. Class 5 Annual Syllabus).');
+      return;
+    }
+    if (!syllabusForm.syllabus_pdf_url) {
+      setErr('Please upload the Syllabus PDF file.');
+      return;
+    }
+
+    setSavingSyllabus(true);
+    try {
+      const selectedCls = classes.find((c) => String(c.id) === String(syllabusForm.class_id));
+      const matchedSub = dbSubjects.find(
+        (s) => String(s.name || '').trim().toLowerCase() === syllabusForm.subject_name.trim().toLowerCase()
+      );
+      const payload = {
+        item_type: 'syllabus_pdf',
+        class_id: syllabusForm.class_id,
+        class_name: selectedCls?.name || 'All Classes',
+        subject_id: matchedSub?.id ? String(matchedSub.id) : '',
+        subject_name: syllabusForm.subject_name.trim() || 'All Subjects',
+        book_name: syllabusForm.syllabus_title.trim(),
+        syllabus_title: syllabusForm.syllabus_title.trim(),
+        syllabus_type: syllabusForm.syllabus_type || 'Syllabus PDF',
+        academic_year: syllabusForm.academic_year,
+        syllabus_pdf_url: syllabusForm.syllabus_pdf_url,
+        syllabus_pdf_name: syllabusForm.syllabus_pdf_name,
+        weekly_plan: syllabusForm.weekly_plan,
+      };
+
+      if (editingSyllabusId) {
+        await apiRequest(`/api/syllabus/${editingSyllabusId}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        setMsg('Syllabus PDF updated successfully.');
+      } else {
+        await apiRequest('/api/syllabus', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setMsg('Syllabus PDF uploaded successfully.');
+      }
+      setSyllabusModalOpen(false);
+      await loadAll();
+    } catch (ex: any) {
+      setErr(ex?.message || 'Failed to save Syllabus PDF.');
+    } finally {
+      setSavingSyllabus(false);
     }
   };
 
@@ -329,11 +477,11 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
     try {
       await apiRequest(`/api/syllabus/${deleteTarget.id}`, { method: 'DELETE' });
       setDeleteTarget(null);
-      setMsg('Syllabus item deleted.');
+      setMsg(deleteTarget.item_type === 'syllabus_pdf' ? 'Syllabus PDF deleted.' : 'Book deleted.');
       await loadAll();
     } catch (ex: any) {
       setDeleteTarget(null);
-      setErr(ex?.message || 'Failed to delete syllabus item.');
+      setErr(ex?.message || 'Failed to delete item.');
     }
   };
 
@@ -342,6 +490,9 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
     [classes, classFilter]
   );
 
+  const showSyllabusSection = activeSection === 'all' || activeSection === 'syllabus_pdfs';
+  const showBooksSection = activeSection === 'all' || activeSection === 'books';
+
   return (
     <div className="space-y-5">
       {/* Header & Controls */}
@@ -349,24 +500,73 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-bold text-[#171717]">
-              Syllabus, Books &amp; Weekly Chapter Plans
+              Syllabus PDFs &amp; Books Section
             </h2>
             <p className="text-xs text-[#737373] mt-0.5">
               {isAdmin
-                ? 'Add subjects (English, Urdu, Arabic, etc.), book cover pages, book PDFs, and weekly/chapter-wise syllabus PDFs. Only Super Admin can edit or upload.'
-                : 'Browse class books, cover pages, book PDFs, and weekly chapter-wise syllabus plans uploaded by the Super Admin.'}
+                ? 'Upload Syllabus PDFs in their dedicated section, and manage subject Books (cover pages & book PDFs) separately.'
+                : 'Browse class Syllabus PDFs in a dedicated section alongside subject books and cover pages.'}
             </p>
           </div>
           {isAdmin && (
-            <button
-              type="button"
-              onClick={openAddForm}
-              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 shrink-0 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Book &amp; Syllabus</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={openAddSyllabusPdfModal}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#059669] text-white text-xs font-semibold hover:bg-emerald-700 cursor-pointer"
+              >
+                <FileText className="w-4 h-4" />
+                <span>Upload Syllabus PDF</span>
+              </button>
+              <button
+                type="button"
+                onClick={openAddBookForm}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Book</span>
+              </button>
+            </div>
           )}
+        </div>
+
+        {/* Section Switcher Tabs */}
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => setActiveSection('all')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+              activeSection === 'all'
+                ? 'bg-[#171717] text-white border-[#171717]'
+                : 'bg-neutral-50 text-[#525252] border-neutral-200 hover:bg-neutral-100'
+            }`}
+          >
+            All ({syllabusPdfItems.length + bookItems.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection('syllabus_pdfs')}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+              activeSection === 'syllabus_pdfs'
+                ? 'bg-[#059669] text-white border-[#059669]'
+                : 'bg-emerald-50 text-[#059669] border-emerald-200 hover:bg-emerald-100'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Syllabus PDFs ({syllabusPdfItems.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection('books')}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+              activeSection === 'books'
+                ? 'bg-[#DC1726] text-white border-[#DC1726]'
+                : 'bg-red-50 text-[#DC1726] border-red-200 hover:bg-red-100'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Books &amp; Kitabs ({bookItems.length})</span>
+          </button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -403,14 +603,14 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
           </div>
 
           <div>
-            <label className="block text-[11px] font-semibold text-[#525252] mb-1">Search Book or Chapter</label>
+            <label className="block text-[11px] font-semibold text-[#525252] mb-1">Search Syllabus PDF or Book</label>
             <div className="relative">
               <Search className="w-4 h-4 text-[#737373] absolute start-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Book name, English, Urdu, week..."
+                placeholder="Syllabus title, book name, English, Urdu..."
                 className="w-full ps-9 pe-3 py-2 text-xs rounded-lg border border-neutral-200"
               />
             </div>
@@ -471,231 +671,572 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
         </div>
       )}
 
-      {/* Syllabus Cards Grid */}
       {loading ? (
         <div className="bg-white rounded-xl border border-neutral-200 p-10 text-center text-xs text-[#737373] flex flex-col items-center gap-2">
           <Loader2 className="w-5 h-5 animate-spin text-[#DC1726]" />
-          <span>Loading books &amp; syllabus plans...</span>
-        </div>
-      ) : filteredItems.length === 0 ? (
-        <div className="bg-white rounded-xl border border-neutral-200 p-10 text-center space-y-2">
-          <BookOpen className="w-8 h-8 text-neutral-300 mx-auto" />
-          <div className="text-sm font-semibold text-[#171717]">No syllabus or books added yet</div>
-          <p className="text-xs text-[#737373]">
-            {isAdmin
-              ? 'Click "Add Book & Syllabus" above to upload subjects (English, Urdu, Arabic, etc.), book cover pages, book PDFs, and weekly/chapter syllabus PDFs.'
-              : 'No syllabus books match your selected filters right now.'}
-          </p>
+          <span>Loading syllabus PDFs &amp; books...</span>
         </div>
       ) : (
-        <div className={`grid grid-cols-1 ${embedded ? 'md:grid-cols-2' : 'md:grid-cols-2 xl:grid-cols-3'} gap-4`}>
-          {filteredItems.map((item) => (
-            <div
-              key={item.id}
-              className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden flex flex-col justify-between"
-            >
-              <div>
-                <div className="p-4 flex gap-3.5 items-start border-b border-neutral-100">
-                  {/* Cover Page Thumbnail */}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      item.cover_page_url &&
-                      setPreviewCover({ title: `${item.book_name} (${item.subject_name})`, url: item.cover_page_url })
-                    }
-                    className={`w-20 h-28 rounded-lg border border-neutral-200 bg-neutral-50 shrink-0 overflow-hidden flex items-center justify-center ${
-                      item.cover_page_url ? 'cursor-pointer hover:opacity-90' : 'cursor-default'
-                    }`}
-                    title={item.cover_page_url ? 'Click to view Cover Page' : 'No cover page uploaded'}
-                  >
-                    {item.cover_page_url ? (
-                      <img
-                        src={item.cover_page_url}
-                        alt={item.book_name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="text-center px-1 text-[10px] text-[#737373]">
-                        <BookOpen className="w-5 h-5 mx-auto mb-1 text-neutral-400" />
-                        No Cover
-                      </div>
-                    )}
-                  </button>
-
-                  <div className="min-w-0 flex-1 space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="px-2 py-0.5 rounded bg-red-50 text-[#DC1726] border border-red-200 text-[11px] font-bold">
-                        {item.subject_name}
+        <div className="space-y-6">
+          {/* SECTION 1: DEDICATED SYLLABUS PDFs SECTION */}
+          {showSyllabusSection && (
+            <section className="bg-white rounded-xl border border-emerald-200/80 shadow-xs overflow-hidden">
+              <div className="px-4 sm:px-5 py-3.5 bg-emerald-50/70 border-b border-emerald-200/70 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-[#059669] text-white flex items-center justify-center shrink-0">
+                    <FileText className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-[#171717] flex items-center gap-2">
+                      <span>Syllabus PDFs Section</span>
+                      <span className="px-2 py-0.5 rounded-full bg-white border border-emerald-200 text-[#059669] text-[11px] font-bold font-mono-num">
+                        {syllabusPdfItems.length}
                       </span>
-                      <span className="px-2 py-0.5 rounded bg-neutral-100 text-[#171717] text-[11px] font-semibold">
-                        {item.class_name}
-                      </span>
-                    </div>
-
-                    <h3 className="text-sm font-bold text-[#171717] leading-snug line-clamp-2">
-                      {item.book_name}
                     </h3>
-
-                    {item.author_name && (
-                      <div className="text-[11px] text-[#737373] truncate">
-                        Author / Publisher: <span className="text-[#404040] font-medium">{item.author_name}</span>
-                      </div>
-                    )}
-
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#737373]">
-                      {item.academic_year && (
-                        <span className="inline-flex items-center gap-1">
-                          <CalendarDays className="w-3 h-3" /> {item.academic_year}
-                        </span>
-                      )}
-                      {item.class_teacher_name && item.class_teacher_name !== 'Unassigned' && (
-                        <span className="inline-flex items-center gap-1">
-                          <UserCheck className="w-3 h-3 text-[#10B981]" /> {item.class_teacher_name}
-                        </span>
-                      )}
-                    </div>
+                    <p className="text-[11px] text-[#525252]">
+                      Class-wise, annual, monthly, weekly &amp; exam syllabus PDFs in one dedicated section.
+                    </p>
                   </div>
                 </div>
-
-                {item.weekly_plan && (
-                  <div className="px-4 py-2.5 bg-neutral-50/70 border-b border-neutral-100 text-xs text-[#525252] whitespace-pre-line line-clamp-3">
-                    {item.weekly_plan}
-                  </div>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={openAddSyllabusPdfModal}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#059669] text-white text-xs font-semibold hover:bg-emerald-700 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Upload Syllabus PDF</span>
+                  </button>
                 )}
               </div>
 
-              {/* Action Buttons */}
-              <div className="p-3.5 space-y-2.5 bg-white">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {/* Book PDF Controls */}
-                  {item.book_pdf_url ? (
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setPreviewPdf({
-                            title: `Book PDF — ${item.book_name}`,
-                            url: item.book_pdf_url,
-                            fileName: item.book_pdf_name || `${item.book_name}-book.pdf`,
-                          })
-                        }
-                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-sky-50 hover:bg-sky-100 text-[#0284C7] border border-sky-200 text-xs font-semibold cursor-pointer"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>View Book PDF</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={downloadingKey === `book_${item.id}`}
-                        onClick={async () => {
-                          setDownloadingKey(`book_${item.id}`);
-                          await downloadFileFromUrl(
-                            item.book_pdf_url,
-                            item.book_pdf_name || `${item.subject_name}-${item.book_name}-book`
-                          );
-                          setDownloadingKey(null);
-                        }}
-                        title="Download Book PDF"
-                        className="p-2 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-[#171717] cursor-pointer"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="px-2.5 py-2 rounded-lg bg-neutral-50 border border-neutral-200 text-[11px] text-[#737373] text-center">
-                      No Book PDF uploaded
-                    </div>
-                  )}
-
-                  {/* Weekly / Chapter Syllabus PDF Controls */}
-                  {item.syllabus_pdf_url ? (
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setPreviewPdf({
-                            title: `Weekly Syllabus PDF — ${item.subject_name} (${item.book_name})`,
-                            url: item.syllabus_pdf_url,
-                            fileName: item.syllabus_pdf_name || `${item.subject_name}-syllabus.pdf`,
-                          })
-                        }
-                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-[#059669] border border-emerald-200 text-xs font-semibold cursor-pointer"
-                      >
-                        <FileText className="w-3.5 h-3.5" />
-                        <span>Syllabus PDF</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={downloadingKey === `syl_${item.id}`}
-                        onClick={async () => {
-                          setDownloadingKey(`syl_${item.id}`);
-                          await downloadFileFromUrl(
-                            item.syllabus_pdf_url,
-                            item.syllabus_pdf_name || `${item.subject_name}-${item.book_name}-syllabus`
-                          );
-                          setDownloadingKey(null);
-                        }}
-                        title="Download Weekly Syllabus PDF"
-                        className="p-2 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-[#171717] cursor-pointer"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="px-2.5 py-2 rounded-lg bg-neutral-50 border border-neutral-200 text-[11px] text-[#737373] text-center">
-                      No Syllabus PDF uploaded
-                    </div>
-                  )}
+              {syllabusPdfItems.length === 0 ? (
+                <div className="p-8 text-center space-y-2">
+                  <FileText className="w-8 h-8 text-emerald-300 mx-auto" />
+                  <div className="text-xs font-semibold text-[#171717]">No Syllabus PDFs uploaded yet</div>
+                  <p className="text-[11px] text-[#737373]">
+                    {isAdmin
+                      ? 'Click "Upload Syllabus PDF" to add class-wise annual, monthly, or weekly syllabus PDFs.'
+                      : 'No Syllabus PDFs match your selected filters right now.'}
+                  </p>
                 </div>
+              ) : (
+                <div className={`p-4 grid grid-cols-1 ${embedded ? 'md:grid-cols-2' : 'md:grid-cols-2 xl:grid-cols-3'} gap-3.5`}>
+                  {syllabusPdfItems.map((item) => {
+                    const isStandalone = item.item_type === 'syllabus_pdf';
+                    const titleText = item.syllabus_title || item.book_name || item.syllabus_pdf_name || 'Syllabus PDF';
+                    return (
+                      <div
+                        key={`syl-${item.id}`}
+                        className="rounded-xl border border-emerald-200/80 bg-emerald-50/20 p-4 flex flex-col justify-between gap-3"
+                      >
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="px-2 py-0.5 rounded bg-emerald-100 text-[#059669] text-[10px] font-bold">
+                              {item.syllabus_type || (isStandalone ? 'Syllabus PDF' : 'Book Syllabus PDF')}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-white border border-neutral-200 text-[#171717] text-[10px] font-semibold">
+                              {item.class_name}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-red-50 text-[#DC1726] text-[10px] font-semibold">
+                              {item.subject_name}
+                            </span>
+                          </div>
 
-                <div className="pt-2 border-t border-neutral-100 flex items-center justify-between gap-2">
+                          <h4 className="text-sm font-bold text-[#171717] leading-snug line-clamp-2">
+                            {titleText}
+                          </h4>
+
+                          {item.syllabus_pdf_name && (
+                            <div className="text-[11px] text-[#525252] truncate flex items-center gap-1">
+                              <FileText className="w-3 h-3 text-[#059669] shrink-0" />
+                              <span className="truncate">{item.syllabus_pdf_name}</span>
+                            </div>
+                          )}
+
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#737373]">
+                            {item.academic_year && (
+                              <span className="inline-flex items-center gap-1">
+                                <CalendarDays className="w-3 h-3" /> {item.academic_year}
+                              </span>
+                            )}
+                            {item.class_teacher_name && item.class_teacher_name !== 'Unassigned' && (
+                              <span className="inline-flex items-center gap-1">
+                                <UserCheck className="w-3 h-3 text-[#10B981]" /> {item.class_teacher_name}
+                              </span>
+                            )}
+                          </div>
+
+                          {item.weekly_plan && (
+                            <p className="text-[11px] text-[#525252] bg-white rounded-lg border border-emerald-100 p-2 whitespace-pre-line line-clamp-3">
+                              {item.weekly_plan}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="space-y-2 pt-2 border-t border-emerald-100">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewPdf({
+                                  title: `Syllabus PDF — ${titleText}`,
+                                  url: item.syllabus_pdf_url,
+                                  fileName: item.syllabus_pdf_name || `${titleText}-syllabus.pdf`,
+                                })
+                              }
+                              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#059669] hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>View Syllabus PDF</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={downloadingKey === `syl_sec_${item.id}`}
+                              onClick={async () => {
+                                setDownloadingKey(`syl_sec_${item.id}`);
+                                await downloadFileFromUrl(
+                                  item.syllabus_pdf_url,
+                                  item.syllabus_pdf_name || `${titleText}-syllabus`
+                                );
+                                setDownloadingKey(null);
+                              }}
+                              title="Download Syllabus PDF"
+                              className="p-2 rounded-lg bg-white border border-emerald-200 hover:bg-emerald-50 text-[#059669] cursor-pointer"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          {isAdmin && (
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  isStandalone ? openEditSyllabusPdfModal(item) : openEditBookForm(item)
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-[#D97706] hover:bg-amber-50 cursor-pointer"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget(item)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-[#DC1726] hover:bg-red-50 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Delete</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* SECTION 2: BOOKS & KITABS SECTION */}
+          {showBooksSection && (
+            <section className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
+              <div className="px-4 sm:px-5 py-3.5 bg-neutral-50 border-b border-neutral-200 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-[#DC1726] text-white flex items-center justify-center shrink-0">
+                    <BookOpen className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-[#171717] flex items-center gap-2">
+                      <span>Books &amp; Kitabs Section</span>
+                      <span className="px-2 py-0.5 rounded-full bg-white border border-neutral-200 text-[#171717] text-[11px] font-bold font-mono-num">
+                        {bookItems.length}
+                      </span>
+                    </h3>
+                    <p className="text-[11px] text-[#737373]">
+                      Subject books, cover pages, authors, and downloadable book PDFs.
+                    </p>
+                  </div>
+                </div>
+                {isAdmin && (
                   <button
                     type="button"
-                    onClick={() => setViewItem(item)}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#171717] hover:text-[#DC1726] cursor-pointer"
+                    onClick={openAddBookForm}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 cursor-pointer"
                   >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>Full Details</span>
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Book</span>
                   </button>
-
-                  {isAdmin && (
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => openEditForm(item)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-[#D97706] hover:bg-amber-50 cursor-pointer"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                        <span>Edit</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTarget(item)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-[#DC1726] hover:bg-red-50 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
-            </div>
-          ))}
+
+              {bookItems.length === 0 ? (
+                <div className="p-8 text-center space-y-2">
+                  <BookOpen className="w-8 h-8 text-neutral-300 mx-auto" />
+                  <div className="text-xs font-semibold text-[#171717]">No books added yet</div>
+                  <p className="text-[11px] text-[#737373]">
+                    {isAdmin
+                      ? 'Click "Add Book" to upload subject books, cover pages, and book PDFs.'
+                      : 'No books match your selected filters right now.'}
+                  </p>
+                </div>
+              ) : (
+                <div className={`p-4 grid grid-cols-1 ${embedded ? 'md:grid-cols-2' : 'md:grid-cols-2 xl:grid-cols-3'} gap-4`}>
+                  {bookItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="p-4 flex gap-3.5 items-start border-b border-neutral-100">
+                          {/* Cover Page Thumbnail */}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              item.cover_page_url &&
+                              setPreviewCover({ title: `${item.book_name} (${item.subject_name})`, url: item.cover_page_url })
+                            }
+                            className={`w-20 h-28 rounded-lg border border-neutral-200 bg-neutral-50 shrink-0 overflow-hidden flex items-center justify-center ${
+                              item.cover_page_url ? 'cursor-pointer hover:opacity-90' : 'cursor-default'
+                            }`}
+                            title={item.cover_page_url ? 'Click to view Cover Page' : 'No cover page uploaded'}
+                          >
+                            {item.cover_page_url ? (
+                              <img
+                                src={item.cover_page_url}
+                                alt={item.book_name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="text-center px-1 text-[10px] text-[#737373]">
+                                <BookOpen className="w-5 h-5 mx-auto mb-1 text-neutral-400" />
+                                No Cover
+                              </div>
+                            )}
+                          </button>
+
+                          <div className="min-w-0 flex-1 space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="px-2 py-0.5 rounded bg-red-50 text-[#DC1726] border border-red-200 text-[11px] font-bold">
+                                {item.subject_name}
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-neutral-100 text-[#171717] text-[11px] font-semibold">
+                                {item.class_name}
+                              </span>
+                            </div>
+
+                            <h3 className="text-sm font-bold text-[#171717] leading-snug line-clamp-2">
+                              {item.book_name}
+                            </h3>
+
+                            {item.author_name && (
+                              <div className="text-[11px] text-[#737373] truncate">
+                                Author / Publisher: <span className="text-[#404040] font-medium">{item.author_name}</span>
+                              </div>
+                            )}
+
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#737373]">
+                              {item.academic_year && (
+                                <span className="inline-flex items-center gap-1">
+                                  <CalendarDays className="w-3 h-3" /> {item.academic_year}
+                                </span>
+                              )}
+                              {item.class_teacher_name && item.class_teacher_name !== 'Unassigned' && (
+                                <span className="inline-flex items-center gap-1">
+                                  <UserCheck className="w-3 h-3 text-[#10B981]" /> {item.class_teacher_name}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {item.weekly_plan && (
+                          <div className="px-4 py-2.5 bg-neutral-50/70 border-b border-neutral-100 text-xs text-[#525252] whitespace-pre-line line-clamp-3">
+                            {item.weekly_plan}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Book Action Buttons */}
+                      <div className="p-3.5 space-y-2.5 bg-white">
+                        {item.book_pdf_url ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewPdf({
+                                  title: `Book PDF — ${item.book_name}`,
+                                  url: item.book_pdf_url,
+                                  fileName: item.book_pdf_name || `${item.book_name}-book.pdf`,
+                                })
+                              }
+                              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-sky-50 hover:bg-sky-100 text-[#0284C7] border border-sky-200 text-xs font-semibold cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>View Book PDF</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={downloadingKey === `book_${item.id}`}
+                              onClick={async () => {
+                                setDownloadingKey(`book_${item.id}`);
+                                await downloadFileFromUrl(
+                                  item.book_pdf_url,
+                                  item.book_pdf_name || `${item.subject_name}-${item.book_name}-book`
+                                );
+                                setDownloadingKey(null);
+                              }}
+                              title="Download Book PDF"
+                              className="p-2 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-[#171717] cursor-pointer"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="px-2.5 py-2 rounded-lg bg-neutral-50 border border-neutral-200 text-[11px] text-[#737373] text-center">
+                            No Book PDF uploaded
+                          </div>
+                        )}
+
+                        <div className="pt-2 border-t border-neutral-100 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setViewItem(item)}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-[#171717] hover:text-[#DC1726] cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Full Details</span>
+                          </button>
+
+                          {isAdmin && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => openEditBookForm(item)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-[#D97706] hover:bg-amber-50 cursor-pointer"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget(item)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-[#DC1726] hover:bg-red-50 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Delete</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
         </div>
       )}
 
-      {/* Super Admin Add / Edit Modal */}
+      {/* Super Admin Dedicated Upload / Edit Syllabus PDF Modal */}
+      {syllabusModalOpen && isAdmin && (
+        <div className="fixed inset-0 z-50 bg-black/55 overflow-y-auto p-4 flex items-center justify-center">
+          <div className="max-w-lg w-full bg-white rounded-2xl border border-neutral-200 shadow-xl p-5 sm:p-6 space-y-4 text-xs my-6">
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-[#171717] flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-[#059669]" />
+                  <span>{editingSyllabusId ? 'Edit Syllabus PDF' : 'Upload Syllabus PDF'}</span>
+                </h3>
+                <p className="text-[11px] text-[#737373]">
+                  Add a standalone Class / Subject Syllabus PDF to the Syllabus PDFs section.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSyllabusModalOpen(false)}
+                className="p-1.5 rounded-lg text-[#737373] hover:bg-neutral-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {err && (
+              <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-[#DC1726] font-medium">
+                {err}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveSyllabusPdf} className="space-y-3.5">
+              <div>
+                <label className="block font-semibold mb-1">Syllabus Title *</label>
+                <input
+                  type="text"
+                  required
+                  value={syllabusForm.syllabus_title}
+                  onChange={(e) => setSyllabusForm({ ...syllabusForm, syllabus_title: e.target.value })}
+                  placeholder="e.g. Class 5 Annual Syllabus 2026 / Week 1-4 Urdu Plan"
+                  className="w-full px-3 py-2 rounded-lg border border-neutral-200"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold mb-1">Syllabus Type</label>
+                  <select
+                    value={syllabusForm.syllabus_type}
+                    onChange={(e) => setSyllabusForm({ ...syllabusForm, syllabus_type: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white"
+                  >
+                    {SYLLABUS_TYPES.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1">Class</label>
+                  <select
+                    value={syllabusForm.class_id}
+                    onChange={(e) => setSyllabusForm({ ...syllabusForm, class_id: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white"
+                  >
+                    <option value="">All Classes</option>
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold mb-1">Subject / Category</label>
+                  <input
+                    type="text"
+                    value={syllabusForm.subject_name}
+                    onChange={(e) => setSyllabusForm({ ...syllabusForm, subject_name: e.target.value })}
+                    placeholder="All Subjects, English, Urdu..."
+                    className="w-full px-3 py-2 rounded-lg border border-neutral-200"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Academic Year</label>
+                  <select
+                    value={syllabusForm.academic_year}
+                    onChange={(e) => setSyllabusForm({ ...syllabusForm, academic_year: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white"
+                  >
+                    <option value="">Select Session</option>
+                    {sessions.map((s) => (
+                      <option key={s.id} value={s.name}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/40 space-y-2">
+                <div className="font-semibold text-[#171717] flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-[#059669]" />
+                  <span>Syllabus PDF File * (Max 3.8 MB)</span>
+                </div>
+                {syllabusForm.syllabus_pdf_url && (
+                  <div className="p-2 rounded-lg bg-white border border-emerald-200 text-[11px] text-[#059669] flex items-center justify-between gap-2">
+                    <span className="truncate font-medium">
+                      {syllabusForm.syllabus_pdf_name || 'Syllabus.pdf'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSyllabusForm({ ...syllabusForm, syllabus_pdf_url: '', syllabus_pdf_name: '' })
+                      }
+                      className="text-red-600 shrink-0"
+                      title="Remove Syllabus PDF"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+                <label className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg border border-dashed border-emerald-400 bg-white hover:bg-emerald-50 cursor-pointer font-semibold text-[#059669]">
+                  {uploadingStandalonePdf ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Upload className="w-4 h-4" />
+                  )}
+                  <span>
+                    {uploadingStandalonePdf
+                      ? 'Uploading PDF...'
+                      : syllabusForm.syllabus_pdf_url
+                        ? 'Replace Syllabus PDF'
+                        : 'Select Syllabus PDF File'}
+                  </span>
+                  <input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={(e) => handleUploadPdf(e, 'standalone_syllabus')}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1">Notes / Chapters Overview (Optional)</label>
+                <textarea
+                  rows={2}
+                  value={syllabusForm.weekly_plan}
+                  onChange={(e) => setSyllabusForm({ ...syllabusForm, weekly_plan: e.target.value })}
+                  placeholder="Optional details about chapters, weeks, or exam portions..."
+                  className="w-full px-3 py-2 rounded-lg border border-neutral-200"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-neutral-100">
+                <button
+                  type="button"
+                  onClick={() => setSyllabusModalOpen(false)}
+                  className="px-4 py-2 rounded-lg bg-neutral-100 font-semibold text-[#525252]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingSyllabus || uploadingStandalonePdf}
+                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-lg bg-[#059669] text-white font-semibold hover:bg-emerald-700 disabled:opacity-60 cursor-pointer"
+                >
+                  {savingSyllabus && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>
+                    {savingSyllabus
+                      ? 'Saving...'
+                      : editingSyllabusId
+                        ? 'Update Syllabus PDF'
+                        : 'Save Syllabus PDF'}
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Super Admin Add / Edit Book Modal */}
       {formOpen && isAdmin && (
         <div className="fixed inset-0 z-50 bg-black/55 overflow-y-auto p-4 flex items-center justify-center">
           <div className="max-w-2xl w-full bg-white rounded-2xl border border-neutral-200 shadow-xl p-5 sm:p-6 space-y-4 text-xs my-6">
             <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-[#171717]">
-                  {editingId ? 'Edit Book & Syllabus' : 'Add Subject Book & Syllabus'}
+                  {editingId ? 'Edit Book & Syllabus' : 'Add Subject Book'}
                 </h3>
                 <p className="text-[11px] text-[#737373]">
-                  Upload Cover Page image, Book PDF, and Week-wise / Chapter-wise Syllabus PDF.
+                  Upload Book Cover Page image, Book PDF, and optional attached Weekly/Chapter Syllabus PDF.
                 </p>
               </div>
               <button
@@ -713,7 +1254,7 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
               </div>
             )}
 
-            <form onSubmit={handleSave} className="space-y-4">
+            <form onSubmit={handleSaveBook} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold mb-1">Class *</label>
@@ -761,20 +1302,22 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
                   className="w-full px-3 py-2 rounded-lg border border-neutral-200"
                 />
                 <div className="flex flex-wrap gap-1.5 mt-2">
-                  {formSubjectSuggestions.map((sub) => (
-                    <button
-                      key={sub}
-                      type="button"
-                      onClick={() => setForm({ ...form, subject_name: sub })}
-                      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border cursor-pointer ${
-                        form.subject_name.trim().toLowerCase() === sub.toLowerCase()
-                          ? 'bg-[#DC1726] text-white border-[#DC1726]'
-                          : 'bg-neutral-50 text-[#525252] border-neutral-200 hover:bg-neutral-100'
-                      }`}
-                    >
-                      {sub}
-                    </button>
-                  ))}
+                  {formSubjectSuggestions
+                    .filter((sub) => sub !== 'All Subjects')
+                    .map((sub) => (
+                      <button
+                        key={sub}
+                        type="button"
+                        onClick={() => setForm({ ...form, subject_name: sub })}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border cursor-pointer ${
+                          form.subject_name.trim().toLowerCase() === sub.toLowerCase()
+                            ? 'bg-[#DC1726] text-white border-[#DC1726]'
+                            : 'bg-neutral-50 text-[#525252] border-neutral-200 hover:bg-neutral-100'
+                        }`}
+                      >
+                        {sub}
+                      </button>
+                    ))}
                 </div>
               </div>
 
@@ -867,11 +1410,11 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
                   </label>
                 </div>
 
-                {/* 3. Weekly & Chapter Syllabus PDF */}
+                {/* 3. Optional Linked Syllabus PDF */}
                 <div className="p-3 rounded-xl border border-neutral-200 bg-neutral-50 space-y-2">
                   <div className="font-semibold text-[#171717] flex items-center gap-1.5">
                     <FileText className="w-3.5 h-3.5 text-[#059669]" />
-                    <span>Syllabus PDF (Week / Chapter)</span>
+                    <span>Book Syllabus PDF (Opt.)</span>
                   </div>
                   {form.syllabus_pdf_url ? (
                     <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] text-[#059669] flex items-center justify-between gap-1">
@@ -886,12 +1429,12 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
                       </button>
                     </div>
                   ) : (
-                    <div className="text-[11px] text-[#737373]">Week-wise &amp; chapter PDF (max 3.8 MB)</div>
+                    <div className="text-[11px] text-[#737373]">Optional chapter plan PDF</div>
                   )}
                   <label className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-emerald-300 bg-white hover:bg-emerald-50 cursor-pointer font-semibold text-[#059669]">
                     {uploadingSyllabusPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                     <span>
-                      {uploadingSyllabusPdf ? 'Uploading...' : form.syllabus_pdf_url ? 'Replace Syllabus PDF' : 'Upload Syllabus PDF'}
+                      {uploadingSyllabusPdf ? 'Uploading...' : form.syllabus_pdf_url ? 'Replace PDF' : 'Upload Syllabus PDF'}
                     </span>
                     <input
                       type="file"
@@ -930,7 +1473,7 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
                   className="inline-flex items-center gap-1.5 px-5 py-2 rounded-lg bg-[#DC1726] text-white font-semibold hover:bg-red-700 disabled:opacity-60 cursor-pointer"
                 >
                   {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>{saving ? 'Saving...' : editingId ? 'Update Syllabus' : 'Save Syllabus'}</span>
+                  <span>{saving ? 'Saving...' : editingId ? 'Update Book' : 'Save Book'}</span>
                 </button>
               </div>
             </form>
@@ -938,7 +1481,7 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
         </div>
       )}
 
-      {/* Full Details Modal (Available to All Roles) */}
+      {/* Full Details Modal */}
       {viewItem && (
         <div className="fixed inset-0 z-50 bg-black/55 overflow-y-auto p-4 flex items-center justify-center">
           <div className="max-w-xl w-full bg-white rounded-2xl border border-neutral-200 shadow-xl p-6 space-y-4 text-xs">
@@ -1028,14 +1571,14 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
                   type="button"
                   onClick={() => {
                     setPreviewPdf({
-                      title: `Weekly Syllabus PDF — ${viewItem.subject_name}`,
+                      title: `Syllabus PDF — ${viewItem.syllabus_title || viewItem.subject_name}`,
                       url: viewItem.syllabus_pdf_url,
                       fileName: viewItem.syllabus_pdf_name || `${viewItem.subject_name}-syllabus.pdf`,
                     });
                   }}
                   className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#059669] hover:bg-emerald-700 font-semibold text-white"
                 >
-                  <FileText className="w-3.5 h-3.5" /> Open Weekly Syllabus PDF
+                  <FileText className="w-3.5 h-3.5" /> Open Syllabus PDF
                 </button>
               )}
             </div>
@@ -1117,8 +1660,8 @@ export const SyllabusPage: React.FC<SyllabusPageProps> = ({ user, embedded = fal
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}
-        title="Delete Syllabus Item?"
-        message={`Are you sure you want to delete "${deleteTarget?.book_name}" (${deleteTarget?.subject_name})?`}
+        title={deleteTarget?.item_type === 'syllabus_pdf' ? 'Delete Syllabus PDF?' : 'Delete Book?'}
+        message={`Are you sure you want to delete "${deleteTarget?.syllabus_title || deleteTarget?.book_name}" (${deleteTarget?.subject_name})?`}
         confirmLabel="Delete"
         onConfirm={handleDelete}
         onCancel={() => setDeleteTarget(null)}

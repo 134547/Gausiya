@@ -245,7 +245,7 @@ export async function exportResultCardPdf(element: HTMLElement, fileBaseName: st
 
 interface ResultGradeCardProps {
   data: ResultCardData;
-  cardRef?: React.RefObject<HTMLDivElement | null>;
+  cardRef?: React.Ref<HTMLDivElement>;
 }
 
 export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef }) => {

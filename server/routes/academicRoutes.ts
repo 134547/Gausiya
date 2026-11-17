@@ -62,11 +62,12 @@ router.get('/attendance', requireAuth, async (req: AuthRequest, res) => {
 
     const [{ data: attRows }, { data: studentsRaw }] = await Promise.all([q, stSummaryQ]);
 
-    const dailyMap = new Map<string, { attendance_date: string; class_name: string; present: number; absent: number; late: number; on_leave: number; total: number }>();
+    const dailyMap = new Map<string, { attendance_date: string; class_id: string; class_name: string; present: number; absent: number; late: number; on_leave: number; total: number }>();
     for (const a of attRows || []) {
       const key = `${a.attendance_date}_${a.class_id}`;
       const entry = dailyMap.get(key) || {
         attendance_date: a.attendance_date,
+        class_id: a.class_id,
         class_name: (a as any).classes?.name || '',
         present: 0,
         absent: 0,
@@ -168,7 +169,7 @@ router.get('/attendance', requireAuth, async (req: AuthRequest, res) => {
   }
 
   if (!classId) {
-    return res.json({ records: [], date: targetDate });
+    return res.json({ records: [], date: targetDate, isLocked: false, markedCount: 0 });
   }
 
   if (user.role_slug === 'teacher') {
@@ -198,6 +199,7 @@ router.get('/attendance', requireAuth, async (req: AuthRequest, res) => {
 
   const resolvedStudents = await resolveStorageUrlsInRows(filteredStudents, ['photo_url']);
   const attMap = new Map((attRows || []).map((a) => [a.student_id, a]));
+  const isLocked = (attRows || []).length > 0;
   const records = resolvedStudents.map((st: any) => {
     const a = attMap.get(st.id);
     return {
@@ -212,7 +214,7 @@ router.get('/attendance', requireAuth, async (req: AuthRequest, res) => {
     };
   });
 
-  return res.json({ records, date: targetDate, classId });
+  return res.json({ records, date: targetDate, classId, isLocked, markedCount: (attRows || []).length });
 });
 
 router.post('/attendance', requireAuth, requireRole('super_admin', 'teacher'), async (req: AuthRequest, res) => {
@@ -220,10 +222,11 @@ router.post('/attendance', requireAuth, requireRole('super_admin', 'teacher'), a
     const admin = requireSupabaseAdmin(res);
     if (!admin) return;
     const user = req.user!;
-    const { sessionId, classId, date, records } = req.body as {
+    const { sessionId, classId, date, records, allowEdit } = req.body as {
       sessionId?: string;
       classId: string;
       date: string;
+      allowEdit?: boolean;
       records: { student_id: string; status: 'present' | 'absent' | 'late' | 'leave'; remark?: string }[];
     };
     if (!classId || !date || !Array.isArray(records)) {
@@ -238,11 +241,28 @@ router.post('/attendance', requireAuth, requireRole('super_admin', 'teacher'), a
       }
     }
 
+    const { data: existingRows, error: existingErr } = await admin
+      .from('attendance')
+      .select('id')
+      .eq('class_id', classId)
+      .eq('attendance_date', date)
+      .limit(1);
+    if (existingErr) return res.status(400).json({ error: existingErr.message });
+
+    const alreadySaved = (existingRows || []).length > 0;
+    if (alreadySaved && allowEdit !== true) {
+      return res.status(409).json({
+        error: 'Attendance for this class and date is already saved and locked. Click the separate "Edit Attendance" option to make changes.',
+        locked: true,
+      });
+    }
+
     const { data: activeSession } = await admin.from('academic_sessions').select('id').eq('is_active', true).limit(1).maybeSingle();
     const sessId = sessionId || activeSession?.id || null;
 
-    if (records.length > 0) {
-      const rows = records.map((r) => ({
+    const validRecords = records.filter((r) => ['present', 'absent', 'late', 'leave'].includes(r.status));
+    if (validRecords.length > 0) {
+      const rows = validRecords.map((r) => ({
         academic_session_id: sessId,
         class_id: classId,
         student_id: r.student_id,
@@ -256,17 +276,18 @@ router.post('/attendance', requireAuth, requireRole('super_admin', 'teacher'), a
     }
 
     const summary = {
-      present: records.filter((r) => r.status === 'present').length,
-      absent: records.filter((r) => r.status === 'absent').length,
-      late: records.filter((r) => r.status === 'late').length,
-      leave: records.filter((r) => r.status === 'leave').length,
-      total: records.length,
+      present: validRecords.filter((r) => r.status === 'present').length,
+      absent: validRecords.filter((r) => r.status === 'absent').length,
+      late: validRecords.filter((r) => r.status === 'late').length,
+      leave: validRecords.filter((r) => r.status === 'leave').length,
+      total: validRecords.length,
     };
 
-    await notifyRoles(['super_admin'], 'attendance', 'Attendance Updated', `Attendance marked for class on ${date} (${summary.present}/${summary.total} present).`, 'attendance', classId);
-    await logActivity(user, 'ATTENDANCE_UPDATED', 'attendance', `${classId}-${date}`, `Marked attendance for Class ${classId} on ${date}: ${summary.present} present, ${summary.absent} absent`, req.ip);
+    const actionWord = alreadySaved ? 'Edited' : 'Marked';
+    await notifyRoles(['super_admin'], 'attendance', `Attendance ${actionWord}`, `Attendance ${actionWord.toLowerCase()} for class on ${date} (${summary.present}/${summary.total} present).`, 'attendance', classId);
+    await logActivity(user, alreadySaved ? 'ATTENDANCE_EDITED' : 'ATTENDANCE_UPDATED', 'attendance', `${classId}-${date}`, `${actionWord} attendance for Class ${classId} on ${date}: ${summary.present} present, ${summary.absent} absent`, req.ip);
 
-    return res.json({ success: true, summary });
+    return res.json({ success: true, summary, isLocked: true });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to save attendance' });
@@ -298,11 +319,18 @@ router.get('/examinations', requireAuth, async (req: AuthRequest, res) => {
     const classIds = Array.from(new Set((sts || []).map((s) => s.class_id).filter(Boolean) as string[]));
     if (!classIds.length) return res.json({ examinations: [] });
     q = q.in('class_id', classIds);
+  } else if (user.role_slug === 'teacher') {
+    const tid = await getTeacherIdForUser(user);
+    const classIds = tid ? await getTeacherAssignedClassIds(tid) : [];
+    if (!classIds.length) return res.json({ examinations: [] });
+    q = q.in('class_id', classIds);
   }
 
-  const [{ data: examsRaw }, { data: esRaw }] = await Promise.all([
+  const [{ data: examsRaw }, { data: esRaw }, { data: activeStudentsRaw }, { data: savedResultsRaw }] = await Promise.all([
     q,
     admin.from('examination_subjects').select('*, subjects(name, code)').order('exam_date', { ascending: true }),
+    admin.from('students').select('id, class_id, full_name, student_code').is('deleted_at', null).eq('status', 'active').order('full_name', { ascending: true }),
+    admin.from('results').select('id, examination_id, student_id'),
   ]);
 
   const examSubjects = (esRaw || []).map((es: any) => ({
@@ -311,12 +339,33 @@ router.get('/examinations', requireAuth, async (req: AuthRequest, res) => {
     subject_code: es.subjects?.code || '',
   }));
 
-  const examinations = (examsRaw || []).map((ex: any) => ({
-    ...ex,
-    class_name: ex.classes?.name || '',
-    session_name: ex.academic_sessions?.name || '',
-    subjects: examSubjects.filter((es) => es.examination_id === ex.id),
-  }));
+  const examinations = (examsRaw || []).map((ex: any) => {
+    const classStudents = (activeStudentsRaw || []).filter((s: any) => String(s.class_id) === String(ex.class_id));
+    const examResultRows = (savedResultsRaw || []).filter((r: any) => String(r.examination_id) === String(ex.id));
+    const savedStudentIds = new Set(examResultRows.map((r: any) => String(r.student_id)));
+    const pendingStudents = classStudents
+      .filter((s: any) => !savedStudentIds.has(String(s.id)))
+      .map((s: any) => ({
+        id: s.id,
+        full_name: s.full_name,
+        student_code: s.student_code,
+      }));
+    const totalStudents = classStudents.length;
+    const createdResultsCount = classStudents.filter((s: any) => savedStudentIds.has(String(s.id))).length;
+    const allResultsCreated = totalStudents > 0 ? pendingStudents.length === 0 : examResultRows.length > 0;
+
+    return {
+      ...ex,
+      class_name: ex.classes?.name || '',
+      session_name: ex.academic_sessions?.name || '',
+      subjects: examSubjects.filter((es) => es.examination_id === ex.id),
+      total_students: totalStudents,
+      created_results_count: createdResultsCount,
+      total_saved_results: examResultRows.length,
+      pending_students: pendingStudents,
+      all_results_created: allResultsCreated,
+    };
+  });
 
   return res.json({ examinations });
 });
@@ -495,6 +544,7 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
     .is('students.deleted_at', null)
     .is('examinations.deleted_at', null)
     .order('position', { ascending: true })
+    .order('obtained_marks', { ascending: false })
     .order('percentage', { ascending: false });
 
   if (user.role_slug === 'student') {
@@ -701,7 +751,7 @@ router.post('/results/marks', requireAuth, requireRole('super_admin', 'teacher')
       computed.push({ student_id, total_marks: total, obtained_marks: obtained, percentage: pct, grade, status });
     }
 
-    computed.sort((a, b) => b.obtained_marks - a.obtained_marks);
+    computed.sort((a, b) => b.obtained_marks - a.obtained_marks || b.percentage - a.percentage);
     if (computed.length > 0) {
       const resultRows = computed.map((c, idx) => ({
         examination_id: examId,
@@ -718,6 +768,7 @@ router.post('/results/marks', requireAuth, requireRole('super_admin', 'teacher')
       }));
       const { error: resErr } = await admin.from('results').upsert(resultRows, { onConflict: 'examination_id,student_id' });
       if (resErr) return res.status(400).json({ error: resErr.message });
+      await recalculateExamPositions(admin, examId);
     }
 
     await logActivity(req.user!, 'MARKS_ENTERED', 'results', examId, `Saved marks and calculated results for exam ${examId}`, req.ip);
@@ -728,26 +779,72 @@ router.post('/results/marks', requireAuth, requireRole('super_admin', 'teacher')
   }
 });
 
-router.post('/results/publish/:examId', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {
+router.post('/results/publish/:examId', requireAuth, requireRole('super_admin', 'teacher'), async (req: AuthRequest, res) => {
   const admin = requireSupabaseAdmin(res);
   if (!admin) return;
+  const user = req.user!;
   const eid = req.params.examId;
-  const { publish } = req.body as { publish: boolean };
-  const flag = Boolean(publish);
-  const now = flag ? new Date().toISOString() : null;
+  const { publish } = req.body as { publish?: boolean };
+  const flag = publish === undefined ? true : Boolean(publish);
 
+  const { data: exam } = await admin
+    .from('examinations')
+    .select('id, name, class_id')
+    .eq('id', eid)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!exam) return res.status(404).json({ error: 'Examination not found' });
+
+  if (user.role_slug === 'teacher') {
+    if (!flag) {
+      return res.status(403).json({ error: 'Only Super Admin can unpublish results.' });
+    }
+    const tid = await getTeacherIdForUser(user);
+    const allowed = tid ? await getTeacherAssignedClassIds(tid) : [];
+    if (!allowed.includes(exam.class_id)) {
+      return res.status(403).json({ error: 'Permission denied: you are not assigned to this class.' });
+    }
+  }
+
+  if (flag) {
+    const [{ data: activeStudents }, { data: examResults }] = await Promise.all([
+      admin.from('students').select('id, full_name').eq('class_id', exam.class_id).is('deleted_at', null).eq('status', 'active'),
+      admin.from('results').select('id, student_id').eq('examination_id', eid),
+    ]);
+
+    const savedRows = examResults || [];
+    if (savedRows.length === 0) {
+      return res.status(400).json({ error: 'No student results have been created for this exam yet.' });
+    }
+
+    const savedSet = new Set(savedRows.map((r: any) => String(r.student_id)));
+    const pendingStudents = (activeStudents || []).filter((s: any) => !savedSet.has(String(s.id)));
+    if (pendingStudents.length > 0) {
+      const sampleNames = pendingStudents.slice(0, 3).map((s: any) => s.full_name).join(', ');
+      return res.status(400).json({
+        error: `Cannot upload results yet: ${pendingStudents.length} of ${activeStudents?.length || 0} students still need results created (${sampleNames}${pendingStudents.length > 3 ? '...' : ''}).`,
+        pendingCount: pendingStudents.length,
+        totalStudents: activeStudents?.length || 0,
+      });
+    }
+
+    // Finalize all ranks (by highest obtained marks) and percentages across the entire class before uploading
+    await recalculateExamPositions(admin, eid);
+  }
+
+  const now = flag ? new Date().toISOString() : null;
   const [examRes, resRes] = await Promise.all([
-    admin.from('examinations').update({ results_published: flag, published_by: req.user!.id, published_at: now }).eq('id', eid),
-    admin.from('results').update({ is_published: flag, approved_by: req.user!.id, approved_at: now }).eq('examination_id', eid),
+    admin.from('examinations').update({ results_published: flag, published_by: flag ? user.id : null, published_at: now }).eq('id', eid),
+    admin.from('results').update({ is_published: flag, approved_by: flag ? user.id : null, approved_at: now }).eq('examination_id', eid),
   ]);
   if (examRes.error) return res.status(400).json({ error: examRes.error.message });
   if (resRes.error) return res.status(400).json({ error: resRes.error.message });
 
   if (flag) {
-    await notifyRoles(['student', 'parent', 'teacher'], 'result', 'Examination Results Published', `Official marksheets have been approved and published.`, 'results', eid);
+    await notifyRoles(['student', 'parent', 'teacher'], 'result', 'Examination Results Uploaded', `${exam.name} results have been finalized and uploaded with class ranks.`, 'results', eid);
   }
-  await logActivity(req.user!, flag ? 'RESULTS_PUBLISHED' : 'RESULTS_UNPUBLISHED', 'results', eid, `${flag ? 'Published' : 'Unpublished'} results for exam ${eid}`, req.ip);
-  return res.json({ success: true });
+  await logActivity(user, flag ? 'RESULTS_PUBLISHED' : 'RESULTS_UNPUBLISHED', 'results', eid, `${flag ? 'Uploaded & published' : 'Unpublished'} results for exam ${eid}`, req.ip);
+  return res.json({ success: true, published: flag });
 });
 
 function percentageToCardGrade(p: number): string {
@@ -761,20 +858,101 @@ function percentageToCardGrade(p: number): string {
 }
 
 async function recalculateExamPositions(admin: NonNullable<typeof supabaseAdmin>, examinationId: string) {
-  const { data: examResults } = await admin
-    .from('results')
-    .select('id, percentage, obtained_marks')
-    .eq('examination_id', examinationId)
-    .order('percentage', { ascending: false })
-    .order('obtained_marks', { ascending: false });
+  const [{ data: examResults, error: resQueryErr }, { data: examMarks, error: marksQueryErr }] = await Promise.all([
+    admin
+      .from('results')
+      .select('id, student_id, total_marks, obtained_marks, percentage, position')
+      .eq('examination_id', examinationId),
+    admin
+      .from('marks')
+      .select('student_id, obtained_marks, total_marks')
+      .eq('examination_id', examinationId),
+  ]);
 
+  if (resQueryErr) throw Object.assign(new Error(resQueryErr.message), { status: 503 });
+  if (marksQueryErr) throw Object.assign(new Error(marksQueryErr.message), { status: 503 });
   if (!examResults || examResults.length === 0) return;
 
-  await Promise.all(
-    examResults.map((row, idx) =>
-      admin.from('results').update({ position: idx + 1 }).eq('id', row.id)
-    )
-  );
+  const marksByStudent = new Map<string, { obtained: number; total: number }>();
+  for (const m of examMarks || []) {
+    const cur = marksByStudent.get(String(m.student_id)) || { obtained: 0, total: 0 };
+    cur.obtained += Number(m.obtained_marks || 0);
+    cur.total += Number(m.total_marks || 0);
+    marksByStudent.set(String(m.student_id), cur);
+  }
+
+  const normalized = examResults.map((row: any) => {
+    const mSum = marksByStudent.get(String(row.student_id));
+    const total = mSum && mSum.total > 0 ? mSum.total : Number(row.total_marks || 0);
+    const obtained = mSum && mSum.total > 0 ? mSum.obtained : Number(row.obtained_marks || 0);
+    const percentage = total > 0 ? Math.round((obtained / total) * 10000) / 100 : 0;
+    return {
+      id: row.id,
+      obtained_marks: obtained,
+      total_marks: total,
+      percentage,
+      prevObtained: Number(row.obtained_marks || 0),
+      prevTotal: Number(row.total_marks || 0),
+      prevPct: Number(row.percentage || 0),
+      prevPosition: Number(row.position || 0),
+    };
+  });
+
+  // Highest marks gets top rank; tie-break by percentage; equal marks & percentage share rank
+  normalized.sort((a, b) => b.obtained_marks - a.obtained_marks || b.percentage - a.percentage);
+
+  let currentRank = 0;
+  let prevObtained: number | null = null;
+  let prevPct: number | null = null;
+
+  const pendingUpdates: Array<{
+    id: string;
+    obtained_marks: number;
+    total_marks: number;
+    percentage: number;
+    position: number;
+  }> = [];
+
+  for (let idx = 0; idx < normalized.length; idx += 1) {
+    const row = normalized[idx];
+    if (prevObtained === null || row.obtained_marks !== prevObtained || row.percentage !== prevPct) {
+      currentRank = idx + 1;
+      prevObtained = row.obtained_marks;
+      prevPct = row.percentage;
+    }
+    if (
+      row.prevPosition !== currentRank ||
+      row.prevObtained !== row.obtained_marks ||
+      row.prevTotal !== row.total_marks ||
+      row.prevPct !== row.percentage
+    ) {
+      pendingUpdates.push({
+        id: row.id,
+        obtained_marks: row.obtained_marks,
+        total_marks: row.total_marks,
+        percentage: row.percentage,
+        position: currentRank,
+      });
+    }
+  }
+
+  // Update changed rows in small chunks to avoid socket exhaustion
+  for (let i = 0; i < pendingUpdates.length; i += 5) {
+    const chunk = pendingUpdates.slice(i, i + 5);
+    await Promise.all(
+      chunk.map((u) =>
+        admin
+          .from('results')
+          .update({
+            obtained_marks: u.obtained_marks,
+            total_marks: u.total_marks,
+            percentage: u.percentage,
+            position: u.position,
+          })
+          .eq('id', u.id)
+      )
+    );
+  }
 }
 
 interface CardSubjectInput {
@@ -841,11 +1019,17 @@ async function saveOrUpdateResultCard(
   }
 
   // Validate real DB student and subjects exist
-  const [{ data: studentRow }, { data: validSubRows }] = await Promise.all([
+  const [{ data: studentRow, error: studentErr }, { data: validSubRows, error: subErr }] = await Promise.all([
     admin.from('students').select('id, class_id, full_name').eq('id', student_id).is('deleted_at', null).maybeSingle(),
     admin.from('subjects').select('id, name, code').in('id', Array.from(seenSubjectIds)).is('deleted_at', null),
   ]);
 
+  if (studentErr) {
+    throw Object.assign(new Error(studentErr.message || 'Database connection failed while checking student.'), { status: 503 });
+  }
+  if (subErr) {
+    throw Object.assign(new Error(subErr.message || 'Database connection failed while checking subjects.'), { status: 503 });
+  }
   if (!studentRow) {
     throw Object.assign(new Error('Selected student was not found in the database.'), { status: 404 });
   }
@@ -922,7 +1106,8 @@ async function saveOrUpdateResultCard(
         resolvedSessionId = activeSession?.id || null;
       }
 
-      const publishFlag = user.role_slug === 'super_admin' ? Boolean(is_published) : false;
+      // Always start newly created examination in Draft mode until all students' results are created and uploaded
+      const publishFlag = false;
       const { data: newExam, error: newExamErr } = await admin
         .from('examinations')
         .insert({
@@ -934,8 +1119,8 @@ async function saveOrUpdateResultCard(
           end_date: issueDateInput,
           status: 'completed',
           results_published: publishFlag,
-          published_by: publishFlag ? user.id : null,
-          published_at: publishFlag ? new Date().toISOString() : null,
+          published_by: null,
+          published_at: null,
         })
         .select('id, results_published')
         .single();
@@ -965,19 +1150,19 @@ async function saveOrUpdateResultCard(
     await recalculateExamPositions(admin, existingRow.examination_id);
   }
 
-  // Upsert examination_subjects so each DB subject has valid passing/total metadata
-  for (const sub of cleanSubjects) {
-    const passMarks = Math.round(sub.total_marks * 0.4);
-    await admin.from('examination_subjects').upsert(
-      {
-        examination_id: targetExamId,
-        subject_id: sub.subject_id,
-        exam_date: issueDateInput,
-        total_marks: sub.total_marks,
-        passing_marks: passMarks,
-      },
-      { onConflict: 'examination_id,subject_id' }
-    );
+  // Batch upsert examination_subjects so each DB subject has valid passing/total metadata
+  const examSubjectRows = cleanSubjects.map((sub) => ({
+    examination_id: targetExamId,
+    subject_id: sub.subject_id,
+    exam_date: issueDateInput,
+    total_marks: sub.total_marks,
+    passing_marks: Math.round(sub.total_marks * 0.4),
+  }));
+  const { error: exSubErr } = await admin
+    .from('examination_subjects')
+    .upsert(examSubjectRows, { onConflict: 'examination_id,subject_id' });
+  if (exSubErr) {
+    throw Object.assign(new Error(exSubErr.message || 'Failed to sync examination subjects.'), { status: 400 });
   }
 
   // Replace marks for (targetExamId, student_id)
@@ -1012,23 +1197,7 @@ async function saveOrUpdateResultCard(
   const grade = percentageToCardGrade(percentage);
   const status: 'pass' | 'fail' = failedSubjects === 0 && percentage >= 40 ? 'pass' : 'fail';
 
-  const shouldPublish =
-    user.role_slug === 'super_admin' && typeof is_published === 'boolean'
-      ? is_published
-      : existingRow
-        ? Boolean(existingRow.is_published)
-        : targetExamPublished;
-
-  if (user.role_slug === 'super_admin' && is_published === true && !targetExamPublished) {
-    await admin
-      .from('examinations')
-      .update({
-        results_published: true,
-        published_by: user.id,
-        published_at: new Date().toISOString(),
-      })
-      .eq('id', targetExamId);
-  }
+  const shouldPublish = existingRow ? Boolean(existingRow.is_published) : targetExamPublished;
 
   const remarksText = String(card_meta?.remarks || '').trim();
 
@@ -1122,8 +1291,12 @@ router.post('/results/card', requireAuth, requireRole('super_admin', 'teacher'),
     return res.status(201).json({ success: true, id: result.id, examination_id: result.examination_id });
   } catch (err: any) {
     console.error('Create result card error:', err);
-    return res.status(typeof err?.status === 'number' ? err.status : 500).json({
-      error: err?.message || 'Failed to save result card',
+    const rawMsg = String(err?.message || 'Failed to save result card');
+    const isNetwork = rawMsg.toLowerCase().includes('fetch failed');
+    return res.status(isNetwork ? 503 : typeof err?.status === 'number' ? err.status : 500).json({
+      error: isNetwork
+        ? 'Database connection was temporarily interrupted. Please try saving again.'
+        : rawMsg,
     });
   }
 });
@@ -1144,8 +1317,12 @@ router.put('/results/:id/card', requireAuth, requireRole('super_admin', 'teacher
     return res.json({ success: true, id: result.id, examination_id: result.examination_id });
   } catch (err: any) {
     console.error('Update result card error:', err);
-    return res.status(typeof err?.status === 'number' ? err.status : 500).json({
-      error: err?.message || 'Failed to update result card',
+    const rawMsg = String(err?.message || 'Failed to update result card');
+    const isNetwork = rawMsg.toLowerCase().includes('fetch failed');
+    return res.status(isNetwork ? 503 : typeof err?.status === 'number' ? err.status : 500).json({
+      error: isNetwork
+        ? 'Database connection was temporarily interrupted. Please try updating again.'
+        : rawMsg,
     });
   }
 });
@@ -1522,15 +1699,24 @@ router.get('/syllabus', requireAuth, async (req, res) => {
         resolveStorageUrl(data.syllabus_pdf_url),
       ]);
 
+      const resolvedBookName = String(data.book_name || data.syllabus_title || '');
+      const itemType =
+        data.item_type === 'syllabus_pdf' || (!String(data.book_name || '').trim() && Boolean(syllabusPdfUrl))
+          ? 'syllabus_pdf'
+          : 'book';
+
       return {
         id: doc.id,
+        item_type: itemType,
         class_id: clsId,
         class_name: clsInfo?.name || data.class_name || 'All Classes',
         class_code: clsInfo?.code || '',
         class_teacher_name: clsInfo?.class_teacher_name || '',
         subject_id: String(data.subject_id || ''),
-        subject_name: String(data.subject_name || ''),
-        book_name: String(data.book_name || ''),
+        subject_name: String(data.subject_name || (itemType === 'syllabus_pdf' ? 'All Subjects' : '')),
+        book_name: resolvedBookName,
+        syllabus_title: String(data.syllabus_title || resolvedBookName),
+        syllabus_type: String(data.syllabus_type || (itemType === 'syllabus_pdf' ? 'Syllabus PDF' : '')),
         author_name: String(data.author_name || ''),
         academic_year: String(data.academic_year || ''),
         cover_page_url: coverPageUrl,
@@ -1567,26 +1753,42 @@ router.post('/syllabus', requireAuth, requireRole('super_admin'), async (req: Au
     const admin = requireSupabaseAdmin(res);
     if (!admin) return;
     const b = req.body as Record<string, any>;
-    const subjectName = String(b.subject_name || '').trim();
-    const bookName = String(b.book_name || '').trim();
-    if (!subjectName || !bookName) {
+    const itemType = b.item_type === 'syllabus_pdf' ? 'syllabus_pdf' : 'book';
+    const syllabusTitle = String(b.syllabus_title || '').trim();
+    const syllabusPdfUrl = normalizeStorageRef(String(b.syllabus_pdf_url || ''));
+    const syllabusPdfName = String(b.syllabus_pdf_name || '').trim();
+    const subjectName = String(b.subject_name || '').trim() || (itemType === 'syllabus_pdf' ? 'All Subjects' : '');
+    const rawBookName = String(b.book_name || '').trim();
+    const bookName = rawBookName || syllabusTitle || (itemType === 'syllabus_pdf' ? syllabusPdfName.replace(/\.pdf$/i, '') : '');
+
+    if (itemType === 'syllabus_pdf') {
+      if (!syllabusPdfUrl) {
+        return res.status(400).json({ error: 'Please upload a Syllabus PDF file.' });
+      }
+      if (!bookName) {
+        return res.status(400).json({ error: 'Syllabus Title is required.' });
+      }
+    } else if (!subjectName || !bookName) {
       return res.status(400).json({ error: 'Subject / Language (e.g. English, Urdu) and Book Name are required.' });
     }
 
     const classId = String(b.class_id || '').trim();
     const payload = {
+      item_type: itemType,
       class_id: classId,
       class_name: String(b.class_name || '').trim(),
       subject_id: String(b.subject_id || '').trim(),
       subject_name: subjectName,
       book_name: bookName,
+      syllabus_title: syllabusTitle || bookName,
+      syllabus_type: String(b.syllabus_type || (itemType === 'syllabus_pdf' ? 'Syllabus PDF' : '')).trim(),
       author_name: String(b.author_name || '').trim(),
       academic_year: String(b.academic_year || '').trim(),
       cover_page_url: normalizeStorageRef(String(b.cover_page_url || '')),
       book_pdf_url: normalizeStorageRef(String(b.book_pdf_url || '')),
       book_pdf_name: String(b.book_pdf_name || '').trim(),
-      syllabus_pdf_url: normalizeStorageRef(String(b.syllabus_pdf_url || '')),
-      syllabus_pdf_name: String(b.syllabus_pdf_name || '').trim(),
+      syllabus_pdf_url: syllabusPdfUrl,
+      syllabus_pdf_name: syllabusPdfName,
       weekly_plan: String(b.weekly_plan || '').trim(),
     };
 
@@ -1654,26 +1856,45 @@ router.put('/syllabus/:id', requireAuth, requireRole('super_admin'), async (req:
     }
 
     const b = req.body as Record<string, any>;
-    const subjectName = String(b.subject_name ?? prevData.subject_name ?? '').trim();
-    const bookName = String(b.book_name ?? prevData.book_name ?? '').trim();
-    if (!subjectName || !bookName) {
+    const itemType =
+      b.item_type === 'syllabus_pdf' || prevData.item_type === 'syllabus_pdf' ? 'syllabus_pdf' : 'book';
+    const syllabusTitle = String(b.syllabus_title ?? prevData.syllabus_title ?? '').trim();
+    const syllabusPdfUrl = normalizeStorageRef(String(b.syllabus_pdf_url ?? prevData.syllabus_pdf_url ?? ''));
+    const syllabusPdfName = String(b.syllabus_pdf_name ?? prevData.syllabus_pdf_name ?? '').trim();
+    const subjectName =
+      String(b.subject_name ?? prevData.subject_name ?? '').trim() ||
+      (itemType === 'syllabus_pdf' ? 'All Subjects' : '');
+    const rawBookName = String(b.book_name ?? prevData.book_name ?? '').trim();
+    const bookName = rawBookName || syllabusTitle;
+
+    if (itemType === 'syllabus_pdf') {
+      if (!syllabusPdfUrl) {
+        return res.status(400).json({ error: 'Syllabus PDF file is required.' });
+      }
+      if (!bookName) {
+        return res.status(400).json({ error: 'Syllabus Title is required.' });
+      }
+    } else if (!subjectName || !bookName) {
       return res.status(400).json({ error: 'Subject / Language and Book Name are required.' });
     }
 
     const classId = String(b.class_id ?? prevData.class_id ?? '').trim();
     const updatedPayload = {
+      item_type: itemType,
       class_id: classId,
       class_name: String(b.class_name ?? prevData.class_name ?? '').trim(),
       subject_id: String(b.subject_id ?? prevData.subject_id ?? '').trim(),
       subject_name: subjectName,
       book_name: bookName,
+      syllabus_title: syllabusTitle || bookName,
+      syllabus_type: String(b.syllabus_type ?? prevData.syllabus_type ?? '').trim(),
       author_name: String(b.author_name ?? prevData.author_name ?? '').trim(),
       academic_year: String(b.academic_year ?? prevData.academic_year ?? '').trim(),
       cover_page_url: normalizeStorageRef(String(b.cover_page_url ?? prevData.cover_page_url ?? '')),
       book_pdf_url: normalizeStorageRef(String(b.book_pdf_url ?? prevData.book_pdf_url ?? '')),
       book_pdf_name: String(b.book_pdf_name ?? prevData.book_pdf_name ?? '').trim(),
-      syllabus_pdf_url: normalizeStorageRef(String(b.syllabus_pdf_url ?? prevData.syllabus_pdf_url ?? '')),
-      syllabus_pdf_name: String(b.syllabus_pdf_name ?? prevData.syllabus_pdf_name ?? '').trim(),
+      syllabus_pdf_url: syllabusPdfUrl,
+      syllabus_pdf_name: syllabusPdfName,
       weekly_plan: String(b.weekly_plan ?? prevData.weekly_plan ?? '').trim(),
     };
 

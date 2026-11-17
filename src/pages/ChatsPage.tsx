@@ -39,6 +39,8 @@ interface ChatsPageProps {
   user: User;
   settings?: MadrasaSettings | null;
   onSettingsUpdated?: (s: MadrasaSettings) => void;
+  initialConvId?: string | null;
+  onInitialConvHandled?: () => void;
 }
 
 function isImageAttachment(url: string, name: string): boolean {
@@ -61,7 +63,13 @@ function formatChatTime(iso: string): string {
   return d.toLocaleDateString([], { day: '2-digit', month: 'short' });
 }
 
-export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettingsUpdated }) => {
+export const ChatsPage: React.FC<ChatsPageProps> = ({
+  user,
+  settings,
+  onSettingsUpdated,
+  initialConvId,
+  onInitialConvHandled,
+}) => {
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'status' | 'contacts'>('chats');
   const [conversations, setConversations] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
@@ -142,8 +150,11 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
   }, [messages.length, activeConv?.id]);
 
   const selectConv = async (conv: any) => {
-    setActiveConv(conv);
+    setActiveConv({ ...conv, unread_count: 0 });
     activeConvIdRef.current = conv.id;
+    setConversations((prev) =>
+      prev.map((c) => (c.id === conv.id && c.unread_count !== 0 ? { ...c, unread_count: 0 } : c))
+    );
     setEditingMsg(null);
     setReactionPickerMsgId(null);
     setReactionFullPickerMsgId(null);
@@ -154,17 +165,22 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
         `/api/chats/${conv.id}/messages`
       );
       setMessages(res.messages || []);
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conv.id && c.unread_count !== 0 ? { ...c, unread_count: 0 } : c))
+      );
       if (typeof res.blocked_by_me === 'boolean' || typeof res.blocked_by_other === 'boolean') {
         setActiveConv((prev: any) =>
           prev && prev.id === conv.id
             ? {
                 ...prev,
+                unread_count: 0,
                 blocked_by_me: Boolean(res.blocked_by_me),
                 blocked_by_other: Boolean(res.blocked_by_other),
               }
             : prev
         );
       }
+      window.dispatchEvent(new CustomEvent('madrasa:notifications-updated'));
     } catch (e: any) {
       setErr(e.message);
     }
@@ -177,7 +193,11 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
         apiRequest<{ chatsOpen: boolean }>('/api/chats/status'),
         apiRequest<{ statuses: any[] }>('/api/chats/statuses').catch(() => ({ statuses: [] })),
       ]);
-      setConversations(res.conversations || []);
+      const openConvId = activeConvIdRef.current;
+      const syncedConvs = (res.conversations || []).map((c) =>
+        openConvId && c.id === openConvId ? { ...c, unread_count: 0 } : c
+      );
+      setConversations(syncedConvs);
       setContacts(res.contacts || []);
       setBlockedUsers(res.blockedUsers || []);
       setStatuses(stListRes.statuses || []);
@@ -185,9 +205,9 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
         setChatsOpen(statusRes.chatsOpen);
       }
 
-      const targetId = preferConvId || activeConvIdRef.current;
+      const targetId = preferConvId || openConvId;
       if (targetId) {
-        const found = (res.conversations || []).find((c) => c.id === targetId);
+        const found = syncedConvs.find((c) => c.id === targetId);
         if (found) {
           setActiveConv(found);
           if (preferConvId) {
@@ -201,7 +221,10 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
   };
 
   useEffect(() => {
-    loadChats();
+    loadChats(initialConvId || undefined);
+    if (initialConvId) {
+      onInitialConvHandled?.();
+    }
     const timer = window.setInterval(() => {
       loadChats(undefined, true);
       if (activeConvIdRef.current) {
@@ -214,17 +237,33 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
               prev && prev.id === activeConvIdRef.current
                 ? {
                     ...prev,
+                    unread_count: 0,
                     blocked_by_me: Boolean(r.blocked_by_me),
                     blocked_by_other: Boolean(r.blocked_by_other),
                   }
                 : prev
             );
+            window.dispatchEvent(new CustomEvent('madrasa:notifications-updated'));
           })
           .catch(() => {});
       }
     }, 9000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!initialConvId) return;
+    const found = conversations.find((c) => c.id === initialConvId);
+    if (found) {
+      setSidebarTab('chats');
+      selectConv(found);
+      onInitialConvHandled?.();
+    } else {
+      loadChats(initialConvId).then(() => {
+        onInitialConvHandled?.();
+      });
+    }
+  }, [initialConvId]);
 
   // Live lookup by phone number, username, or name whenever searchQuery changes
   useEffect(() => {

@@ -27,6 +27,7 @@ import heroCampusImg from '../assets/images/gausiya_madarsa_hero_crest_179480487
 import { Language } from '../i18n/translations.ts';
 import { MadrasaSettings } from '../types.ts';
 import { MadrasaLogo } from '../components/MadrasaLogo.tsx';
+import { StudentResultLookupWidget } from '../components/StudentResultLookupWidget.tsx';
 import { downloadFeedPostCard, downloadImageFile } from '../lib/download.ts';
 
 export interface PublicHomeData {
@@ -163,6 +164,15 @@ export const HomePage: React.FC<HomePageProps> = ({
     return parsed.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
+  const scrollToCheckResult = () => {
+    const el = document.getElementById('check-result');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      onOpenCheckResult();
+    }
+  };
+
   const handleDownloadImage = async (url: string, baseName: string, key: string) => {
     if (downloadingKey) return;
     setDownloadingKey(key);
@@ -256,8 +266,8 @@ export const HomePage: React.FC<HomePageProps> = ({
             {resultsOpen && (
               <button
                 type="button"
-                onClick={onOpenCheckResult}
-                className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 whitespace-nowrap"
+                onClick={scrollToCheckResult}
+                className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 whitespace-nowrap cursor-pointer"
               >
                 <Award className="w-3.5 h-3.5 text-[#DC1726]" />
                 <span>{lang === 'ur' ? 'نتائج' : 'Check Result'}</span>
@@ -325,7 +335,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               {resultsOpen && (
                 <button
                   type="button"
-                  onClick={() => { setMobileMenuOpen(false); onOpenCheckResult(); }}
+                  onClick={() => { setMobileMenuOpen(false); scrollToCheckResult(); }}
                   className="flex-1 py-2 rounded-lg border border-neutral-200 font-semibold text-center"
                 >
                   Check Result
@@ -420,8 +430,8 @@ export const HomePage: React.FC<HomePageProps> = ({
             {resultsOpen && (
               <button
                 type="button"
-                onClick={onOpenCheckResult}
-                className="px-6 py-3 rounded-lg bg-white/95 text-[#171717] hover:bg-white text-sm font-semibold shadow-md transition-colors whitespace-nowrap shrink-0"
+                onClick={scrollToCheckResult}
+                className="px-6 py-3 rounded-lg bg-white/95 text-[#171717] hover:bg-white text-sm font-semibold shadow-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 {lang === 'ur' ? 'نتیجہ دیکھیں' : 'Check Result'}
               </button>
@@ -438,6 +448,30 @@ export const HomePage: React.FC<HomePageProps> = ({
 
         <div className="pointer-events-none absolute bottom-0 inset-x-0 h-20 bg-gradient-to-t from-[#FAFAFA] via-[#FAFAFA]/75 to-transparent" />
       </section>
+
+      {/* Inline Home Page Examination Result Lookup (Username + Password -> View / Print / PDF / PNG) */}
+      {resultsOpen && (
+        <section id="check-result" className="py-12 md:py-16 bg-neutral-100/70 border-b border-neutral-200/70">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 space-y-6">
+            <div className="text-center max-w-2xl mx-auto">
+              <div className="text-xs font-semibold tracking-widest text-[#DC1726] uppercase mb-1.5">
+                {lang === 'ur' ? 'آن لائن نتائج پورٹل' : 'Online Result Portal'}
+              </div>
+              <h2 className="text-2xl md:text-3xl font-bold text-[#171717]">
+                {lang === 'ur' ? 'اپنا نتیجہ چیک اور ڈاؤن لوڈ کریں' : 'Check, Print & Download Your Result'}
+              </h2>
+              <p className="mt-2 text-xs sm:text-sm text-[#737373]">
+                Students can log in below right from the home page using their portal username and password to view, print, or download PDF/PNG marksheets.
+              </p>
+            </div>
+            <StudentResultLookupWidget
+              settings={settings || null}
+              resultsOpen={resultsOpen}
+              compact={true}
+            />
+          </div>
+        </section>
+      )}
 
       {/* About Section */}
       <section id="about" className="py-16 md:py-24">
@@ -911,7 +945,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               Online Admission
             </button>
             {resultsOpen && (
-              <button type="button" onClick={onOpenCheckResult} className="hover:text-white underline">
+              <button type="button" onClick={scrollToCheckResult} className="hover:text-white underline cursor-pointer">
                 Check Result
               </button>
             )}
