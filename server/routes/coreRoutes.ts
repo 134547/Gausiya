@@ -703,7 +703,6 @@ router.post('/admissions/:id/approve', requireAuth, requireRole('super_admin'), 
         .from('students')
         .select('*')
         .eq('id', studentId)
-        .is('deleted_at', null)
         .maybeSingle();
       existingStudent = st;
     }
@@ -713,7 +712,18 @@ router.post('/admissions/:id/approve', requireAuth, requireRole('super_admin'), 
         .from('students')
         .select('*')
         .eq('user_id', (adm as any).auth_user_id)
-        .is('deleted_at', null)
+        .maybeSingle();
+      if (st) {
+        existingStudent = st;
+        studentId = st.id;
+      }
+    }
+
+    if (!existingStudent && (adm as any).username) {
+      const { data: st } = await admin
+        .from('students')
+        .select('*')
+        .eq('username', (adm as any).username)
         .maybeSingle();
       if (st) {
         existingStudent = st;
@@ -736,6 +746,7 @@ router.post('/admissions/:id/approve', requireAuth, requireRole('super_admin'), 
         approval_status: 'approved',
         admission_no: assignedAdmissionNo,
         admission_number: assignedAdmissionNo,
+        deleted_at: null,
         approved_by: req.user!.id,
         approved_at: nowIso,
       });
@@ -749,6 +760,18 @@ router.post('/admissions/:id/approve', requireAuth, requireRole('super_admin'), 
       assignedAdmissionNo = String(adm.admission_no || '').startsWith('REF-')
         ? codes.officialAdmissionNo
         : adm.admission_no;
+
+      if (assignedAdmissionNo) {
+        const { data: dupAdmNo } = await admin
+          .from('students')
+          .select('id')
+          .eq('admission_no', assignedAdmissionNo)
+          .limit(1)
+          .maybeSingle();
+        if (dupAdmNo) {
+          assignedAdmissionNo = codes.officialAdmissionNo;
+        }
+      }
 
       const createdStudent = await safeStudentInsert(admin, {
         student_code: codes.studentCode,
@@ -1000,7 +1023,7 @@ router.get('/students', requireAuth, async (req: AuthRequest, res) => {
 
   let q = admin
     .from('students')
-    .select('*, classes(name), academic_sessions(name)')
+    .select('*, classes(name, code, room_no, class_teacher_id, teachers(full_name)), academic_sessions(name)')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
@@ -1034,6 +1057,8 @@ router.get('/students', requireAuth, async (req: AuthRequest, res) => {
   const students = resolved.map((st: any) => ({
     ...st,
     class_name: st.classes?.name || 'Unassigned',
+    class_code: st.classes?.code || '',
+    class_teacher_name: st.classes?.teachers?.full_name || '',
     session_name: st.academic_sessions?.name || '',
   }));
   return res.json({ students });
@@ -1735,15 +1760,26 @@ router.get('/classes', requireAuth, async (_req, res) => {
   const admin = requireSupabaseAdmin(res);
   if (!admin) return;
 
-  const [{ data: classesRaw }, { data: studentsRaw }, { data: csRaw }] = await Promise.all([
+  const [{ data: classesRaw }, { data: studentsRaw }, { data: csRaw }, { data: taRaw }] = await Promise.all([
     admin.from('classes').select('*, teachers(full_name), academic_sessions(name)').is('deleted_at', null).order('code', { ascending: true }),
     admin.from('students').select('class_id').is('deleted_at', null).eq('status', 'active'),
     admin.from('class_subjects').select('*, subjects!inner(name, code, deleted_at), teachers(full_name)').is('subjects.deleted_at', null),
+    admin.from('teacher_assignments').select('class_id, is_class_teacher, teachers(full_name, deleted_at)'),
   ]);
 
   const counts = new Map<string, number>();
   for (const s of studentsRaw || []) {
     if (s.class_id) counts.set(s.class_id, (counts.get(s.class_id) || 0) + 1);
+  }
+
+  const assignedTeacherByClass = new Map<string, string>();
+  for (const ta of taRaw || []) {
+    const tName = (ta as any).teachers?.full_name;
+    const tDeleted = (ta as any).teachers?.deleted_at;
+    if (!ta.class_id || !tName || tDeleted) continue;
+    if (ta.is_class_teacher || !assignedTeacherByClass.has(ta.class_id)) {
+      assignedTeacherByClass.set(ta.class_id, tName);
+    }
   }
 
   const classSubjects = (csRaw || []).map((cs: any) => ({
@@ -1755,7 +1791,7 @@ router.get('/classes', requireAuth, async (_req, res) => {
 
   const classes = (classesRaw || []).map((c: any) => ({
     ...c,
-    class_teacher_name: c.teachers?.full_name || 'Unassigned',
+    class_teacher_name: c.teachers?.full_name || assignedTeacherByClass.get(c.id) || 'Unassigned',
     session_name: c.academic_sessions?.name || '',
     student_count: counts.get(c.id) || 0,
     subjects: classSubjects.filter((cs) => cs.class_id === c.id),

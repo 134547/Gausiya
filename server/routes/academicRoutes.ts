@@ -450,7 +450,7 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
 
   let q = admin
     .from('results')
-    .select('*, students!inner(full_name, student_code, admission_no, father_name, photo_url, deleted_at), classes(name), examinations!inner(name, start_date, results_published, academic_session_id, deleted_at)')
+    .select('*, students!inner(full_name, student_code, admission_no, father_name, photo_url, deleted_at), classes(name), examinations!inner(name, start_date, results_published, academic_session_id, deleted_at, academic_sessions(name))')
     .is('students.deleted_at', null)
     .is('examinations.deleted_at', null)
     .order('position', { ascending: true })
@@ -547,6 +547,7 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
         class_name: r.classes?.name || '',
         exam_name: r.examinations?.name || '',
         exam_date: r.examinations?.start_date || '',
+        session_name: r.examinations?.academic_sessions?.name || '',
         results_published: r.examinations?.results_published ? 1 : 0,
         subjects: marks.filter((m) => m.examination_id === r.examination_id && m.student_id === r.student_id),
         card_meta: cardMeta,
@@ -859,12 +860,26 @@ async function saveOrUpdateResultCard(
       targetExamId = sameClassExams[0].id;
       targetExamPublished = Boolean(sameClassExams[0].results_published);
     } else {
-      const { data: activeSession } = await admin
-        .from('academic_sessions')
-        .select('id')
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
+      const requestedYear = String(card_meta?.academicYear || '').trim();
+      let resolvedSessionId: string | null = null;
+      if (requestedYear) {
+        const { data: matchedSession } = await admin
+          .from('academic_sessions')
+          .select('id')
+          .ilike('name', requestedYear)
+          .limit(1)
+          .maybeSingle();
+        if (matchedSession?.id) resolvedSessionId = matchedSession.id;
+      }
+      if (!resolvedSessionId) {
+        const { data: activeSession } = await admin
+          .from('academic_sessions')
+          .select('id')
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+        resolvedSessionId = activeSession?.id || null;
+      }
 
       const publishFlag = user.role_slug === 'super_admin' ? Boolean(is_published) : false;
       const { data: newExam, error: newExamErr } = await admin
@@ -872,7 +887,7 @@ async function saveOrUpdateResultCard(
         .insert({
           name: examNameInput,
           exam_type: 'Term Exam',
-          academic_session_id: activeSession?.id || null,
+          academic_session_id: resolvedSessionId,
           class_id,
           start_date: issueDateInput,
           end_date: issueDateInput,

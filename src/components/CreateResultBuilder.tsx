@@ -15,6 +15,8 @@ import {
 import { apiRequest, uploadFile } from '../lib/api.ts';
 import { MadrasaSettings, User } from '../types.ts';
 import {
+  FIXED_RESULT_SCHOOL_ADDRESS,
+  FIXED_RESULT_SCHOOL_NAME,
   ResultCardData,
   ResultCardSubjectItem,
   ResultGradeCard,
@@ -22,6 +24,7 @@ import {
   exportResultCardPdf,
   exportResultCardPng,
 } from './ResultGradeCard.tsx';
+import { OFFICIAL_LOGO_URL } from './MadrasaLogo.tsx';
 import { PrintModal } from './PrintModal.tsx';
 
 interface SubjectRowState {
@@ -61,14 +64,11 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
   const [students, setStudents] = useState<any[]>([]);
   const [allSubjects, setAllSubjects] = useState<any[]>([]);
   const [classSubjects, setClassSubjects] = useState<any[]>([]);
+  const [dbSessions, setDbSessions] = useState<{ id: string; name: string; is_active?: boolean }[]>([]);
   const [loadingData, setLoadingData] = useState(true);
 
-  const [schoolName, setSchoolName] = useState(
-    settings?.name || 'MADRASA GHAUSIA RIZVIA ISLAMNAGAR RAMGARH'
-  );
-  const [schoolAddress, setSchoolAddress] = useState(
-    settings?.address || 'Islamnagar, Ramgarh, Palamu, Jharkhand - 822110'
-  );
+  const schoolName = FIXED_RESULT_SCHOOL_NAME;
+  const schoolAddress = FIXED_RESULT_SCHOOL_ADDRESS;
 
   const [selectedClassId, setSelectedClassId] = useState('');
   const [studentSearch, setStudentSearch] = useState('');
@@ -80,7 +80,7 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
   const [studentName, setStudentName] = useState('');
   const [division, setDivision] = useState('A');
   const [teacher, setTeacher] = useState('Class Teacher');
-  const [academicYear, setAcademicYear] = useState('2025-2026');
+  const [academicYear, setAcademicYear] = useState('');
   const [examSession, setExamSession] = useState('Annual Examination 2026');
   const [issueDate, setIssueDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [issueTime, setIssueTime] = useState(() =>
@@ -98,8 +98,19 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
 
+  const [allDbResults, setAllDbResults] = useState<any[]>(existingResults || []);
+
   // Track last populated class+editing id to avoid overwriting user edits
   const hydratedEditIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setAllDbResults((prev) => {
+      if (!existingResults || existingResults.length === 0) return prev;
+      const byId = new Map(prev.map((r) => [String(r.id), r]));
+      for (const r of existingResults) byId.set(String(r.id), r);
+      return Array.from(byId.values());
+    });
+  }, [existingResults]);
 
   useEffect(() => {
     let active = true;
@@ -108,8 +119,10 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
       apiRequest<{ classes: any[] }>('/api/classes'),
       apiRequest<{ students: any[] }>('/api/students'),
       apiRequest<{ subjects: any[]; classSubjects: any[] }>('/api/subjects'),
+      apiRequest<{ sessions: { id: string; name: string; is_active?: boolean }[] }>('/api/settings'),
+      apiRequest<{ results: any[] }>('/api/results').catch(() => ({ results: [] })),
     ])
-      .then(([clsRes, stRes, subRes]) => {
+      .then(([clsRes, stRes, subRes, settingsRes, allRes]) => {
         if (!active) return;
         const activeStudents = (stRes.students || []).filter(
           (s: any) => s.status !== 'pending' && s.status !== 'disabled'
@@ -120,13 +133,25 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
             ? (clsRes.classes || []).filter((c: any) => teacherClassIds.has(String(c.id)))
             : clsRes.classes || [];
 
+        const sessionsList = settingsRes?.sessions || [];
+        const activeSessionObj = sessionsList.find((s) => s.is_active) || sessionsList[0];
+
         setClasses(availableClasses);
         setStudents(activeStudents);
         setAllSubjects(subRes.subjects || []);
         setClassSubjects(subRes.classSubjects || []);
+        setDbSessions(sessionsList);
+        if (allRes?.results?.length) {
+          setAllDbResults(allRes.results);
+        }
 
-        if (!editingResult && availableClasses[0]) {
-          setSelectedClassId((prev) => prev || String(availableClasses[0].id));
+        if (!editingResult) {
+          if (activeSessionObj?.name) {
+            setAcademicYear((prev) => prev || activeSessionObj.name);
+          }
+          if (availableClasses[0]) {
+            setSelectedClassId((prev) => prev || String(availableClasses[0].id));
+          }
         }
       })
       .catch((e: any) => {
@@ -143,15 +168,18 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
 
   const classStudents = useMemo(() => {
     const q = studentSearch.trim().toLowerCase();
-    return students.filter((s) => {
-      if (selectedClassId && String(s.class_id || '') !== String(selectedClassId)) return false;
-      if (!q) return true;
-      return (
-        String(s.full_name || '').toLowerCase().includes(q) ||
-        String(s.student_code || '').toLowerCase().includes(q) ||
-        String(s.admission_no || '').toLowerCase().includes(q)
-      );
-    });
+    return students
+      .filter((s) => {
+        if (selectedClassId && String(s.class_id || '') !== String(selectedClassId)) return false;
+        if (!q) return true;
+        return (
+          String(s.full_name || '').toLowerCase().includes(q) ||
+          String(s.student_code || '').toLowerCase().includes(q) ||
+          String(s.admission_no || '').toLowerCase().includes(q) ||
+          String(s.admission_number || '').toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || '')));
   }, [students, selectedClassId, studentSearch]);
 
   const selectedClassObj = useMemo(
@@ -206,20 +234,17 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
     hydratedEditIdRef.current = String(editingResult.id);
 
     const meta = editingResult.card_meta || {};
+    const activeDbSessionName = (dbSessions.find((s) => s.is_active) || dbSessions[0])?.name || '';
     setSelectedClassId(String(editingResult.class_id || ''));
     setSelectedStudentId(String(editingResult.student_id || ''));
     setSelectedExamId(String(editingResult.examination_id || ''));
     setStudentSearch('');
-    setSchoolName(meta.schoolName || settings?.name || 'MADRASA GHAUSIA RIZVIA ISLAMNAGAR RAMGARH');
-    setSchoolAddress(
-      meta.schoolAddress || settings?.address || 'Islamnagar, Ramgarh, Palamu, Jharkhand - 822110'
-    );
     setAdmNo(meta.admNo || editingResult.admission_no || editingResult.student_code || '');
     setRoll(String(meta.roll ?? editingResult.position ?? 1));
     setStudentName(meta.studentName || editingResult.student_name || '');
     setDivision(meta.division || 'A');
     setTeacher(meta.teacher || 'Class Teacher');
-    setAcademicYear(meta.academicYear || '2025-2026');
+    setAcademicYear(meta.academicYear || editingResult.session_name || activeDbSessionName);
     setExamSession(meta.examSession || editingResult.exam_name || 'Annual Examination 2026');
     setIssueDate(meta.issueDate || editingResult.exam_date || new Date().toISOString().slice(0, 10));
     setIssueTime(meta.issueTime || '');
@@ -234,31 +259,43 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
       max: Number(s.total_marks || 50),
     }));
     setSubjectRows(savedSubs);
-  }, [editingResult, loadingData, settings]);
+  }, [editingResult, loadingData, dbSessions]);
 
   // Apply defaults when class changes (in Create mode)
-  const applyClassSubjects = (clsId: string, preserveScores = false) => {
+  const applyClassSubjects = (clsId: string, preserveScores = false, examObj?: any) => {
     const cls = classes.find((c) => String(c.id) === String(clsId));
     if (cls) {
-      if (cls.class_teacher_name && cls.class_teacher_name !== 'Unassigned') {
-        setTeacher(cls.class_teacher_name);
-      }
+      setTeacher(
+        cls.class_teacher_name && cls.class_teacher_name !== 'Unassigned'
+          ? cls.class_teacher_name
+          : 'Class Teacher'
+      );
       if (cls.session_name) {
         setAcademicYear(cls.session_name);
       }
     }
 
-    const mapped = classSubjects.filter((cs) => String(cs.class_id) === String(clsId));
-    const source =
-      mapped.length > 0
-        ? mapped.map((cs) => ({
-            id: String(cs.subject_id),
-            total_marks: Number(cs.total_marks || 50),
+    const examSubs: { id: string; total_marks: number }[] =
+      Array.isArray(examObj?.subjects) && examObj.subjects.length > 0
+        ? examObj.subjects.map((es: any) => ({
+            id: String(es.subject_id),
+            total_marks: Number(es.total_marks || 50),
           }))
-        : allSubjects.slice(0, 4).map((s) => ({
-            id: String(s.id),
-            total_marks: Number(s.total_marks || 50),
-          }));
+        : [];
+
+    const mapped = classSubjects.filter((cs) => String(cs.class_id) === String(clsId));
+    const source: { id: string; total_marks: number }[] =
+      examSubs.length > 0
+        ? examSubs
+        : mapped.length > 0
+          ? mapped.map((cs) => ({
+              id: String(cs.subject_id),
+              total_marks: Number(cs.total_marks || 50),
+            }))
+          : allSubjects.slice(0, 4).map((s) => ({
+              id: String(s.id),
+              total_marks: Number(s.total_marks || 50),
+            }));
 
     if (!preserveScores) {
       setSubjectRows(
@@ -272,17 +309,111 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
     }
   };
 
-  const applyStudentSelection = (stId: string, list?: any[]) => {
-    const pool = list || students;
-    const st = pool.find((s) => String(s.id) === String(stId));
+  const applyStudentSelection = (stId: string, list?: any[], overrideExamId?: string) => {
+    const pool = list && list.length > 0 ? list : students;
+    const st = pool.find((s) => String(s.id) === String(stId)) || students.find((s) => String(s.id) === String(stId));
     if (!st) return;
+
+    const targetClassId = String(st.class_id || selectedClassId || '');
+    const classChanged = Boolean(targetClassId && targetClassId !== String(selectedClassId));
+    if (classChanged) {
+      setSelectedClassId(targetClassId);
+    }
+
+    const cls = classes.find((c) => String(c.id) === targetClassId) || null;
+    const matchingClassExams = exams.filter((e) => !targetClassId || String(e.class_id) === targetClassId);
+    const studentSavedResults = allDbResults.filter((r) => String(r.student_id) === String(st.id));
+    const classSavedResults = allDbResults.filter((r) => targetClassId && String(r.class_id) === targetClassId);
+
+    // Resolve existing exam for this student/class from DB
+    const requestedExamId = overrideExamId !== undefined ? overrideExamId : selectedExamId;
+    let pickedExam =
+      (requestedExamId
+        ? matchingClassExams.find((e) => String(e.id) === String(requestedExamId))
+        : null) || null;
+
+    if (!pickedExam && matchingClassExams.length > 0) {
+      // Prefer exam matching student's academic session, or latest saved result exam, or first class exam
+      const savedExamIds = new Set(studentSavedResults.map((r) => String(r.examination_id)));
+      pickedExam =
+        matchingClassExams.find((e) => st.academic_session_id && String(e.academic_session_id) === String(st.academic_session_id)) ||
+        matchingClassExams.find((e) => savedExamIds.has(String(e.id))) ||
+        matchingClassExams[0];
+    }
+
+    const resolvedExamId = pickedExam ? String(pickedExam.id) : '';
+    const savedForExam =
+      studentSavedResults.find((r) => resolvedExamId && String(r.examination_id) === resolvedExamId) ||
+      studentSavedResults[0] ||
+      null;
+
+    // Update subjects when class changes or when marks are still untouched and exam has subjects
+    const hasEnteredMarks = subjectRows.some((r) => r.score !== '');
+    if (classChanged) {
+      applyClassSubjects(targetClassId, false, pickedExam);
+    } else if (!editingResult && !hasEnteredMarks && pickedExam?.subjects?.length) {
+      applyClassSubjects(targetClassId, false, pickedExam);
+    }
+
     setSelectedStudentId(String(st.id));
-    setAdmNo(st.admission_no || st.student_code || '');
+    setAdmNo(st.admission_number || st.admission_no || st.student_code || savedForExam?.card_meta?.admNo || '');
     setStudentName(st.full_name || '');
-    const stIdx = classStudents.findIndex((x) => String(x.id) === String(st.id));
-    setRoll(String(stIdx >= 0 ? stIdx + 1 : 1));
-    setPhoto(st.photo_url || '');
-    if (st.session_name) setAcademicYear(st.session_name);
+    setPhoto(st.photo_url || savedForExam?.card_meta?.photo || '');
+
+    // Compute deterministic Roll No within the student's class
+    const classRoster = students
+      .filter((x) => !targetClassId || String(x.class_id || '') === targetClassId)
+      .sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || '')));
+    const stIdx = classRoster.findIndex((x) => String(x.id) === String(st.id));
+    const dbRoll =
+      st.roll_no ||
+      savedForExam?.card_meta?.roll ||
+      (stIdx >= 0 ? stIdx + 1 : 1);
+    setRoll(String(dbRoll));
+
+    // Resolve Class Teacher from DB (student join -> class record -> saved result -> default)
+    const dbTeacher =
+      (cls?.class_teacher_name && cls.class_teacher_name !== 'Unassigned' ? cls.class_teacher_name : '') ||
+      (st.class_teacher_name && st.class_teacher_name !== 'Unassigned' ? st.class_teacher_name : '') ||
+      savedForExam?.card_meta?.teacher ||
+      'Class Teacher';
+    setTeacher(dbTeacher);
+
+    // Resolve Division / Section from DB
+    const dbDivision =
+      st.division ||
+      st.section ||
+      savedForExam?.card_meta?.division ||
+      classSavedResults.find((r) => r.card_meta?.division)?.card_meta?.division ||
+      cls?.division ||
+      cls?.section ||
+      'A';
+    setDivision(String(dbDivision));
+
+    // Resolve Existing Exam & Exam Session
+    setSelectedExamId(resolvedExamId);
+    if (pickedExam?.name) {
+      setExamSession(pickedExam.name);
+    } else if (savedForExam?.card_meta?.examSession || savedForExam?.exam_name) {
+      setExamSession(savedForExam.card_meta?.examSession || savedForExam.exam_name);
+    } else {
+      setExamSession(`Annual Examination ${new Date().getFullYear()}`);
+    }
+
+    // Resolve Academic Year strictly from DB sessions
+    const activeDbSessionName = (dbSessions.find((s) => s.is_active) || dbSessions[0])?.name || '';
+    const sessionFromStudentId = dbSessions.find(
+      (s) => st.academic_session_id && String(s.id) === String(st.academic_session_id)
+    )?.name;
+    const resolvedAcademicYear =
+      st.session_name ||
+      sessionFromStudentId ||
+      pickedExam?.session_name ||
+      cls?.session_name ||
+      activeDbSessionName;
+    if (resolvedAcademicYear) {
+      setAcademicYear(resolvedAcademicYear);
+    }
   };
 
   // Initialize first class subjects + first student once data finishes loading (Create mode)
@@ -292,7 +423,9 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
       applyClassSubjects(selectedClassId);
     }
     if (!selectedStudentId) {
-      const firstSt = students.find((s) => String(s.class_id || '') === String(selectedClassId));
+      const firstSt = students
+        .filter((s) => String(s.class_id || '') === String(selectedClassId))
+        .sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || '')))[0];
       if (firstSt) {
         applyStudentSelection(String(firstSt.id), students);
       }
@@ -301,16 +434,36 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
 
   const handleClassChange = (newClassId: string) => {
     setSelectedClassId(newClassId);
-    setSelectedExamId('');
-    applyClassSubjects(newClassId);
-    const matching = students.filter((s) => String(s.class_id || '') === String(newClassId));
+    if (!newClassId) {
+      setSelectedExamId('');
+      setSelectedStudentId('');
+      setAdmNo('');
+      setStudentName('');
+      setPhoto('');
+      setDivision('A');
+      setRoll('1');
+      setTeacher('Class Teacher');
+      return;
+    }
+    const matchingExams = exams.filter((e) => String(e.class_id) === String(newClassId));
+    const defaultExam = matchingExams[0] || null;
+    setSelectedExamId(defaultExam ? String(defaultExam.id) : '');
+    if (defaultExam?.name) {
+      setExamSession(defaultExam.name);
+    }
+    applyClassSubjects(newClassId, false, defaultExam);
+    const matching = students
+      .filter((s) => String(s.class_id || '') === String(newClassId))
+      .sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || '')));
     if (matching[0]) {
-      applyStudentSelection(String(matching[0].id), matching);
+      applyStudentSelection(String(matching[0].id), matching, defaultExam ? String(defaultExam.id) : '');
     } else {
       setSelectedStudentId('');
       setAdmNo('');
       setStudentName('');
       setPhoto('');
+      setDivision('A');
+      setRoll('1');
     }
   };
 
@@ -324,9 +477,11 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
     setIssueDate(new Date().toISOString().slice(0, 10));
     setIssueTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     if (selectedClassId) {
-      applyClassSubjects(selectedClassId);
+      const matchingExams = exams.filter((e) => String(e.class_id) === String(selectedClassId));
+      const defaultExam = matchingExams[0] || null;
+      applyClassSubjects(selectedClassId, false, defaultExam);
       if (classStudents[0]) {
-        applyStudentSelection(String(classStudents[0].id), classStudents);
+        applyStudentSelection(String(classStudents[0].id), classStudents, defaultExam ? String(defaultExam.id) : '');
       }
     }
   };
@@ -413,7 +568,7 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
   // Compute live dynamic rank among classmates saved in the same exam
   const liveRankInfo = useMemo(() => {
     const targetExamName = examSession.trim().toLowerCase();
-    const peers = existingResults.filter(
+    const peers = allDbResults.filter(
       (r) =>
         String(r.class_id) === String(selectedClassId) &&
         (selectedExamId
@@ -440,12 +595,13 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
       rank: idx >= 0 ? idx + 1 : 1,
       totalStudents: combined.length,
     };
-  }, [existingResults, selectedClassId, selectedExamId, examSession, selectedStudentId, stats]);
+  }, [allDbResults, selectedClassId, selectedExamId, examSession, selectedStudentId, stats]);
 
   const liveCardData: ResultCardData = useMemo(
     () => ({
       schoolName,
       schoolAddress,
+      logoUrl: settings?.logo_url || OFFICIAL_LOGO_URL,
       academicYear,
       examSession,
       issueDate,
@@ -465,6 +621,7 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
     [
       schoolName,
       schoolAddress,
+      settings?.logo_url,
       academicYear,
       examSession,
       issueDate,
@@ -649,28 +806,19 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
             </span>
           </div>
 
-          {/* 1. School Details */}
-          <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
-            <h3 className="text-xs font-extrabold uppercase tracking-wider text-white">
-              School Details
-            </h3>
-            <div>
-              <label className="block text-[11px] font-bold text-slate-200 mb-1">School Name</label>
-              <input
-                type="text"
-                value={schoolName}
-                onChange={(e) => setSchoolName(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-white/15 bg-white/10 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
-              />
+          {/* 1. School Details (Fixed Institutional Header — Read-only) */}
+          <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-white">
+                School Details
+              </h3>
+              <span className="px-2 py-0.5 rounded-full bg-white/10 text-[10px] font-semibold text-slate-300">
+                Official Fixed Header
+              </span>
             </div>
-            <div>
-              <label className="block text-[11px] font-bold text-slate-200 mb-1">Address</label>
-              <textarea
-                rows={2}
-                value={schoolAddress}
-                onChange={(e) => setSchoolAddress(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-white/15 bg-white/10 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
-              />
+            <div className="p-3 rounded-xl border border-white/10 bg-white/[0.05] space-y-1">
+              <div className="text-xs font-extrabold text-white">{schoolName}</div>
+              <div className="text-[11px] text-slate-300 leading-relaxed">{schoolAddress}</div>
             </div>
           </div>
 
@@ -690,7 +838,7 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
                 className="w-full px-3 py-2 rounded-xl border border-white/15 bg-white/10 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
               >
                 <option value="" className="text-black">
-                  -- Select Class --
+                  -- All Classes ({students.length} Students) --
                 </option>
                 {classes.map((c) => (
                   <option key={c.id} value={c.id} className="text-black">
@@ -799,14 +947,29 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
             <div className="grid grid-cols-2 gap-2.5">
               <div>
                 <label className="block text-[11px] font-bold text-slate-200 mb-1">
-                  Academic Year
+                  Academic Year (Database)
                 </label>
-                <input
-                  type="text"
+                <select
                   value={academicYear}
                   onChange={(e) => setAcademicYear(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-white/15 bg-white/10 text-xs text-white"
-                />
+                >
+                  {dbSessions.length === 0 && !academicYear && (
+                    <option value="" className="text-black">
+                      No session in database
+                    </option>
+                  )}
+                  {academicYear && !dbSessions.some((s) => s.name === academicYear) && (
+                    <option value={academicYear} className="text-black">
+                      {academicYear}
+                    </option>
+                  )}
+                  {dbSessions.map((sess) => (
+                    <option key={sess.id} value={sess.name} className="text-black">
+                      {sess.name}{sess.is_active ? ' (Active)' : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="block text-[11px] font-bold text-slate-200 mb-1">
@@ -819,6 +982,18 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
                     setSelectedExamId(eid);
                     const found = classExams.find((x) => String(x.id) === eid);
                     if (found?.name) setExamSession(found.name);
+                    if (found?.session_name) setAcademicYear(found.session_name);
+                    if (found && !editingResult && !subjectRows.some((r) => r.score !== '') && found.subjects?.length) {
+                      applyClassSubjects(selectedClassId || String(found.class_id || ''), false, found);
+                    }
+                    const savedForThisExam = allDbResults.find(
+                      (r) => String(r.student_id) === String(selectedStudentId) && String(r.examination_id) === eid
+                    );
+                    if (savedForThisExam?.card_meta) {
+                      if (savedForThisExam.card_meta.roll) setRoll(String(savedForThisExam.card_meta.roll));
+                      if (savedForThisExam.card_meta.division) setDivision(String(savedForThisExam.card_meta.division));
+                      if (savedForThisExam.card_meta.teacher) setTeacher(String(savedForThisExam.card_meta.teacher));
+                    }
                   }}
                   className="w-full px-3 py-2 rounded-xl border border-white/15 bg-white/10 text-xs text-white"
                 >

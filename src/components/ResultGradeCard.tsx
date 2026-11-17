@@ -3,6 +3,13 @@ import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { resolveImageDataUrl, sanitizeFileName } from '../lib/download.ts';
 
+import { OFFICIAL_LOGO_URL } from './MadrasaLogo.tsx';
+
+export const FIXED_RESULT_SCHOOL_NAME = 'MADARSA GAUSIYA RIZVIYA ISLAMNAGAR';
+export const FIXED_RESULT_SCHOOL_ADDRESS =
+  'Islamnagar, Ramgarh, (P.S.) Ramgarh, (P.O.) Ramgarh, Palamu, Jharkhand, India, 822108';
+export const FIXED_RESULT_URDU_NAME = 'مدرسہ غوثیہ رضویہ اسلام نگر';
+
 export interface ResultCardSubjectItem {
   subject_id?: string;
   subject_code?: string;
@@ -14,6 +21,7 @@ export interface ResultCardSubjectItem {
 export interface ResultCardData {
   schoolName: string;
   schoolAddress: string;
+  logoUrl?: string;
   academicYear: string;
   examSession: string;
   issueDate: string;
@@ -128,12 +136,10 @@ export function buildCardDataFromSavedResult(result: any, settings: any): Result
   }));
 
   return {
-    schoolName: meta.schoolName || settings?.name || 'MADRASA GHAUSIA RIZVIA ISLAMNAGAR RAMGARH',
-    schoolAddress:
-      meta.schoolAddress ||
-      settings?.address ||
-      'Islamnagar, Ramgarh, Palamu, Jharkhand - 822110',
-    academicYear: meta.academicYear || '2025-2026',
+    schoolName: FIXED_RESULT_SCHOOL_NAME,
+    schoolAddress: FIXED_RESULT_SCHOOL_ADDRESS,
+    logoUrl: settings?.logo_url || OFFICIAL_LOGO_URL,
+    academicYear: meta.academicYear || result?.session_name || '',
     examSession: meta.examSession || result?.exam_name || 'Annual Examination',
     issueDate:
       meta.issueDate ||
@@ -273,6 +279,7 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
   }, [data.photo]);
 
   const examHeadline = `${(data.className || '-').toUpperCase()} ${(data.examSession || 'ANNUAL EXAMINATION').toUpperCase()}`;
+  const logoSrc = (data.logoUrl || '').trim() || OFFICIAL_LOGO_URL;
 
   return (
     <div
@@ -281,22 +288,50 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
       className="w-full max-w-[1060px] mx-auto bg-white text-black p-5 sm:p-6 border-2 border-[#111] shadow-sm"
       style={{ fontFamily: "'Inter', 'Plus Jakarta Sans', sans-serif" }}
     >
-      {/* Top Institution Header */}
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-3 border-b-2 border-black pb-2.5">
-        <div className="text-xs leading-relaxed font-bold">
-          <div>Academic Year: {data.academicYear || '2025-2026'}</div>
-        </div>
-        <div className="text-center">
-          <h2 className="m-0 text-xl sm:text-2xl font-extrabold uppercase tracking-tight text-black">
-            {data.schoolName || 'MADRASA GHAUSIA RIZVIA ISLAMNAGAR RAMGARH'}
+      {/* Top Institution Header matching Official Madrasa Letterhead */}
+      <div className="grid grid-cols-[72px_1fr_72px] sm:grid-cols-[100px_1fr_100px] items-center gap-3 sm:gap-5 border-b-2 border-[#C9A227] pb-3.5">
+        {/* Left: Balancing spacer so header stays centered */}
+        <div aria-hidden="true" className="w-[72px] sm:w-[100px]" />
+
+        {/* Center: Arabic Bismillah, Urdu Title, English Title & Address */}
+        <div className="text-center px-1">
+          <div
+            className="text-sm sm:text-base font-bold text-[#1E3A8A] leading-snug"
+            dir="rtl"
+          >
+            بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيْمِ
+          </div>
+          <h2
+            className="urdu-text m-0 mt-1 text-xl sm:text-2xl font-extrabold text-[#111827] leading-snug"
+            dir="rtl"
+          >
+            {FIXED_RESULT_URDU_NAME}
           </h2>
-          <div className="text-xs font-semibold mt-1 text-[#111]">
-            {data.schoolAddress || 'Islamnagar, Ramgarh, Palamu, Jharkhand - 822110'}
+          <div className="mt-1 text-xs sm:text-sm font-extrabold uppercase tracking-wider text-[#1E3A8A]">
+            {FIXED_RESULT_SCHOOL_NAME}
+          </div>
+          <div className="mt-0.5 text-[11px] sm:text-xs font-medium text-[#1f2937] leading-snug">
+            {FIXED_RESULT_SCHOOL_ADDRESS}
           </div>
         </div>
-        <div className="text-xs leading-relaxed font-bold sm:text-right">
-          <div>Issued Date: {data.issueDate || '--/--/----'}</div>
-          <div>{data.issueTime || ''}</div>
+
+        {/* Right: Official Madrasa Logo */}
+        <div className="w-[72px] sm:w-[100px] h-[80px] sm:h-[96px] flex items-center justify-center mx-auto">
+          <img
+            src={logoSrc}
+            alt="Madrasa Ghausia Razvia Logo"
+            referrerPolicy="no-referrer"
+            className="w-[68px] sm:w-[92px] h-[68px] sm:h-[92px] object-contain select-none"
+          />
+        </div>
+      </div>
+
+      {/* Academic Year & Issue Timestamp Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-[#111] py-2 border-b border-neutral-300">
+        <div>Academic Year: {data.academicYear || '—'}</div>
+        <div>
+          Issued Date: {data.issueDate || '--/--/----'}
+          {data.issueTime ? ` · ${data.issueTime}` : ''}
         </div>
       </div>
 
@@ -308,31 +343,37 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
         {examHeadline}
       </div>
 
-      {/* Student Metadata & Photo */}
-      <div className="grid grid-cols-[1fr_auto] gap-3 border-2 border-[#111] border-b-0">
-        <div className="px-3 py-2.5 text-sm leading-[1.85]">
+      {/* Student Metadata + Student Photo */}
+      <div className="border-2 border-[#111] border-b-0 px-3.5 py-2.5 grid grid-cols-[1fr_90px] sm:grid-cols-[1fr_104px] gap-4 items-center">
+        <div className="text-sm leading-[1.85] grid grid-cols-1 sm:grid-cols-2 gap-x-5">
           <div>
-            <b className="inline-block min-w-[140px] sm:min-w-[175px]">Adm No:</b>{' '}
+            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Adm No:</b>{' '}
             <span>{data.admNo || '-'}</span>
           </div>
           <div>
-            <b className="inline-block min-w-[140px] sm:min-w-[175px]">Name:</b>{' '}
-            <span>{data.studentName || 'Select Student'}</span>
-          </div>
-          <div>
-            <b className="inline-block min-w-[140px] sm:min-w-[175px]">Standard:</b>{' '}
+            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Standard:</b>{' '}
             <span>{data.className || '-'}</span>
           </div>
           <div>
-            <b className="inline-block min-w-[140px] sm:min-w-[175px]">Division:</b>{' '}
+            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Name:</b>{' '}
+            <span>{data.studentName || 'Select Student'}</span>
+          </div>
+          <div>
+            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Division:</b>{' '}
             <span>{data.division || 'A'}</span>
           </div>
           <div>
-            <b className="inline-block min-w-[140px] sm:min-w-[175px]">Enrl. No:</b>{' '}
+            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Roll No:</b>{' '}
             <span>{data.roll || 1}</span>
           </div>
+          <div>
+            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Class Teacher:</b>{' '}
+            <span>{data.teacher || 'Class Teacher'}</span>
+          </div>
         </div>
-        <div className="w-[120px] sm:w-[130px] h-[145px] sm:h-[150px] border-l-2 border-[#111] flex items-center justify-center overflow-hidden bg-[#f8fafc]">
+
+        {/* Student Photo placed inside Student Metadata box */}
+        <div className="w-[86px] sm:w-[98px] h-[104px] sm:h-[118px] border border-[#111] rounded-sm flex items-center justify-center overflow-hidden bg-[#f8fafc] mx-auto">
           {safePhoto ? (
             <img
               src={safePhoto}
@@ -340,7 +381,7 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
               className="w-full h-full object-cover"
             />
           ) : (
-            <div className="text-xs font-bold text-[#64748b] tracking-wider">PHOTO</div>
+            <div className="text-[11px] font-bold text-[#64748b] tracking-wider">PHOTO</div>
           )}
         </div>
       </div>

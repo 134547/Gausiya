@@ -109,13 +109,15 @@ function stripMissingColumnsFromPayload(
 ): { nextPayload: Record<string, any>; changed: boolean } {
   const next = { ...payload };
   let changed = false;
+  const lowerMsg = (errorMessage || '').toLowerCase();
+
   for (const col of OPTIONAL_SCHEMA_COLUMNS) {
-    if (col in next && errorMessage.toLowerCase().includes(col.toLowerCase())) {
+    if (col in next && lowerMsg.includes(col.toLowerCase())) {
       delete next[col];
       changed = true;
     }
   }
-  if (!changed && (errorMessage.includes('schema cache') || errorMessage.includes('column'))) {
+  if (!changed && (lowerMsg.includes('schema cache') || lowerMsg.includes('does not exist'))) {
     for (const col of OPTIONAL_SCHEMA_COLUMNS) {
       if (col in next) {
         delete next[col];
@@ -131,23 +133,47 @@ export async function safeStudentInsert(
   payload: Record<string, any>
 ): Promise<{ id: string }> {
   let current = { ...payload };
-  for (let i = 0; i < 4; i += 1) {
+  let lastErrorMessage = '';
+  const maxAttempts = OPTIONAL_SCHEMA_COLUMNS.length + 6;
+
+  for (let i = 0; i < maxAttempts; i += 1) {
     const { data, error } = await admin.from('students').insert(current).select('id').single();
     if (!error && data?.id) return { id: data.id };
 
     const msg = error?.message || '';
+    if (msg) lastErrorMessage = msg;
+
     if (msg.includes('students_status_check') && (current.status === 'pending' || current.status === 'disabled')) {
       current = { ...current, status: 'inactive' };
       continue;
     }
+
+    if (msg.toLowerCase().includes('student_code') && msg.toLowerCase().includes('duplicate')) {
+      const year = new Date().getFullYear();
+      current = { ...current, student_code: `MGR-${year}-${Date.now().toString().slice(-4)}${crypto.randomInt(10, 99)}` };
+      continue;
+    }
+
+    if (msg.toLowerCase().includes('admission_no') && msg.toLowerCase().includes('duplicate')) {
+      const year = new Date().getFullYear();
+      current = { ...current, admission_no: `ADM-${year}-${Date.now().toString().slice(-4)}${crypto.randomInt(10, 99)}` };
+      continue;
+    }
+
+    if (msg.toLowerCase().includes('username') && msg.toLowerCase().includes('duplicate')) {
+      current = { ...current, username: null };
+      continue;
+    }
+
     const stripped = stripMissingColumnsFromPayload(current, msg);
     if (stripped.changed) {
       current = stripped.nextPayload;
       continue;
     }
+
     throw new Error(msg || 'Failed to create student record');
   }
-  throw new Error('Failed to create student record');
+  throw new Error(lastErrorMessage || 'Failed to create student record');
 }
 
 export async function safeTableUpdate(
@@ -157,12 +183,17 @@ export async function safeTableUpdate(
   payload: Record<string, any>
 ): Promise<void> {
   let current = { ...payload };
-  for (let i = 0; i < 4; i += 1) {
+  let lastErrorMessage = '';
+  const maxAttempts = OPTIONAL_SCHEMA_COLUMNS.length + 6;
+
+  for (let i = 0; i < maxAttempts; i += 1) {
     if (Object.keys(current).length === 0) return;
     const { error } = await admin.from(table).update(current).eq('id', id);
     if (!error) return;
 
     const msg = error.message || '';
+    if (msg) lastErrorMessage = msg;
+
     if (
       table === 'students' &&
       msg.includes('students_status_check') &&
@@ -178,6 +209,7 @@ export async function safeTableUpdate(
     }
     throw new Error(msg);
   }
+  if (lastErrorMessage) throw new Error(lastErrorMessage);
 }
 
 export async function safeTableUpsert(
@@ -187,7 +219,10 @@ export async function safeTableUpsert(
   onConflict?: string
 ): Promise<any> {
   let current = { ...payload };
-  for (let i = 0; i < 4; i += 1) {
+  let lastErrorMessage = '';
+  const maxAttempts = OPTIONAL_SCHEMA_COLUMNS.length + 6;
+
+  for (let i = 0; i < maxAttempts; i += 1) {
     const query = onConflict
       ? admin.from(table).upsert(current, { onConflict }).select('*').single()
       : admin.from(table).insert(current).select('*').single();
@@ -195,6 +230,8 @@ export async function safeTableUpsert(
     if (!error && data) return data;
 
     const msg = error?.message || '';
+    if (msg) lastErrorMessage = msg;
+
     const stripped = stripMissingColumnsFromPayload(current, msg);
     if (stripped.changed) {
       current = stripped.nextPayload;
@@ -202,7 +239,7 @@ export async function safeTableUpsert(
     }
     throw new Error(msg || `Failed to save ${table} record`);
   }
-  throw new Error(`Failed to save ${table} record`);
+  throw new Error(lastErrorMessage || `Failed to save ${table} record`);
 }
 
 export async function generateNextStudentCodes(admin: SupabaseClient): Promise<{
@@ -211,7 +248,7 @@ export async function generateNextStudentCodes(admin: SupabaseClient): Promise<{
 }> {
   const year = new Date().getFullYear();
   const { count } = await admin.from('students').select('id', { count: 'exact', head: true });
-  let seq = (count || 0) + 1;
+  const seq = (count || 0) + 1;
   let studentCode = `MGR-${year}-${String(seq).padStart(3, '0')}`;
   let officialAdmissionNo = `ADM-${year}-${String(seq).padStart(3, '0')}`;
 
