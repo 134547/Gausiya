@@ -69,7 +69,7 @@ function ensureStartupSync() {
 }
 
 export async function createApiApp(): Promise<express.Express> {
-  await ensureStartupSync();
+  void ensureStartupSync();
   const app = express();
   app.set('trust proxy', 1);
 
@@ -99,6 +99,12 @@ export async function createApiApp(): Promise<express.Express> {
   });
 
   app.use('/api', (err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err?.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: 'Uploaded file is too large (max 4 MB). Please upload a smaller image.',
+        code: 'FILE_TOO_LARGE',
+      });
+    }
     const isMulterOrValidation =
       err?.name === 'MulterError' ||
       (typeof err?.message === 'string' &&

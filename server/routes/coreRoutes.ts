@@ -18,6 +18,12 @@ import {
   requireRole,
 } from '../auth.ts';
 import { getAdmissionsOpen, getChatsOpen, getResultsOpen, normalizeStorageRef, sanitizeOrTerm, setAdmissionsOpen, setChatsOpen, setResultsOpen } from './publicRoutes.ts';
+import {
+  ensureStudentRole,
+  generateNextStudentCodes,
+  safeStudentInsert,
+  safeTableUpdate,
+} from '../studentProvisioning.ts';
 
 const router = Router();
 
@@ -161,18 +167,7 @@ router.get('/users', requireAuth, requireRole('super_admin'), async (_req, res) 
   const admin = requireSupabaseAdmin(res);
   if (!admin) return;
 
-  await admin
-    .from('roles')
-    .upsert(
-      {
-        name: 'Public',
-        slug: 'public',
-        description: 'Public account access to feed, notices, programs, committee, and contact information',
-      },
-      { onConflict: 'slug' }
-    );
-
-  const [{ data: profiles }, { data: roles }, { data: permissions }, { data: rolePermissions }] = await Promise.all([
+  const [{ data: profiles }, { data: rolesRaw }, { data: permissions }, { data: rolePermissions }] = await Promise.all([
     admin
       .from('profiles')
       .select(
@@ -184,6 +179,23 @@ router.get('/users', requireAuth, requireRole('super_admin'), async (_req, res) 
     admin.from('permissions').select('*').order('module', { ascending: true }),
     admin.from('role_permissions').select('role_id, permission_id'),
   ]);
+
+  let roles = rolesRaw || [];
+  if (!roles.some((r: any) => r.slug === 'public')) {
+    const { data: pubRole } = await admin
+      .from('roles')
+      .upsert(
+        {
+          name: 'Public',
+          slug: 'public',
+          description: 'Public account access to feed, notices, programs, committee, and contact information',
+        },
+        { onConflict: 'slug' }
+      )
+      .select('*')
+      .maybeSingle();
+    if (pubRole) roles = [...roles, pubRole];
+  }
 
   const resolvedProfiles = await resolveStorageUrlsInRows(profiles || [], ['photo_url']);
 
@@ -444,12 +456,129 @@ router.get('/admissions', requireAuth, requireRole('super_admin', 'committee_mem
   if (error) return res.status(500).json({ error: error.message });
 
   const resolved = await resolveStorageUrlsInRows(data || [], ['photo_url']);
-  const admissions = resolved.map((a: any) => ({
-    ...a,
-    class_name: a.classes?.name || 'Unassigned',
-    documents_json: typeof a.documents_json === 'string' ? a.documents_json : JSON.stringify(a.documents_json || []),
-  }));
+
+  // Enrich with linked student and profile (username) without exposing passwords
+  const studentIds = Array.from(new Set(resolved.map((a: any) => a.student_id).filter(Boolean)));
+  const authIds = Array.from(new Set(resolved.map((a: any) => a.auth_user_id).filter(Boolean)));
+
+  const studentMap = new Map<string, any>();
+  const profileMap = new Map<string, any>();
+
+  if (studentIds.length > 0) {
+    const { data: sts } = await admin
+      .from('students')
+      .select('id, student_code, admission_no, status, full_name, father_name, mobile, class_id, user_id')
+      .in('id', studentIds)
+      .is('deleted_at', null);
+    for (const s of sts || []) {
+      studentMap.set(s.id, s);
+      if (s.user_id && !authIds.includes(s.user_id)) authIds.push(s.user_id);
+    }
+  }
+
+  if (authIds.length > 0) {
+    const { data: profs } = await admin
+      .from('profiles')
+      .select('id, username, user_code, status')
+      .in('id', authIds)
+      .is('deleted_at', null);
+    for (const p of profs || []) {
+      profileMap.set(p.id, p);
+    }
+  }
+
+  const admissions = resolved.map((a: any) => {
+    const linkedStudent = a.student_id ? studentMap.get(a.student_id) : null;
+    const uid = a.auth_user_id || linkedStudent?.user_id || null;
+    const linkedProfile = uid ? profileMap.get(uid) : null;
+    const username = a.username || linkedProfile?.username || '';
+    const officialAdmissionNo = linkedStudent?.admission_no || a.admission_number || '';
+    const rejectionReason =
+      a.rejection_reason || (a.status === 'rejected' ? a.remarks || '' : '');
+
+    return {
+      ...a,
+      class_name: a.classes?.name || 'Unassigned',
+      documents_json: typeof a.documents_json === 'string' ? a.documents_json : JSON.stringify(a.documents_json || []),
+      username,
+      official_admission_no: officialAdmissionNo,
+      student_code: linkedStudent?.student_code || '',
+      student_status: linkedStudent?.status || '',
+      account_status: linkedProfile?.status || '',
+      approval_status: a.approval_status || a.status || 'pending',
+      rejection_reason: rejectionReason,
+      registration_date: a.created_at || a.admission_date || '',
+    };
+  });
   return res.json({ admissions });
+});
+
+router.get('/admissions/:id/details', requireAuth, requireRole('super_admin', 'committee_member'), async (req, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  const id = req.params.id;
+
+  const { data: adm, error } = await admin
+    .from('admissions')
+    .select('*, classes(name)')
+    .eq('id', id)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (error || !adm) return res.status(404).json({ error: 'Admission record not found' });
+
+  let linkedStudent: any = null;
+  if (adm.student_id) {
+    const { data: st } = await admin
+      .from('students')
+      .select('*, classes(name), academic_sessions(name)')
+      .eq('id', adm.student_id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (st) {
+      linkedStudent = {
+        ...st,
+        photo_url: await resolveStorageUrl(st.photo_url),
+        class_name: (st as any).classes?.name || 'Unassigned',
+        session_name: (st as any).academic_sessions?.name || '',
+      };
+    }
+  }
+
+  let linkedProfile: any = null;
+  const uid = (adm as any).auth_user_id || linkedStudent?.user_id || null;
+  if (uid) {
+    const { data: prof } = await admin
+      .from('profiles')
+      .select('id, user_code, username, status, full_name, mobile, created_at, last_login, roles(name, slug)')
+      .eq('id', uid)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (prof) {
+      linkedProfile = {
+        id: prof.id,
+        user_code: prof.user_code,
+        username: prof.username,
+        status: prof.status,
+        role_name: (prof as any).roles?.name || 'Student',
+        created_at: prof.created_at,
+        last_login: prof.last_login,
+      };
+    }
+  }
+
+  return res.json({
+    admission: {
+      ...adm,
+      photo_url: await resolveStorageUrl(adm.photo_url),
+      class_name: (adm as any).classes?.name || 'Unassigned',
+      username: (adm as any).username || linkedProfile?.username || '',
+      official_admission_no: linkedStudent?.admission_no || (adm as any).admission_number || '',
+      approval_status: (adm as any).approval_status || adm.status || 'pending',
+      rejection_reason: (adm as any).rejection_reason || (adm.status === 'rejected' ? adm.remarks || '' : ''),
+    },
+    student: linkedStudent,
+    account: linkedProfile,
+  });
 });
 
 router.post('/admissions', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {
@@ -547,130 +676,201 @@ router.post('/admissions/:id/approve', requireAuth, requireRole('super_admin'), 
     if (!admin) return;
     const id = req.params.id;
 
-    const { data: adm } = await admin.from('admissions').select('*').eq('id', id).is('deleted_at', null).maybeSingle();
+    const { data: adm } = await admin
+      .from('admissions')
+      .select('*')
+      .eq('id', id)
+      .is('deleted_at', null)
+      .maybeSingle();
     if (!adm) return res.status(404).json({ error: 'Admission record not found' });
 
+    // 1. Verify the application is pending
+    if (adm.status !== 'pending') {
+      return res.status(400).json({
+        error: `This admission application is already ${adm.status}. Only pending applications can be approved.`,
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const studentRole = await ensureStudentRole(admin);
+
+    // 2. Find existing linked student account (do NOT create duplicate!)
     let studentId: string | null = adm.student_id || null;
-    let assignedAdmissionNo = String(adm.admission_no || '');
-    if (!studentId) {
-      const { data: existingStudent } = await admin
+    let existingStudent: any = null;
+
+    if (studentId) {
+      const { data: st } = await admin
         .from('students')
-        .select('id, admission_no')
-        .eq('admission_no', adm.admission_no)
+        .select('*')
+        .eq('id', studentId)
         .is('deleted_at', null)
         .maybeSingle();
+      existingStudent = st;
+    }
 
-      if (existingStudent) {
-        studentId = existingStudent.id;
-        assignedAdmissionNo = existingStudent.admission_no || assignedAdmissionNo;
-        await admin.from('students').update({ status: 'active' }).eq('id', studentId);
-      } else {
-        const [{ data: activeSession }, { count: stCount }] = await Promise.all([
-          admin.from('academic_sessions').select('id').eq('is_active', true).limit(1).maybeSingle(),
-          admin.from('students').select('id', { count: 'exact', head: true }),
-        ]);
-        const year = new Date().getFullYear();
-        let studentCode = `MGR-${year}-${String((stCount || 0) + 1).padStart(3, '0')}`;
-        let studentAdmissionNo = String(adm.admission_no || '').startsWith('REF-')
-          ? `ADM-${year}-${String((stCount || 0) + 1).padStart(3, '0')}`
-          : adm.admission_no;
-        const { data: dupAdmNo } = await admin
-          .from('students')
-          .select('id')
-          .eq('admission_no', studentAdmissionNo)
-          .maybeSingle();
-        if (dupAdmNo) {
-          const suffix = Date.now().toString().slice(-4);
-          studentAdmissionNo = `ADM-${year}-${suffix}`;
-          studentCode = `MGR-${year}-${suffix}`;
-        }
-        assignedAdmissionNo = studentAdmissionNo;
-        const { data: createdStudent, error: stErr } = await admin
-          .from('students')
-          .insert({
-            student_code: studentCode,
-            admission_no: studentAdmissionNo,
-            full_name: adm.student_name,
-            father_name: adm.father_name,
-            mother_name: adm.mother_name || '',
-            dob: adm.dob || '',
-            gender: adm.gender || 'Male',
-            religion: adm.religion || 'Islam',
-            address: adm.address || '',
-            village: adm.village || '',
-            district: adm.district || 'Palamu',
-            state: adm.state || 'Jharkhand',
-            pin_code: adm.pin_code || '',
-            mobile: adm.student_mobile || adm.guardian_mobile || '',
-            class_id: adm.admission_class_id || null,
-            academic_session_id: activeSession?.id || null,
-            admission_date: adm.admission_date || new Date().toISOString().slice(0, 10),
-            photo_url: adm.photo_url || '',
-            status: 'active',
-            previous_school: adm.previous_school || '',
-            previous_class: adm.previous_class || '',
-            remarks: adm.remarks || '',
-          })
-          .select('id')
-          .single();
-
-        if (stErr || !createdStudent) throw new Error(stErr?.message || 'Failed to create student profile');
-        studentId = createdStudent.id;
-
-        const { data: existingParent } = await admin
-          .from('parents')
-          .select('id')
-          .eq('mobile', adm.guardian_mobile)
-          .is('deleted_at', null)
-          .maybeSingle();
-
-        let parentId = existingParent?.id;
-        if (!parentId) {
-          const { count: pCount } = await admin.from('parents').select('id', { count: 'exact', head: true });
-          const pCode = `PAR-${200 + (pCount || 0) + 1}`;
-          const { data: newParent } = await admin
-            .from('parents')
-            .insert({
-              parent_code: pCode,
-              full_name: adm.guardian_name,
-              mobile: adm.guardian_mobile,
-              address: adm.address || '',
-              relationship: adm.guardian_relationship || 'Father',
-              status: 'active',
-            })
-            .select('id')
-            .single();
-          parentId = newParent?.id;
-        }
-        if (parentId) {
-          await admin.from('student_guardians').upsert(
-            {
-              student_id: studentId,
-              parent_id: parentId,
-              relationship: adm.guardian_relationship || 'Father',
-              is_primary: true,
-            },
-            { onConflict: 'student_id,parent_id' }
-          );
-        }
+    if (!existingStudent && (adm as any).auth_user_id) {
+      const { data: st } = await admin
+        .from('students')
+        .select('*')
+        .eq('user_id', (adm as any).auth_user_id)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (st) {
+        existingStudent = st;
+        studentId = st.id;
       }
     }
 
-    await admin
-      .from('admissions')
-      .update({
-        status: 'approved',
-        student_id: studentId,
-        reviewed_by: req.user!.id,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq('id', id);
+    let assignedAdmissionNo = '';
+
+    if (existingStudent) {
+      // 3 & 4 & 7: Activate existing student record and assign official Admission Number if not yet assigned
+      assignedAdmissionNo = String(existingStudent.admission_no || '').trim();
+      if (!assignedAdmissionNo || assignedAdmissionNo.startsWith('REF-')) {
+        const codes = await generateNextStudentCodes(admin);
+        assignedAdmissionNo = codes.officialAdmissionNo;
+      }
+
+      await safeTableUpdate(admin, 'students', existingStudent.id, {
+        status: 'active',
+        approval_status: 'approved',
+        admission_no: assignedAdmissionNo,
+        admission_number: assignedAdmissionNo,
+        approved_by: req.user!.id,
+        approved_at: nowIso,
+      });
+      studentId = existingStudent.id;
+    } else {
+      // Legacy fallback only if an admission row was inserted without a student record
+      const [{ data: activeSession }, codes] = await Promise.all([
+        admin.from('academic_sessions').select('id').eq('is_active', true).limit(1).maybeSingle(),
+        generateNextStudentCodes(admin),
+      ]);
+      assignedAdmissionNo = String(adm.admission_no || '').startsWith('REF-')
+        ? codes.officialAdmissionNo
+        : adm.admission_no;
+
+      const createdStudent = await safeStudentInsert(admin, {
+        student_code: codes.studentCode,
+        admission_no: assignedAdmissionNo,
+        admission_number: assignedAdmissionNo,
+        username: (adm as any).username || null,
+        full_name: adm.student_name,
+        father_name: adm.father_name,
+        mother_name: adm.mother_name || '',
+        dob: adm.dob || '',
+        gender: adm.gender || 'Male',
+        religion: adm.religion || 'Islam',
+        address: adm.address || '',
+        village: adm.village || '',
+        district: adm.district || 'Palamu',
+        state: adm.state || 'Jharkhand',
+        pin_code: adm.pin_code || '',
+        mobile: adm.student_mobile || adm.guardian_mobile || '',
+        class_id: adm.admission_class_id || null,
+        academic_session_id: activeSession?.id || null,
+        admission_date: adm.admission_date || nowIso.slice(0, 10),
+        photo_url: adm.photo_url || '',
+        status: 'active',
+        approval_status: 'approved',
+        approved_by: req.user!.id,
+        approved_at: nowIso,
+        previous_school: adm.previous_school || '',
+        previous_class: adm.previous_class || '',
+        remarks: adm.remarks || '',
+        user_id: (adm as any).auth_user_id || null,
+        auth_user_id: (adm as any).auth_user_id || null,
+      });
+      studentId = createdStudent.id;
+
+      const { data: existingParent } = await admin
+        .from('parents')
+        .select('id')
+        .eq('mobile', adm.guardian_mobile)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      let parentId = existingParent?.id;
+      if (!parentId) {
+        const { count: pCount } = await admin.from('parents').select('id', { count: 'exact', head: true });
+        const pCode = `PAR-${200 + (pCount || 0) + 1}`;
+        const { data: newParent } = await admin
+          .from('parents')
+          .insert({
+            parent_code: pCode,
+            full_name: adm.guardian_name,
+            mobile: adm.guardian_mobile,
+            address: adm.address || '',
+            relationship: adm.guardian_relationship || 'Father',
+            status: 'active',
+          })
+          .select('id')
+          .single();
+        parentId = newParent?.id;
+      }
+      if (parentId) {
+        await admin.from('student_guardians').upsert(
+          {
+            student_id: studentId,
+            parent_id: parentId,
+            relationship: adm.guardian_relationship || 'Father',
+            is_primary: true,
+          },
+          { onConflict: 'student_id,parent_id' }
+        );
+      }
+    }
+
+    // 5 & 10 & 11: Activate existing Supabase profile WITHOUT changing username or password
+    const authUserId: string | null = existingStudent?.user_id || (adm as any).auth_user_id || null;
+    let studentUsername = (adm as any).username || existingStudent?.username || '';
+
+    if (authUserId) {
+      const { data: prof } = await admin
+        .from('profiles')
+        .select('id, username')
+        .eq('id', authUserId)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (prof?.username) studentUsername = prof.username;
+
+      await safeTableUpdate(admin, 'profiles', authUserId, {
+        status: 'active',
+        approval_status: 'approved',
+        role_id: studentRole.id,
+        linked_type: 'student',
+        linked_id: studentId,
+        approved_by: req.user!.id,
+        approved_at: nowIso,
+      });
+
+      await admin.from('notifications').insert({
+        user_id: authUserId,
+        type: 'admission',
+        title: 'Admission Approved!',
+        message: `Congratulations ${adm.student_name}! Your admission has been approved. Official Admission No: ${assignedAdmissionNo}. Your Student Dashboard is now unlocked.`,
+        link_module: 'dashboard',
+        reference_id: studentId,
+      });
+    }
+
+    // 6, 8, 9: Mark admission approved with Super Admin ID and timestamp
+    await safeTableUpdate(admin, 'admissions', id, {
+      status: 'approved',
+      approval_status: 'approved',
+      student_id: studentId,
+      admission_number: assignedAdmissionNo,
+      reviewed_by: req.user!.id,
+      reviewed_at: nowIso,
+      approved_by: req.user!.id,
+      approved_at: nowIso,
+    });
 
     await notifyRoles(
       ['super_admin'],
       'student',
       'Admission Approved',
-      `Student profile activated for ${adm.student_name} (Ref: ${adm.admission_no}, Admission No: ${assignedAdmissionNo}).`,
+      `Student account activated for ${adm.student_name}${studentUsername ? ` (@${studentUsername})` : ''} (Ref: ${adm.admission_no}, Admission No: ${assignedAdmissionNo}).`,
       'students',
       studentId
     );
@@ -687,6 +887,7 @@ router.post('/admissions/:id/approve', requireAuth, requireRole('super_admin'), 
       studentId,
       reference_no: adm.admission_no,
       admission_no: assignedAdmissionNo,
+      username: studentUsername,
       student_name: adm.student_name,
     });
   } catch (err: any) {
@@ -699,19 +900,84 @@ router.post('/admissions/:id/reject', requireAuth, requireRole('super_admin'), a
     const admin = requireSupabaseAdmin(res);
     if (!admin) return;
     const id = req.params.id;
-    const { remarks } = req.body as { remarks?: string };
-    const payload: Record<string, any> = {
+    const body = req.body as { rejection_reason?: string; remarks?: string };
+    const reason = String(body.rejection_reason || body.remarks || '').trim();
+
+    if (!reason) {
+      return res.status(400).json({ error: 'A rejection reason is required.' });
+    }
+
+    const { data: adm } = await admin
+      .from('admissions')
+      .select('*')
+      .eq('id', id)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (!adm) return res.status(404).json({ error: 'Admission record not found' });
+    if (adm.status !== 'pending') {
+      return res.status(400).json({
+        error: `This admission application is already ${adm.status}. Only pending applications can be rejected.`,
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // Disable linked student record if present
+    let studentId: string | null = adm.student_id || null;
+    let authUserId: string | null = (adm as any).auth_user_id || null;
+
+    if (studentId) {
+      const { data: st } = await admin
+        .from('students')
+        .select('id, user_id')
+        .eq('id', studentId)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (st?.user_id && !authUserId) authUserId = st.user_id;
+
+      await safeTableUpdate(admin, 'students', studentId, {
+        status: 'disabled',
+        approval_status: 'rejected',
+        rejected_by: req.user!.id,
+        rejected_at: nowIso,
+        rejection_reason: reason,
+      });
+    }
+
+    // Disable linked Supabase login profile so login remains blocked
+    if (authUserId) {
+      await safeTableUpdate(admin, 'profiles', authUserId, {
+        status: 'disabled',
+        approval_status: 'rejected',
+        rejected_by: req.user!.id,
+        rejected_at: nowIso,
+        rejection_reason: reason,
+      });
+    }
+
+    await safeTableUpdate(admin, 'admissions', id, {
       status: 'rejected',
+      approval_status: 'rejected',
+      rejection_reason: reason,
+      remarks: reason,
       reviewed_by: req.user!.id,
-      reviewed_at: new Date().toISOString(),
-    };
-    if (remarks !== undefined) payload.remarks = remarks;
-    const { error } = await admin.from('admissions').update(payload).eq('id', id);
-    if (error) return res.status(400).json({ error: error.message });
-    await logActivity(req.user!, 'ADMISSION_REJECTED', 'admissions', id, `Rejected admission ${id}`, req.ip);
-    return res.json({ success: true });
-  } catch {
-    return res.status(500).json({ error: 'Failed to reject admission' });
+      reviewed_at: nowIso,
+      rejected_by: req.user!.id,
+      rejected_at: nowIso,
+    });
+
+    await logActivity(
+      req.user!,
+      'ADMISSION_REJECTED',
+      'admissions',
+      id,
+      `Rejected Ref ${adm.admission_no} for ${adm.student_name}. Reason: ${reason}`,
+      req.ip
+    );
+    return res.json({ success: true, rejection_reason: reason });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to reject admission' });
   }
 });
 

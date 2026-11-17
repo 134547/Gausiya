@@ -101,19 +101,58 @@ export async function uploadFileToSupabaseStorage(
   };
 }
 
+const SIGNED_URL_CACHE_TTL_MS = 45 * 60 * 1000;
+const MAX_SIGNED_URL_CACHE_SIZE = 2000;
+const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+function getCachedSignedUrl(key: string): string | null {
+  const hit = signedUrlCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt <= Date.now()) {
+    signedUrlCache.delete(key);
+    return null;
+  }
+  return hit.url;
+}
+
+function setCachedSignedUrl(key: string, url: string) {
+  if (signedUrlCache.size >= MAX_SIGNED_URL_CACHE_SIZE) {
+    const firstKey = signedUrlCache.keys().next().value;
+    if (firstKey) signedUrlCache.delete(firstKey);
+  }
+  signedUrlCache.set(key, { url, expiresAt: Date.now() + SIGNED_URL_CACHE_TTL_MS });
+}
+
+function parseSupabaseStorageRef(value: string): { bucket: string; objectPath: string } | null {
+  if (!value.startsWith('supabase://')) return null;
+  const rest = value.slice('supabase://'.length);
+  const slashIdx = rest.indexOf('/');
+  if (slashIdx <= 0) return null;
+  return {
+    bucket: rest.slice(0, slashIdx),
+    objectPath: rest.slice(slashIdx + 1),
+  };
+}
+
 export async function resolveStorageUrl(value: string | null | undefined): Promise<string> {
   if (!value) return '';
   if (!value.startsWith('supabase://') || !supabaseAdmin) return value;
-  const rest = value.slice('supabase://'.length);
-  const slashIdx = rest.indexOf('/');
-  if (slashIdx <= 0) return value;
-  const bucket = rest.slice(0, slashIdx);
-  const objectPath = rest.slice(slashIdx + 1);
-  if (PUBLIC_BUCKETS.has(bucket)) {
-    return supabaseAdmin.storage.from(bucket).getPublicUrl(objectPath).data.publicUrl;
+  const parsed = parseSupabaseStorageRef(value);
+  if (!parsed) return value;
+
+  if (PUBLIC_BUCKETS.has(parsed.bucket)) {
+    return supabaseAdmin.storage.from(parsed.bucket).getPublicUrl(parsed.objectPath).data.publicUrl;
   }
-  const { data } = await supabaseAdmin.storage.from(bucket).createSignedUrl(objectPath, 3600);
-  return data?.signedUrl || value;
+
+  const cached = getCachedSignedUrl(value);
+  if (cached) return cached;
+
+  const { data } = await supabaseAdmin.storage.from(parsed.bucket).createSignedUrl(parsed.objectPath, 3600);
+  if (data?.signedUrl) {
+    setCachedSignedUrl(value, data.signedUrl);
+    return data.signedUrl;
+  }
+  return value;
 }
 
 export async function resolveStorageUrlsInRows<T extends Record<string, any>>(
@@ -121,15 +160,70 @@ export async function resolveStorageUrlsInRows<T extends Record<string, any>>(
   fields: string[] = ['photo_url', 'attachment_url', 'featured_photo', 'logo_url']
 ): Promise<T[]> {
   if (!rows.length || !supabaseAdmin) return rows;
-  return Promise.all(
-    rows.map(async (row) => {
-      const next = { ...row };
-      for (const f of fields) {
-        if (typeof next[f] === 'string' && next[f].startsWith('supabase://')) {
-          (next as any)[f] = await resolveStorageUrl(next[f]);
-        }
+
+  const resolvedMap = new Map<string, string>();
+  const pendingByBucket = new Map<string, Set<string>>();
+
+  for (const row of rows) {
+    for (const f of fields) {
+      const val = row?.[f];
+      if (typeof val !== 'string' || !val.startsWith('supabase://')) continue;
+      if (resolvedMap.has(val)) continue;
+
+      const parsed = parseSupabaseStorageRef(val);
+      if (!parsed) continue;
+
+      if (PUBLIC_BUCKETS.has(parsed.bucket)) {
+        resolvedMap.set(
+          val,
+          supabaseAdmin.storage.from(parsed.bucket).getPublicUrl(parsed.objectPath).data.publicUrl
+        );
+        continue;
       }
-      return next;
-    })
-  );
+
+      const cached = getCachedSignedUrl(val);
+      if (cached) {
+        resolvedMap.set(val, cached);
+        continue;
+      }
+
+      if (!pendingByBucket.has(parsed.bucket)) {
+        pendingByBucket.set(parsed.bucket, new Set());
+      }
+      pendingByBucket.get(parsed.bucket)!.add(parsed.objectPath);
+    }
+  }
+
+  if (pendingByBucket.size > 0) {
+    await Promise.all(
+      Array.from(pendingByBucket.entries()).map(async ([bucket, pathSet]) => {
+        const paths = Array.from(pathSet);
+        try {
+          const { data } = await supabaseAdmin!.storage.from(bucket).createSignedUrls(paths, 3600);
+          for (const item of data || []) {
+            if (item?.path && item?.signedUrl) {
+              const refKey = `supabase://${bucket}/${item.path}`;
+              setCachedSignedUrl(refKey, item.signedUrl);
+              resolvedMap.set(refKey, item.signedUrl);
+            }
+          }
+        } catch {
+          // fallback leaves original ref or resolves individually later
+        }
+      })
+    );
+  }
+
+  return rows.map((row) => {
+    let changed = false;
+    const next: Record<string, any> = { ...row };
+    for (const f of fields) {
+      const val = next[f];
+      if (typeof val === 'string' && resolvedMap.has(val)) {
+        next[f] = resolvedMap.get(val);
+        changed = true;
+      }
+    }
+    return (changed ? next : row) as T;
+  });
 }

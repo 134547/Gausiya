@@ -383,10 +383,14 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       : { data: null };
 
     const student = studentRaw
-      ? { ...(await resolveStorageUrlsInRows([studentRaw], ['photo_url']))[0], class_name: (studentRaw as any).classes?.name || 'Unassigned' }
+      ? {
+          ...(await resolveStorageUrlsInRows([studentRaw], ['photo_url']))[0],
+          class_name: (studentRaw as any).classes?.name || 'Unassigned',
+          username: (studentRaw as any).username || user.username,
+        }
       : undefined;
 
-    const [attRes, hwRes, resultsRes, noticesRes] = await Promise.all([
+    const [attRes, hwRes, resultsRes, noticesRes, admRes, ocRes] = await Promise.all([
       stId ? admin.from('attendance').select('status').eq('student_id', stId) : Promise.resolve({ data: [] }),
       student?.class_id
         ? admin
@@ -412,6 +416,25 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(20),
+      stId
+        ? admin
+            .from('admissions')
+            .select('id, admission_no, admission_date, status, reviewed_at, remarks, created_at')
+            .eq('student_id', stId)
+            .is('deleted_at', null)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      student?.class_id
+        ? admin
+            .from('online_classes')
+            .select('id, title, scheduled_at, status, meeting_link, subjects(name)')
+            .eq('class_id', student.class_id)
+            .is('deleted_at', null)
+            .order('scheduled_at', { ascending: false })
+            .limit(5)
+        : Promise.resolve({ data: [] }),
     ]);
 
     const attList = attRes.data || [];
@@ -439,16 +462,51 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       exam_name: r.examinations?.name || '',
     }));
 
+    const onlineClasses = (ocRes.data || []).map((oc: any) => ({
+      id: oc.id,
+      title: oc.title,
+      scheduled_at: oc.scheduled_at,
+      status: oc.status,
+      meeting_link: oc.meeting_link || '',
+      subject_name: oc.subjects?.name || '',
+    }));
+
+    const admissionRow: any = (admRes as any)?.data || null;
+    const admissionDetails = admissionRow
+      ? {
+          id: admissionRow.id,
+          reference_no: admissionRow.admission_no,
+          official_admission_no: student?.admission_no || '',
+          admission_date: admissionRow.admission_date || student?.admission_date || '',
+          status: admissionRow.status || 'approved',
+          approved_at: admissionRow.reviewed_at || '',
+          remarks: admissionRow.remarks || '',
+        }
+      : {
+          reference_no: '',
+          official_admission_no: student?.admission_no || '',
+          admission_date: student?.admission_date || '',
+          status: student?.status === 'active' ? 'approved' : student?.status || 'approved',
+          approved_at: '',
+          remarks: '',
+        };
+
     return res.json({
       role: 'student',
       activeSession: activeSession?.name || '2026-2027',
       student,
+      admissionDetails,
+      feeStatus: {
+        status: 'Madrasa Sponsored / Active Enrollment',
+        note: 'No pending dues recorded. Contact Madrasa Office for scholarship or receipt inquiries.',
+      },
       attendanceSummary: {
         ...attStats,
         percentage: attStats.total > 0 ? Math.round(((attStats.present + attStats.late) / attStats.total) * 100) : 0,
       },
       recentHomework,
       recentResults,
+      onlineClasses,
       notices,
       committeeMembers,
     });

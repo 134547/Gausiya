@@ -15,7 +15,7 @@ export interface UploadedAssetResult {
   provider: 'imgbb' | 'supabase';
 }
 
-const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif', '.jfif', '.heic', '.heif']);
 
 function isImageAsset(mimetype: string, originalName: string): boolean {
   if (mimetype.startsWith('image/')) return true;
@@ -55,7 +55,7 @@ export async function uploadImageToImgbb(
   const response = await fetch(`https://api.imgbb.com/1/upload?key=${encodeURIComponent(apiKey)}`, {
     method: 'POST',
     body: formData,
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(15000),
   });
 
   const payload = (await response.json().catch(() => null)) as any;
@@ -92,12 +92,25 @@ export async function saveUploadedAsset(options: {
 
   if (isImageAsset(mimetype, originalName)) {
     if (isImgbbConfigured()) {
-      const imgbb = await uploadImageToImgbb(buffer, originalName, mimetype);
-      return {
-        url: imgbb.url,
-        storedRef: imgbb.url,
-        provider: 'imgbb',
-      };
+      try {
+        const imgbb = await uploadImageToImgbb(buffer, originalName, mimetype);
+        return {
+          url: imgbb.url,
+          storedRef: imgbb.url,
+          provider: 'imgbb',
+        };
+      } catch (imgbbErr: any) {
+        if (isSupabaseServerConfigured) {
+          console.warn('ImgBB upload fallback to Supabase Storage:', imgbbErr?.message || imgbbErr);
+          const supa = await uploadFileToSupabaseStorage(bucket, buffer, originalName, mimetype, folder);
+          return {
+            url: supa.resolvedUrl,
+            storedRef: supa.storedRef,
+            provider: 'supabase',
+          };
+        }
+        throw imgbbErr;
+      }
     }
 
     if (isSupabaseServerConfigured) {

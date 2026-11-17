@@ -12,6 +12,7 @@ import {
   UserCheck,
   Users,
   UsersRound,
+  Video,
 } from 'lucide-react';
 import {
   Bar,
@@ -185,13 +186,94 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
   // ==================== STUDENT DASHBOARD ====================
   if (data.role === 'student') {
     const att = data.attendanceSummary || { percentage: 0, present: 0, absent: 0, late: 0, on_leave: 0, total: 0 };
+    const st = data.student || {};
+    const adm = data.admissionDetails || {};
+    const fee = data.feeStatus || { status: 'Active Enrollment', note: '' };
     return (
       <div className="space-y-6">
+        {/* Student Profile & Admission Details Header */}
+        <div className="bg-white rounded-xl border border-neutral-200 p-5 shadow-xs">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-4">
+              {st.photo_url ? (
+                <img
+                  src={st.photo_url}
+                  alt={st.full_name || user.full_name}
+                  referrerPolicy="no-referrer"
+                  className="w-16 h-20 rounded-xl object-cover border border-neutral-200 shrink-0"
+                />
+              ) : (
+                <div className="w-16 h-20 rounded-xl bg-[#3B0A0D] text-white flex items-center justify-center font-bold text-2xl shrink-0">
+                  {(st.full_name || user.full_name || 'S').charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-bold text-[#171717]">{st.full_name || user.full_name}</h2>
+                  <span className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-[#10B981] uppercase">
+                    {adm.status || 'Approved'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-1 text-xs text-[#525252]">
+                  <div>
+                    <span className="text-[#737373]">Username:</span>{' '}
+                    <strong className="font-mono-num text-[#0EA5E9]">@{st.username || user.username}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[#737373]">Admission No:</span>{' '}
+                    <strong className="font-mono-num text-[#171717]">
+                      {st.admission_no || adm.official_admission_no || st.student_code || '—'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-[#737373]">Class / Course:</span>{' '}
+                    <strong className="text-[#171717]">{st.class_name || 'Unassigned'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-[#737373]">Father&apos;s Name:</span>{' '}
+                    <strong className="text-[#171717]">{st.father_name || '—'}</strong>
+                  </div>
+                  {adm.reference_no && (
+                    <div>
+                      <span className="text-[#737373]">Application Ref:</span>{' '}
+                      <strong className="font-mono-num text-[#DC1726]">{adm.reference_no}</strong>
+                    </div>
+                  )}
+                  <div>
+                    <span className="text-[#737373]">Session:</span>{' '}
+                    <strong className="font-mono-num text-[#171717]">{data.activeSession}</strong>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="text-[#737373]">Fees / Enrollment:</span>{' '}
+                    <strong className="text-[#10B981]">{fee.status}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => onNavigate('profile')}
+                className="px-3.5 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50"
+              >
+                My Profile
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('results')}
+                className="px-3.5 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700"
+              >
+                My Results
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={GraduationCap} color="#0EA5E9" label="Enrolled Class" value={data.student?.class_name || 'Unassigned'} />
-          <StatCard icon={ClipboardCheck} color="#10B981" label="Attendance Rate" value={`${att.percentage}%`} sub={`${att.present}/${att.total} days`} />
-          <StatCard icon={BookMarked} color="#F59E0B" label="Assigned Homework" value={String((data.recentHomework || []).length)} />
-          <StatCard icon={Award} color="#14B8A6" label="Published Results" value={String((data.recentResults || []).length)} />
+          <StatCard icon={GraduationCap} color="#0EA5E9" label="Class / Course" value={st.class_name || 'Unassigned'} onClick={() => onNavigate('profile')} />
+          <StatCard icon={ClipboardCheck} color="#10B981" label="Attendance Rate" value={`${att.percentage}%`} sub={`${att.present}/${att.total} days`} onClick={() => onNavigate('attendance')} />
+          <StatCard icon={BookMarked} color="#F59E0B" label="Assigned Homework" value={String((data.recentHomework || []).length)} onClick={() => onNavigate('homework')} />
+          <StatCard icon={Award} color="#14B8A6" label="Examination Results" value={String((data.recentResults || []).length)} onClick={() => onNavigate('results')} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -219,15 +301,69 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
 
           <div className="bg-white rounded-xl border border-neutral-200 p-5">
             <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[#171717]">Examination Results</h3>
+              <button type="button" onClick={() => onNavigate('results')} className="text-xs font-medium text-[#DC1726] hover:underline">View Marksheet</button>
+            </div>
+            {(data.recentResults || []).length === 0 ? (
+              <p className="text-xs text-[#737373] py-4">No published examination results yet.</p>
+            ) : (
+              <div className="divide-y divide-neutral-100">
+                {data.recentResults.map((r: any) => (
+                  <div key={r.id} className="py-2.5 flex items-center justify-between text-xs">
+                    <div>
+                      <div className="font-semibold text-[#171717]">{r.exam_name}</div>
+                      <div className="text-[#737373] font-mono-num">{r.obtained_marks}/{r.total_marks} ({r.percentage}%)</div>
+                    </div>
+                    <span className={`font-bold ${r.status === 'pass' ? 'text-[#10B981]' : 'text-[#DC1726]'}`}>
+                      Grade {r.grade} · {String(r.status || '').toUpperCase()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-neutral-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[#171717] flex items-center gap-1.5">
+                <Video className="w-4 h-4 text-[#0EA5E9]" /> Online Classes
+              </h3>
+              <button type="button" onClick={() => onNavigate('online_classes')} className="text-xs font-medium text-[#DC1726] hover:underline">Open All</button>
+            </div>
+            {(data.onlineClasses || []).length === 0 ? (
+              <p className="text-xs text-[#737373] py-4">No online classes scheduled for your class.</p>
+            ) : (
+              <div className="divide-y divide-neutral-100">
+                {data.onlineClasses.map((oc: any) => (
+                  <div key={oc.id} className="py-2.5 flex items-center justify-between text-xs gap-2">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-[#171717] truncate">{oc.title}</div>
+                      <div className="text-[#737373]">{oc.subject_name || 'Class Session'} · {oc.status}</div>
+                    </div>
+                    <span className="text-[#737373] font-mono-num shrink-0">
+                      {oc.scheduled_at ? new Date(oc.scheduled_at).toLocaleDateString() : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-neutral-200 p-5">
+            <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-[#171717]">Madrasa Notices</h3>
               <button type="button" onClick={() => onNavigate('notices')} className="text-xs font-medium text-[#DC1726] hover:underline">View All</button>
             </div>
-            {(data.notices || []).map((n: any) => (
-              <div key={n.id} className="py-2.5 border-b last:border-0 border-neutral-100 flex items-center justify-between text-xs">
-                <span className="font-medium text-[#171717]">{n.title}</span>
-                <span className="text-[#737373] font-mono-num">{n.publish_date}</span>
-              </div>
-            ))}
+            {(data.notices || []).length === 0 ? (
+              <p className="text-xs text-[#737373] py-4">No notices available.</p>
+            ) : (
+              data.notices.map((n: any) => (
+                <div key={n.id} className="py-2.5 border-b last:border-0 border-neutral-100 flex items-center justify-between text-xs">
+                  <span className="font-medium text-[#171717]">{n.title}</span>
+                  <span className="text-[#737373] font-mono-num">{n.publish_date}</span>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

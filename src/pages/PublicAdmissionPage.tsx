@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
+  Download,
   FileText,
   FileUp,
+  KeyRound,
   Lock,
   LogIn,
   Mail,
@@ -20,6 +24,9 @@ import { MadrasaLogo } from '../components/MadrasaLogo.tsx';
 import { PrintModal } from '../components/PrintModal.tsx';
 import { IqrarNamaSheet } from '../components/IqrarNamaSheet.tsx';
 import { AdmissionPaperSheet } from '../components/AdmissionPaperSheet.tsx';
+import { LoginCredentialsSheet } from '../components/LoginCredentialsSheet.tsx';
+import { downloadLoginCredentialsCard } from '../lib/download.ts';
+import { compressImageForUpload, formatHttpErrorMessage, safeReadJson } from '../lib/imageUpload.ts';
 
 interface PublicAdmissionPageProps {
   settings: MadrasaSettings | null;
@@ -30,7 +37,7 @@ interface PublicAdmissionPageProps {
   onGoLogin: () => void;
 }
 
-type PrintDocMode = 'combined' | 'admission' | 'iqrar' | 'blank_iqrar';
+type PrintDocMode = 'combined' | 'admission' | 'iqrar' | 'blank_iqrar' | 'credentials';
 
 export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
   settings,
@@ -70,9 +77,11 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState<any>(null);
-  const [submittedPreviewTab, setSubmittedPreviewTab] = useState<'admission' | 'iqrar'>('admission');
+  const [submittedPreviewTab, setSubmittedPreviewTab] = useState<'credentials' | 'admission' | 'iqrar'>('credentials');
   const [printOpen, setPrintOpen] = useState(false);
   const [printMode, setPrintMode] = useState<PrintDocMode>('combined');
+  const [copiedField, setCopiedField] = useState<'username' | 'password' | null>(null);
+  const [downloadingCreds, setDownloadingCreds] = useState(false);
 
   const [statusRef, setStatusRef] = useState('');
   const [statusMobile, setStatusMobile] = useState('');
@@ -101,11 +110,17 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
     setUploading(true);
     setError('');
     try {
+      const preparedFile = await compressImageForUpload(file);
       const fd = new FormData();
-      fd.append('file', file);
+      fd.append('file', preparedFile);
       const res = await fetch('/api/public/upload', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      const { data, rawText } = await safeReadJson(res);
+      if (!res.ok) {
+        throw new Error(formatHttpErrorMessage(res.status, data, rawText, 'Upload failed'));
+      }
+      if (!data?.url) {
+        throw new Error('Server did not return uploaded image URL. Please try again.');
+      }
       setForm((prev) => ({ ...prev, photo_url: data.url }));
     } catch (e: any) {
       setError(e.message || 'Could not upload photo');
@@ -124,14 +139,52 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Submission failed');
+      const { data, rawText } = await safeReadJson(res);
+      if (!res.ok) {
+        throw new Error(formatHttpErrorMessage(res.status, data, rawText, 'Submission failed'));
+      }
+      if (!data) {
+        throw new Error('Unexpected server response while submitting application.');
+      }
       setSubmitted(data);
-      setSubmittedPreviewTab('admission');
+      setSubmittedPreviewTab('credentials');
     } catch (e: any) {
       setError(e.message || 'Failed to submit admission application');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleCopyText = async (field: 'username' | 'password', value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(field);
+      window.setTimeout(() => setCopiedField(null), 2000);
+    } catch {
+      // ignore clipboard restrictions
+    }
+  };
+
+  const handleDownloadCredentials = async () => {
+    if (!submitted) return;
+    setDownloadingCreds(true);
+    try {
+      await downloadLoginCredentialsCard({
+        institutionName: settings?.name || 'Madrasa Ghausia Razvia',
+        student_name: submitted.student_name,
+        father_name: submitted.father_name,
+        reference_no: submitted.reference_no || submitted.admission_no,
+        official_admission_no: submitted.official_admission_no || '',
+        student_code: submitted.student_code || '',
+        username: submitted.username,
+        temporary_password: submitted.temporary_password,
+        class_name: submitted.class_name,
+        admission_date: submitted.admission_date,
+      });
+    } catch {
+      // ignore
+    } finally {
+      setDownloadingCreds(false);
     }
   };
 
@@ -146,8 +199,13 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reference_no: statusRef, mobile: statusMobile }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not find admission status');
+      const { data, rawText } = await safeReadJson(res);
+      if (!res.ok) {
+        throw new Error(formatHttpErrorMessage(res.status, data, rawText, 'Could not find admission status'));
+      }
+      if (!data) {
+        throw new Error('Unexpected server response while checking admission status.');
+      }
       setStatusResult(data);
     } catch (e: any) {
       setStatusError(e.message || 'Could not check admission status');
@@ -422,7 +480,17 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
                               </>
                             )}
                           </p>
-                          {statusResult.remarks && (
+                          {statusResult.status === 'rejected' && statusResult.rejection_reason && (
+                            <p className="text-xs text-[#DC1726] mt-1 font-medium">
+                              <span className="font-bold">Rejection Reason:</span> {statusResult.rejection_reason}
+                            </p>
+                          )}
+                          {statusResult.status === 'approved' && (
+                            <p className="text-xs text-emerald-700 mt-1 font-medium">
+                              Your Student Portal Dashboard is unlocked. You may now sign in with your generated username and password.
+                            </p>
+                          )}
+                          {statusResult.remarks && statusResult.status !== 'rejected' && (
                             <p className="text-xs text-[#525252] mt-1">
                               <span className="font-semibold">Remarks:</span> {statusResult.remarks}
                             </p>
@@ -537,50 +605,150 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
               </div>
             ) : submitted ? (
               <div className="space-y-5">
-                {/* Submitted Confirmation + Print Actions for Filled Admission Paper & Iqrar Nama */}
-                <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 sm:p-8 text-center space-y-5">
-                  <div className="w-14 h-14 rounded-full bg-emerald-50 text-[#10B981] flex items-center justify-center mx-auto">
-                    <CheckCircle2 className="w-8 h-8" />
-                  </div>
-                  <div>
-                    <h1 className="text-xl font-bold text-[#171717]">
-                      Admission Application Submitted Successfully
+                {/* Registration Success Page with Immediate Account Credentials */}
+                <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 sm:p-8 space-y-6">
+                  <div className="text-center space-y-3">
+                    <div className="w-14 h-14 rounded-full bg-emerald-50 text-[#10B981] flex items-center justify-center mx-auto">
+                      <CheckCircle2 className="w-8 h-8" />
+                    </div>
+                    <h1 className="text-xl sm:text-2xl font-bold text-[#171717]">
+                      Admission Application Submitted Successfully!
                     </h1>
-                    <p className="text-xs text-[#737373] mt-1">
-                      Reference No:{' '}
-                      <span className="font-mono-num font-bold text-[#DC1726]">
-                        {submitted.reference_no || submitted.admission_no}
-                      </span>{' '}
-                      · Save this reference number. Official Admission No is assigned upon approval. You can print your Admission Form Paper and Iqrar Nama below.
+                    <p className="text-xs sm:text-sm text-[#525252] max-w-2xl mx-auto leading-relaxed bg-amber-50/80 border border-amber-200 rounded-xl p-4 text-amber-950 font-medium">
+                      Your admission application has been submitted successfully. Your student account and personal
+                      dashboard have been created. Please save your username and password carefully. You will be able
+                      to log in only after the Super Admin approves your admission.
                     </p>
                   </div>
 
-                  {/* Separate & Combined Print Options after filling the admission form */}
+                  {/* Key Application & Account Details Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs bg-neutral-50 border border-neutral-200 rounded-xl p-4">
+                    <div>
+                      <div className="text-[#737373]">Student Name</div>
+                      <div className="font-bold text-[#171717] mt-0.5 text-sm">{submitted.student_name}</div>
+                    </div>
+                    <div>
+                      <div className="text-[#737373]">Application Reference Number</div>
+                      <div className="font-bold font-mono-num text-[#DC1726] mt-0.5 text-sm">
+                        {submitted.reference_no || submitted.admission_no}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#737373]">Admission Number</div>
+                      <div className="font-bold font-mono-num text-[#171717] mt-0.5 text-sm">
+                        {submitted.official_admission_no || 'Pending Super Admin Approval'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#737373]">Class / Course</div>
+                      <div className="font-bold text-[#171717] mt-0.5 text-sm">
+                        {submitted.class_name || 'To be assigned'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#737373]">Student Code</div>
+                      <div className="font-bold font-mono-num text-[#171717] mt-0.5 text-sm">
+                        {submitted.student_code || '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#737373]">Account Status</div>
+                      <div className="mt-1">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-100 text-amber-800 font-bold text-xs">
+                          <Clock className="w-3.5 h-3.5" /> Pending Approval
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Generated Credentials Box (Displayed Once) */}
+                  <div className="border-2 border-[#DC1726]/30 bg-red-50/40 rounded-xl p-5 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-[#DC1726]">
+                        <KeyRound className="w-4 h-4" />
+                        <span>Student Portal Login Credentials (Displayed Only Once)</span>
+                      </div>
+                      <span className="text-[11px] text-[#737373]">Save or download now before leaving this page</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="bg-white border border-neutral-200 rounded-xl p-3.5 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-[#737373] font-medium">Generated Username</div>
+                          <div className="text-base font-bold font-mono-num text-[#171717] truncate mt-0.5">
+                            {submitted.username}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyText('username', submitted.username || '')}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-xs font-semibold text-[#171717] shrink-0"
+                        >
+                          {copiedField === 'username' ? <Check className="w-3.5 h-3.5 text-[#10B981]" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{copiedField === 'username' ? 'Copied' : 'Copy'}</span>
+                        </button>
+                      </div>
+
+                      <div className="bg-white border border-neutral-200 rounded-xl p-3.5 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-[#737373] font-medium">Generated Temporary Password</div>
+                          <div className="text-base font-bold font-mono-num text-[#DC1726] truncate mt-0.5">
+                            {submitted.temporary_password}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyText('password', submitted.temporary_password || '')}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-xs font-semibold text-[#171717] shrink-0"
+                        >
+                          {copiedField === 'password' ? <Check className="w-3.5 h-3.5 text-[#10B981]" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{copiedField === 'password' ? 'Copied' : 'Copy'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Required Action Buttons */}
                   <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => openPrintWithMode('credentials')}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 whitespace-nowrap"
+                    >
+                      <Printer className="w-4 h-4" /> Print Login Credentials
+                    </button>
+                    <button
+                      type="button"
+                      disabled={downloadingCreds}
+                      onClick={handleDownloadCredentials}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-[#10B981] text-white text-xs font-semibold hover:bg-emerald-600 whitespace-nowrap disabled:opacity-60"
+                    >
+                      <Download className="w-4 h-4" /> {downloadingCreds ? 'Downloading...' : 'Download Login Credentials'}
+                    </button>
                     <button
                       type="button"
                       onClick={() => openPrintWithMode('admission')}
                       className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-[#171717] text-white text-xs font-semibold hover:bg-neutral-800 whitespace-nowrap"
                     >
-                      <Printer className="w-4 h-4" /> Print Filled Admission Paper
+                      <Printer className="w-4 h-4" /> Print Admission Form
                     </button>
                     <button
                       type="button"
                       onClick={() => openPrintWithMode('iqrar')}
                       className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-[#141E30] text-white text-xs font-semibold hover:bg-slate-800 whitespace-nowrap"
                     >
-                      <Printer className="w-4 h-4" /> Print Iqrar Nama (اقرار نامہ)
+                      <Printer className="w-4 h-4" /> Print Iqrar Nama
                     </button>
                     <button
                       type="button"
-                      onClick={() => openPrintWithMode('combined')}
-                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 whitespace-nowrap"
+                      onClick={onBackHome}
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg border border-neutral-200 bg-white text-[#171717] text-xs font-semibold hover:bg-neutral-50 whitespace-nowrap"
                     >
-                      <Printer className="w-4 h-4" /> Print Both (Admission + Iqrar Nama)
+                      <ArrowLeft className="w-4 h-4" /> Back to Home
                     </button>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-center gap-3 pt-1 border-t border-neutral-100">
+                  <div className="flex flex-wrap items-center justify-center gap-3 pt-2 border-t border-neutral-100">
                     <button
                       type="button"
                       onClick={resetForAnother}
@@ -588,26 +756,30 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
                     >
                       Submit Another Application
                     </button>
-                    <button
-                      type="button"
-                      onClick={onBackHome}
-                      className="px-4 py-2 rounded-lg bg-neutral-100 text-[#171717] text-xs font-medium hover:bg-neutral-200 whitespace-nowrap"
-                    >
-                      Return to Home
-                    </button>
                   </div>
                 </div>
 
                 {/* Submitted Papers On-Screen Preview */}
                 <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-5 sm:p-8 space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-3">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setSubmittedPreviewTab('credentials')}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${
+                          submittedPreviewTab === 'credentials'
+                            ? 'bg-[#DC1726] text-white'
+                            : 'bg-neutral-100 text-[#525252] hover:bg-neutral-200'
+                        }`}
+                      >
+                        Login Credentials Slip
+                      </button>
                       <button
                         type="button"
                         onClick={() => setSubmittedPreviewTab('admission')}
                         className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${
                           submittedPreviewTab === 'admission'
-                            ? 'bg-[#DC1726] text-white'
+                            ? 'bg-[#171717] text-white'
                             : 'bg-neutral-100 text-[#525252] hover:bg-neutral-200'
                         }`}
                       >
@@ -628,15 +800,23 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        openPrintWithMode(submittedPreviewTab === 'admission' ? 'admission' : 'iqrar')
+                        openPrintWithMode(
+                          submittedPreviewTab === 'credentials'
+                            ? 'credentials'
+                            : submittedPreviewTab === 'admission'
+                              ? 'admission'
+                              : 'iqrar'
+                        )
                       }
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 text-xs font-semibold text-[#171717] hover:bg-neutral-50 whitespace-nowrap"
                     >
-                      <Printer className="w-3.5 h-3.5" /> Print This Paper
+                      <Printer className="w-3.5 h-3.5" /> Print This Document
                     </button>
                   </div>
 
-                  {submittedPreviewTab === 'admission' ? (
+                  {submittedPreviewTab === 'credentials' ? (
+                    <LoginCredentialsSheet settings={settings} data={submitted} />
+                  ) : submittedPreviewTab === 'admission' ? (
                     <AdmissionPaperSheet settings={settings} data={submitted} />
                   ) : (
                     <IqrarNamaSheet settings={settings} data={submitted} />
@@ -887,13 +1067,15 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
         open={printOpen}
         standalone
         title={
-          printMode === 'admission'
-            ? 'Online Admission Application Paper'
-            : printMode === 'iqrar'
-              ? 'Iqrar Nama (اقرار نامہ سرپرست برائے داخلہ)'
-              : printMode === 'blank_iqrar'
-                ? 'Blank Iqrar Nama (اقرار نامہ سرپرست برائے داخلہ)'
-                : 'Online Admission Application Paper & Iqrar Nama'
+          printMode === 'credentials'
+            ? 'Student Portal Login Credentials Slip'
+            : printMode === 'admission'
+              ? 'Online Admission Application Paper'
+              : printMode === 'iqrar'
+                ? 'Iqrar Nama (اقرار نامہ سرپرست برائے داخلہ)'
+                : printMode === 'blank_iqrar'
+                  ? 'Blank Iqrar Nama (اقرار نامہ سرپرست برائے داخلہ)'
+                  : 'Online Admission Application Paper & Iqrar Nama'
         }
         subtitle={
           printMode === 'blank_iqrar'
@@ -904,7 +1086,18 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
         onClose={() => setPrintOpen(false)}
         headerActions={
           submitted || (activeSection === 'status' && statusResult) ? (
-            <div className="flex items-center gap-1 p-1 bg-neutral-200/70 rounded-lg">
+            <div className="flex flex-wrap items-center gap-1 p-1 bg-neutral-200/70 rounded-lg">
+              {submitted && (
+                <button
+                  type="button"
+                  onClick={() => setPrintMode('credentials')}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold ${
+                    printMode === 'credentials' ? 'bg-white text-[#171717] shadow-xs' : 'text-[#525252]'
+                  }`}
+                >
+                  Credentials
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setPrintMode('admission')}
@@ -941,7 +1134,9 @@ export const PublicAdmissionPage: React.FC<PublicAdmissionPageProps> = ({
           ) : undefined
         }
       >
-        {printMode === 'blank_iqrar' ? (
+        {printMode === 'credentials' ? (
+          <LoginCredentialsSheet settings={settings} data={liveRecord} />
+        ) : printMode === 'blank_iqrar' ? (
           <IqrarNamaSheet settings={settings} data={{}} />
         ) : printMode === 'iqrar' ? (
           <IqrarNamaSheet settings={settings} data={liveRecord} />

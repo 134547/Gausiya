@@ -21,6 +21,10 @@ import {
   precheckLoginAttempt,
   recordFailedLoginAttempt,
 } from '../bruteForce.ts';
+import {
+  STUDENT_PENDING_LOGIN_MESSAGE,
+  STUDENT_REJECTED_LOGIN_MESSAGE,
+} from '../studentProvisioning.ts';
 
 const router = Router();
 
@@ -430,10 +434,22 @@ router.post('/login', async (req, res) => {
     await clearFailedLoginAttempts(req, 'portal_login', cleanId);
 
     const resolved = await getUserWithPermissions(signInData.user.id);
+    if (resolved.pendingStudent) {
+      return res.status(403).json({
+        error: STUDENT_PENDING_LOGIN_MESSAGE,
+        code: 'ADMISSION_PENDING',
+      });
+    }
     if (resolved.pending) {
       return res.status(403).json({
         error: 'Your account is pending Super Admin approval and role assignment.',
         code: 'ACCOUNT_PENDING',
+      });
+    }
+    if (resolved.rejected) {
+      return res.status(403).json({
+        error: STUDENT_REJECTED_LOGIN_MESSAGE,
+        code: 'ADMISSION_REJECTED',
       });
     }
     if (resolved.disabled) {

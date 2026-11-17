@@ -52,8 +52,8 @@ async function resolveExternalImagesForCapture(rootEl: HTMLElement): Promise<() 
             `/api/public/image-data?url=${encodeURIComponent(absoluteUrl)}`
           );
           if (resp.ok) {
-            const json = await resp.json();
-            dataUrl = json.dataUrl || '';
+            const json = await resp.json().catch(() => null);
+            dataUrl = json?.dataUrl || '';
           }
         }
 
@@ -271,7 +271,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({
 
   const modalContent = (
     <div className="print-modal-portal fixed inset-0 z-50 bg-black/60 overflow-y-auto p-3 sm:p-6">
-      <div className="mx-auto max-w-4xl bg-white rounded-xl shadow-2xl border border-neutral-200 overflow-hidden print-sheet">
+      <div className="mx-auto max-w-5xl bg-white rounded-xl shadow-2xl border border-neutral-200 overflow-hidden print-sheet">
         <div className="px-6 py-4 bg-neutral-50 border-b border-neutral-200 no-print space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>

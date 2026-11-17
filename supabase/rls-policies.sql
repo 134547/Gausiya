@@ -16,6 +16,7 @@ AS $$
   JOIN public.roles r ON r.id = p.role_id
   WHERE p.id = auth.uid()
     AND p.status = 'active'
+    AND p.approval_status = 'approved'
     AND p.deleted_at IS NULL
   LIMIT 1;
 $$;
@@ -71,8 +72,16 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT id FROM public.students
-  WHERE user_id = auth.uid() AND deleted_at IS NULL
+  SELECT s.id
+  FROM public.students s
+  JOIN public.profiles p ON p.id = s.user_id
+  WHERE s.user_id = auth.uid()
+    AND s.deleted_at IS NULL
+    AND s.status = 'active'
+    AND s.approval_status = 'approved'
+    AND p.status = 'active'
+    AND p.approval_status = 'approved'
+    AND p.deleted_at IS NULL
   LIMIT 1;
 $$;
 

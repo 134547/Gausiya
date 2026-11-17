@@ -450,7 +450,7 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
 
   let q = admin
     .from('results')
-    .select('*, students!inner(full_name, student_code, father_name, photo_url, deleted_at), classes(name), examinations!inner(name, start_date, results_published, deleted_at)')
+    .select('*, students!inner(full_name, student_code, admission_no, father_name, photo_url, deleted_at), classes(name), examinations!inner(name, start_date, results_published, academic_session_id, deleted_at)')
     .is('students.deleted_at', null)
     .is('examinations.deleted_at', null)
     .order('position', { ascending: true })
@@ -478,11 +478,53 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
   if (classId) q = q.eq('class_id', classId);
   if (studentId) q = q.eq('student_id', studentId);
 
-  const [{ data: resultsRaw }, { data: marksRaw }, { data: esRaw }] = await Promise.all([
-    q,
-    admin.from('marks').select('*, subjects(name, code, passing_marks)'),
-    admin.from('examination_subjects').select('examination_id, subject_id, passing_marks'),
+  const { data: resultsRaw } = await q;
+  if (!resultsRaw || resultsRaw.length === 0) {
+    return res.json({ results: [] });
+  }
+
+  const resultIds = resultsRaw.map((r: any) => r.id).filter(Boolean);
+  const examIds = Array.from(new Set(resultsRaw.map((r: any) => r.examination_id).filter(Boolean)));
+  const studentIds = Array.from(new Set(resultsRaw.map((r: any) => r.student_id).filter(Boolean)));
+
+  const [{ data: marksRaw }, { data: esRaw }, { data: metaDocs }] = await Promise.all([
+    examIds.length && studentIds.length
+      ? admin
+          .from('marks')
+          .select('*, subjects(name, code, passing_marks)')
+          .in('examination_id', examIds)
+          .in('student_id', studentIds)
+      : Promise.resolve({ data: [] as any[] }),
+    examIds.length
+      ? admin
+          .from('examination_subjects')
+          .select('examination_id, subject_id, passing_marks')
+          .in('examination_id', examIds)
+      : Promise.resolve({ data: [] as any[] }),
+    resultIds.length
+      ? admin
+          .from('documents')
+          .select('entity_id, file_url, created_at')
+          .eq('entity_type', 'general')
+          .eq('title', 'RESULT_CARD_META')
+          .in('entity_id', resultIds)
+          .order('created_at', { ascending: false })
+      : Promise.resolve({ data: [] as any[] }),
   ]);
+
+  const metaMap = new Map<string, any>();
+  for (const doc of metaDocs || []) {
+    if (metaMap.has(doc.entity_id)) continue;
+    try {
+      const parsed = JSON.parse(doc.file_url || '{}');
+      if (parsed?.photo) {
+        parsed.photo = await resolveStorageUrl(parsed.photo);
+      }
+      metaMap.set(doc.entity_id, parsed);
+    } catch {
+      // ignore invalid metadata JSON
+    }
+  }
 
   const esPassMap = new Map((esRaw || []).map((es) => [`${es.examination_id}_${es.subject_id}`, es.passing_marks]));
   const marks = (marksRaw || []).map((m: any) => ({
@@ -493,18 +535,23 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
   }));
 
   const results = await Promise.all(
-    (resultsRaw || []).map(async (r: any) => ({
-      ...r,
-      student_name: r.students?.full_name || '',
-      student_code: r.students?.student_code || '',
-      father_name: r.students?.father_name || '',
-      photo_url: await resolveStorageUrl(r.students?.photo_url),
-      class_name: r.classes?.name || '',
-      exam_name: r.examinations?.name || '',
-      exam_date: r.examinations?.start_date || '',
-      results_published: r.examinations?.results_published ? 1 : 0,
-      subjects: marks.filter((m) => m.examination_id === r.examination_id && m.student_id === r.student_id),
-    }))
+    resultsRaw.map(async (r: any) => {
+      const cardMeta = metaMap.get(r.id) || null;
+      return {
+        ...r,
+        student_name: r.students?.full_name || '',
+        student_code: r.students?.student_code || '',
+        admission_no: r.students?.admission_no || '',
+        father_name: r.students?.father_name || '',
+        photo_url: await resolveStorageUrl(r.students?.photo_url),
+        class_name: r.classes?.name || '',
+        exam_name: r.examinations?.name || '',
+        exam_date: r.examinations?.start_date || '',
+        results_published: r.examinations?.results_published ? 1 : 0,
+        subjects: marks.filter((m) => m.examination_id === r.examination_id && m.student_id === r.student_id),
+        card_meta: cardMeta,
+      };
+    })
   );
 
   return res.json({ results });
@@ -659,6 +706,426 @@ router.post('/results/publish/:examId', requireAuth, requireRole('super_admin'),
   }
   await logActivity(req.user!, flag ? 'RESULTS_PUBLISHED' : 'RESULTS_UNPUBLISHED', 'results', eid, `${flag ? 'Published' : 'Unpublished'} results for exam ${eid}`, req.ip);
   return res.json({ success: true });
+});
+
+function percentageToCardGrade(p: number): string {
+  if (p >= 90) return 'A+';
+  if (p >= 80) return 'A';
+  if (p >= 70) return 'B';
+  if (p >= 60) return 'C+';
+  if (p >= 50) return 'C';
+  if (p >= 40) return 'D';
+  return 'F';
+}
+
+async function recalculateExamPositions(admin: NonNullable<typeof supabaseAdmin>, examinationId: string) {
+  const { data: examResults } = await admin
+    .from('results')
+    .select('id, percentage, obtained_marks')
+    .eq('examination_id', examinationId)
+    .order('percentage', { ascending: false })
+    .order('obtained_marks', { ascending: false });
+
+  if (!examResults || examResults.length === 0) return;
+
+  await Promise.all(
+    examResults.map((row, idx) =>
+      admin.from('results').update({ position: idx + 1 }).eq('id', row.id)
+    )
+  );
+}
+
+interface CardSubjectInput {
+  subject_id: string;
+  obtained_marks: number;
+  total_marks: number;
+}
+
+interface CardSavePayload {
+  class_id: string;
+  student_id: string;
+  examination_id?: string | null;
+  subjects: CardSubjectInput[];
+  is_published?: boolean;
+  card_meta?: Record<string, any>;
+}
+
+async function saveOrUpdateResultCard(
+  admin: NonNullable<typeof supabaseAdmin>,
+  user: NonNullable<AuthRequest['user']>,
+  body: CardSavePayload,
+  existingResultId?: string
+) {
+  const { class_id, student_id, examination_id, subjects, is_published, card_meta } = body;
+
+  if (!class_id || !student_id) {
+    throw Object.assign(new Error('Class and Student selection are required.'), { status: 400 });
+  }
+  if (!Array.isArray(subjects) || subjects.length === 0) {
+    throw Object.assign(new Error('At least one database subject with marks is required.'), { status: 400 });
+  }
+
+  const cleanSubjects: CardSubjectInput[] = [];
+  const seenSubjectIds = new Set<string>();
+  for (const s of subjects) {
+    if (!s?.subject_id) {
+      throw Object.assign(new Error('Please select a valid subject from the database for each row.'), { status: 400 });
+    }
+    if (seenSubjectIds.has(s.subject_id)) {
+      throw Object.assign(new Error('Duplicate subject selected. Each subject can only appear once.'), { status: 400 });
+    }
+    seenSubjectIds.add(s.subject_id);
+    const maxMarks = Number(s.total_marks || 50);
+    const scored = Number(s.obtained_marks || 0);
+    if (Number.isNaN(maxMarks) || maxMarks <= 0) {
+      throw Object.assign(new Error('Subject full marks must be greater than 0.'), { status: 400 });
+    }
+    if (Number.isNaN(scored) || scored < 0 || scored > maxMarks) {
+      throw Object.assign(new Error(`Obtained marks (${scored}) must be between 0 and ${maxMarks}.`), { status: 400 });
+    }
+    cleanSubjects.push({
+      subject_id: s.subject_id,
+      obtained_marks: scored,
+      total_marks: maxMarks,
+    });
+  }
+
+  if (user.role_slug === 'teacher') {
+    const tid = await getTeacherIdForUser(user);
+    const allowed = tid ? await getTeacherAssignedClassIds(tid) : [];
+    if (!allowed.includes(class_id)) {
+      throw Object.assign(new Error('Permission denied for this class.'), { status: 403 });
+    }
+  }
+
+  // Validate real DB student and subjects exist
+  const [{ data: studentRow }, { data: validSubRows }] = await Promise.all([
+    admin.from('students').select('id, class_id, full_name').eq('id', student_id).is('deleted_at', null).maybeSingle(),
+    admin.from('subjects').select('id, name, code').in('id', Array.from(seenSubjectIds)).is('deleted_at', null),
+  ]);
+
+  if (!studentRow) {
+    throw Object.assign(new Error('Selected student was not found in the database.'), { status: 404 });
+  }
+  if (!validSubRows || validSubRows.length !== seenSubjectIds.size) {
+    throw Object.assign(new Error('One or more selected subjects do not exist in the database.'), { status: 400 });
+  }
+
+  let existingRow: any = null;
+  if (existingResultId) {
+    const { data: exRes } = await admin.from('results').select('*').eq('id', existingResultId).maybeSingle();
+    if (!exRes) {
+      throw Object.assign(new Error('Result record not found.'), { status: 404 });
+    }
+    if (user.role_slug === 'teacher') {
+      const tid = await getTeacherIdForUser(user);
+      const allowed = tid ? await getTeacherAssignedClassIds(tid) : [];
+      if (!allowed.includes(exRes.class_id)) {
+        throw Object.assign(new Error('Permission denied for this result record.'), { status: 403 });
+      }
+    }
+    existingRow = exRes;
+  }
+
+  // Resolve target examination
+  const examNameInput = String(card_meta?.examSession || 'Annual Examination 2026').trim() || 'Annual Examination 2026';
+  const issueDateInput = String(card_meta?.issueDate || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  let targetExamId: string | null = null;
+  let targetExamPublished = false;
+
+  if (examination_id) {
+    const { data: pickedExam } = await admin
+      .from('examinations')
+      .select('id, class_id, name, results_published')
+      .eq('id', examination_id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (pickedExam && pickedExam.class_id === class_id && pickedExam.name.trim().toLowerCase() === examNameInput.toLowerCase()) {
+      targetExamId = pickedExam.id;
+      targetExamPublished = Boolean(pickedExam.results_published);
+    }
+  }
+
+  if (!targetExamId) {
+    const { data: sameClassExams } = await admin
+      .from('examinations')
+      .select('id, name, results_published')
+      .eq('class_id', class_id)
+      .is('deleted_at', null)
+      .ilike('name', examNameInput)
+      .limit(1);
+
+    if (sameClassExams && sameClassExams[0]) {
+      targetExamId = sameClassExams[0].id;
+      targetExamPublished = Boolean(sameClassExams[0].results_published);
+    } else {
+      const { data: activeSession } = await admin
+        .from('academic_sessions')
+        .select('id')
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+
+      const publishFlag = user.role_slug === 'super_admin' ? Boolean(is_published) : false;
+      const { data: newExam, error: newExamErr } = await admin
+        .from('examinations')
+        .insert({
+          name: examNameInput,
+          exam_type: 'Term Exam',
+          academic_session_id: activeSession?.id || null,
+          class_id,
+          start_date: issueDateInput,
+          end_date: issueDateInput,
+          status: 'completed',
+          results_published: publishFlag,
+          published_by: publishFlag ? user.id : null,
+          published_at: publishFlag ? new Date().toISOString() : null,
+        })
+        .select('id, results_published')
+        .single();
+
+      if (newExamErr || !newExam) {
+        throw Object.assign(new Error(newExamErr?.message || 'Failed to create examination session for result card.'), { status: 400 });
+      }
+      targetExamId = newExam.id;
+      targetExamPublished = Boolean(newExam.results_published);
+    }
+  }
+
+  // If editing and either student_id or examination_id changed, clear old marks & old result row cleanly
+  if (existingRow && (existingRow.student_id !== student_id || existingRow.examination_id !== targetExamId)) {
+    await admin
+      .from('marks')
+      .delete()
+      .eq('examination_id', existingRow.examination_id)
+      .eq('student_id', existingRow.student_id);
+    await admin
+      .from('documents')
+      .delete()
+      .eq('entity_type', 'general')
+      .eq('title', 'RESULT_CARD_META')
+      .eq('entity_id', existingRow.id);
+    await admin.from('results').delete().eq('id', existingRow.id);
+    await recalculateExamPositions(admin, existingRow.examination_id);
+  }
+
+  // Upsert examination_subjects so each DB subject has valid passing/total metadata
+  for (const sub of cleanSubjects) {
+    const passMarks = Math.round(sub.total_marks * 0.4);
+    await admin.from('examination_subjects').upsert(
+      {
+        examination_id: targetExamId,
+        subject_id: sub.subject_id,
+        exam_date: issueDateInput,
+        total_marks: sub.total_marks,
+        passing_marks: passMarks,
+      },
+      { onConflict: 'examination_id,subject_id' }
+    );
+  }
+
+  // Replace marks for (targetExamId, student_id)
+  await admin.from('marks').delete().eq('examination_id', targetExamId).eq('student_id', student_id);
+  const { error: insMarksErr } = await admin.from('marks').insert(
+    cleanSubjects.map((s) => ({
+      examination_id: targetExamId,
+      student_id,
+      subject_id: s.subject_id,
+      obtained_marks: s.obtained_marks,
+      total_marks: s.total_marks,
+      is_absent: false,
+      entered_by: user.id,
+    }))
+  );
+  if (insMarksErr) {
+    throw Object.assign(new Error(insMarksErr.message), { status: 400 });
+  }
+
+  let totalMarks = 0;
+  let obtainedMarks = 0;
+  let failedSubjects = 0;
+  for (const s of cleanSubjects) {
+    totalMarks += s.total_marks;
+    obtainedMarks += s.obtained_marks;
+    if (s.obtained_marks < s.total_marks * 0.4) {
+      failedSubjects += 1;
+    }
+  }
+
+  const percentage = totalMarks > 0 ? Math.round((obtainedMarks / totalMarks) * 10000) / 100 : 0;
+  const grade = percentageToCardGrade(percentage);
+  const status: 'pass' | 'fail' = failedSubjects === 0 && percentage >= 40 ? 'pass' : 'fail';
+
+  const shouldPublish =
+    user.role_slug === 'super_admin' && typeof is_published === 'boolean'
+      ? is_published
+      : existingRow
+        ? Boolean(existingRow.is_published)
+        : targetExamPublished;
+
+  if (user.role_slug === 'super_admin' && is_published === true && !targetExamPublished) {
+    await admin
+      .from('examinations')
+      .update({
+        results_published: true,
+        published_by: user.id,
+        published_at: new Date().toISOString(),
+      })
+      .eq('id', targetExamId);
+  }
+
+  const remarksText = String(card_meta?.remarks || '').trim();
+
+  const { data: savedResult, error: resErr } = await admin
+    .from('results')
+    .upsert(
+      {
+        examination_id: targetExamId,
+        student_id,
+        class_id,
+        total_marks: totalMarks,
+        obtained_marks: obtainedMarks,
+        percentage,
+        grade,
+        status,
+        position: existingRow?.position || 1,
+        teacher_remarks: remarksText,
+        is_published: shouldPublish,
+        approved_by: shouldPublish ? user.id : existingRow?.approved_by || null,
+        approved_at: shouldPublish ? new Date().toISOString() : existingRow?.approved_at || null,
+      },
+      { onConflict: 'examination_id,student_id' }
+    )
+    .select('id')
+    .single();
+
+  if (resErr || !savedResult) {
+    throw Object.assign(new Error(resErr?.message || 'Failed to save result record.'), { status: 400 });
+  }
+
+  if (!targetExamId) {
+    throw Object.assign(new Error('Target examination could not be resolved.'), { status: 400 });
+  }
+  await recalculateExamPositions(admin, targetExamId);
+
+  // Store clean card metadata for View & Edit restoration
+  if (card_meta) {
+    const cleanMeta = {
+      schoolName: String(card_meta.schoolName || ''),
+      schoolAddress: String(card_meta.schoolAddress || ''),
+      admNo: String(card_meta.admNo || ''),
+      roll: Number(card_meta.roll || 1),
+      studentName: String(card_meta.studentName || studentRow.full_name || ''),
+      division: String(card_meta.division || 'A'),
+      teacher: String(card_meta.teacher || 'Class Teacher'),
+      academicYear: String(card_meta.academicYear || ''),
+      examSession: examNameInput,
+      issueDate: issueDateInput,
+      issueTime: String(card_meta.issueTime || ''),
+      photo: card_meta.photo ? normalizeStorageRef(String(card_meta.photo)) : '',
+      remarks: remarksText,
+    };
+
+    await admin
+      .from('documents')
+      .delete()
+      .eq('entity_type', 'general')
+      .eq('title', 'RESULT_CARD_META')
+      .eq('entity_id', savedResult.id);
+
+    await admin.from('documents').insert({
+      entity_type: 'general',
+      entity_id: savedResult.id,
+      title: 'RESULT_CARD_META',
+      file_url: JSON.stringify(cleanMeta),
+      file_type: 'result_card_meta',
+      uploaded_by: user.id,
+    });
+  }
+
+  return {
+    id: savedResult.id,
+    examination_id: targetExamId,
+    student_name: studentRow.full_name,
+  };
+}
+
+router.post('/results/card', requireAuth, requireRole('super_admin', 'teacher'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const result = await saveOrUpdateResultCard(admin, req.user!, req.body as CardSavePayload);
+    await logActivity(
+      req.user!,
+      'RESULT_CARD_CREATED',
+      'results',
+      result.id,
+      `Saved result card for ${result.student_name}`,
+      req.ip
+    );
+    return res.status(201).json({ success: true, id: result.id, examination_id: result.examination_id });
+  } catch (err: any) {
+    console.error('Create result card error:', err);
+    return res.status(typeof err?.status === 'number' ? err.status : 500).json({
+      error: err?.message || 'Failed to save result card',
+    });
+  }
+});
+
+router.put('/results/:id/card', requireAuth, requireRole('super_admin', 'teacher'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const result = await saveOrUpdateResultCard(admin, req.user!, req.body as CardSavePayload, req.params.id);
+    await logActivity(
+      req.user!,
+      'RESULT_CARD_UPDATED',
+      'results',
+      result.id,
+      `Updated result card for ${result.student_name}`,
+      req.ip
+    );
+    return res.json({ success: true, id: result.id, examination_id: result.examination_id });
+  } catch (err: any) {
+    console.error('Update result card error:', err);
+    return res.status(typeof err?.status === 'number' ? err.status : 500).json({
+      error: err?.message || 'Failed to update result card',
+    });
+  }
+});
+
+router.delete('/results/:id', requireAuth, requireRole('super_admin', 'teacher'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const id = req.params.id;
+
+    const { data: existing } = await admin.from('results').select('*').eq('id', id).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Result record not found' });
+
+    if (req.user!.role_slug === 'teacher') {
+      const tid = await getTeacherIdForUser(req.user!);
+      const allowed = tid ? await getTeacherAssignedClassIds(tid) : [];
+      if (!allowed.includes(existing.class_id)) {
+        return res.status(403).json({ error: 'Permission denied to delete this result.' });
+      }
+    }
+
+    await Promise.all([
+      admin.from('marks').delete().eq('examination_id', existing.examination_id).eq('student_id', existing.student_id),
+      admin.from('documents').delete().eq('entity_type', 'general').eq('title', 'RESULT_CARD_META').eq('entity_id', id),
+    ]);
+
+    const { error: delErr } = await admin.from('results').delete().eq('id', id);
+    if (delErr) return res.status(400).json({ error: delErr.message });
+
+    await recalculateExamPositions(admin, existing.examination_id);
+    await logActivity(req.user!, 'RESULT_DELETED', 'results', id, `Deleted result ${id}`, req.ip);
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('Delete result error:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to delete result' });
+  }
 });
 
 // ==================== HOMEWORK ====================

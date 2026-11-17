@@ -19,10 +19,17 @@ import {
   precheckLoginAttempt,
   recordFailedLoginAttempt,
 } from '../bruteForce.ts';
+import {
+  STUDENT_PENDING_LOGIN_MESSAGE,
+  STUDENT_REJECTED_LOGIN_MESSAGE,
+  getStudentApprovalState,
+  provisionStudentAdmissionAccount,
+} from '../studentProvisioning.ts';
 
 const router = Router();
 
 router.get('/config', (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
   res.json({
     supabaseUrl: SUPABASE_URL,
     supabaseAnonKey: SUPABASE_ANON_KEY,
@@ -33,9 +40,9 @@ router.get('/config', (_req, res) => {
 
 const publicUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 4 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const isImageExt = /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.originalname || '');
+    const isImageExt = /\.(png|jpe?g|gif|webp|bmp|avif|jfif)$/i.test(file.originalname || '');
     if (file.mimetype.startsWith('image/') || isImageExt) cb(null, true);
     else cb(new Error('Only image files are allowed.'));
   },
@@ -344,6 +351,7 @@ router.get('/home', async (_req, res) => {
 
     const committee = await resolveStorageUrlsInRows(committeeRaw || [], ['photo_url']);
 
+    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
     return res.json({
       supabaseConfigured: true,
       settings: settings ? { ...settings, admissions_open: admissionsOpenFlag, results_open: resultsOpenFlag } : null,
@@ -424,108 +432,50 @@ router.post('/admission', async (req, res) => {
       return res.status(400).json({ error: 'Student name, father name, and guardian mobile number are required.' });
     }
 
-    const { count } = await admin.from('admissions').select('id', { count: 'exact', head: true });
-    let seq = 1000 + (count || 0) + 1;
-    let referenceNo = `REF-${new Date().getFullYear()}-${seq}`;
-    const { data: dupCheck } = await admin
-      .from('admissions')
-      .select('id')
-      .eq('admission_no', referenceNo)
-      .maybeSingle();
-    if (dupCheck) {
-      referenceNo = `REF-${new Date().getFullYear()}-${seq}${String(Date.now()).slice(-3)}`;
-    }
-    const today = new Date().toISOString().slice(0, 10);
-
-    const { data: inserted, error } = await admin
-      .from('admissions')
-      .insert({
-        admission_no: referenceNo,
-        student_name: student_name.trim(),
-        father_name: father_name.trim(),
-        mother_name: mother_name || '',
-        dob: dob || '',
-        gender: gender || 'Male',
-        religion: 'Islam',
-        address: address || '',
-        village: village || '',
-        district: district || 'Palamu',
-        state: state || 'Jharkhand',
-        pin_code: pin_code || '',
-        student_mobile: student_mobile || guardian_mobile.trim(),
-        guardian_name: (guardian_name || father_name).trim(),
-        guardian_relationship: guardian_relationship || 'Father',
-        guardian_mobile: guardian_mobile.trim(),
-        previous_school: previous_school || '',
-        previous_class: previous_class || '',
-        admission_date: today,
-        admission_class_id: admission_class_id || null,
-        photo_url: normalizeStorageRef(photo_url),
-        remarks: remarks || 'Submitted via Online Home Page',
-        status: 'pending',
-      })
-      .select('id')
-      .single();
-
-    if (error || !inserted) {
-      return res.status(400).json({ error: error?.message || 'Failed to submit admission application' });
-    }
-
-    let className = 'To be assigned';
-    if (admission_class_id) {
-      const { data: cls } = await admin.from('classes').select('name').eq('id', admission_class_id).maybeSingle();
-      if (cls?.name) className = cls.name;
-    }
+    const result = await provisionStudentAdmissionAccount(admin, {
+      student_name,
+      father_name,
+      mother_name,
+      dob,
+      gender,
+      address,
+      village,
+      district,
+      state,
+      pin_code,
+      student_mobile,
+      guardian_name,
+      guardian_relationship,
+      guardian_mobile,
+      previous_school,
+      previous_class,
+      admission_class_id: admission_class_id || null,
+      photo_ref: normalizeStorageRef(photo_url),
+      remarks: remarks || 'Submitted via Online Home Page',
+    });
 
     await notifyRoles(
       ['super_admin'],
       'admission',
-      'New Online Admission Application',
-      `${student_name.trim()} (Ref: ${referenceNo}) applied online${className !== 'To be assigned' ? ` for ${className}` : ''}.`,
+      'New Student Admission Pending Approval',
+      `${result.student_name} (Ref: ${result.reference_no}, Username: @${result.username}) applied online${result.class_name !== 'To be assigned' ? ` for ${result.class_name}` : ''}.`,
       'admissions',
-      inserted.id
+      result.id
     );
     await logActivity(
       { id: null, username: 'public_applicant', role_name: 'Public' },
       'PUBLIC_ADMISSION_SUBMITTED',
       'admissions',
-      inserted.id,
-      `Online admission reference ${referenceNo} for ${student_name.trim()}`,
+      result.id ?? undefined,
+      `Online admission Ref ${result.reference_no} created pending student @${result.username}`,
       req.ip
     );
 
-    const resolvedPhotoUrl = photo_url ? await resolveStorageUrl(normalizeStorageRef(photo_url)) : '';
-
-    return res.status(201).json({
-      id: inserted.id,
-      reference_no: referenceNo,
-      admission_no: referenceNo,
-      student_name: student_name.trim(),
-      father_name: father_name.trim(),
-      mother_name: mother_name || '',
-      dob: dob || '',
-      gender: gender || 'Male',
-      religion: 'Islam',
-      address: address || '',
-      village: village || '',
-      district: district || 'Palamu',
-      state: state || 'Jharkhand',
-      pin_code: pin_code || '',
-      student_mobile: student_mobile || guardian_mobile.trim(),
-      guardian_name: (guardian_name || father_name).trim(),
-      guardian_relationship: guardian_relationship || 'Father',
-      guardian_mobile: guardian_mobile.trim(),
-      previous_school: previous_school || '',
-      previous_class: previous_class || '',
-      class_name: className,
-      admission_date: today,
-      photo_url: resolvedPhotoUrl,
-      remarks: remarks || 'Submitted via Online Home Page',
-      status: 'pending',
-    });
+    return res.status(201).json(result);
   } catch (err: any) {
     console.error('Public admission error:', err);
-    return res.status(400).json({ error: err?.message || 'Failed to submit admission application' });
+    const statusCode = typeof err?.status === 'number' ? err.status : 400;
+    return res.status(statusCode).json({ error: err?.message || 'Failed to submit admission application' });
   }
 });
 
@@ -612,14 +562,19 @@ router.post('/admission-status', async (req, res) => {
 
     const resolvedPhoto = adm.photo_url ? await resolveStorageUrl(adm.photo_url) : '';
     const className = linkedStudent?.classes?.name || (adm as any).classes?.name || 'To be assigned';
+    const rejectionReason =
+      adm.rejection_reason ||
+      (adm.status === 'rejected' ? adm.remarks || '' : '');
 
     return res.json({
       id: adm.id,
       reference_no: adm.admission_no,
       admission_no: adm.admission_no,
-      official_admission_no: linkedStudent?.admission_no || '',
+      official_admission_no: linkedStudent?.admission_no || adm.admission_number || '',
       student_code: linkedStudent?.student_code || '',
       status: adm.status || 'pending',
+      approval_status: adm.approval_status || adm.status || 'pending',
+      rejection_reason: rejectionReason,
       student_name: adm.student_name,
       father_name: adm.father_name,
       mother_name: adm.mother_name || '',
@@ -639,7 +594,7 @@ router.post('/admission-status', async (req, res) => {
       pin_code: adm.pin_code || '',
       class_name: className,
       admission_date: adm.admission_date || '',
-      reviewed_at: adm.reviewed_at || '',
+      reviewed_at: adm.reviewed_at || adm.rejected_at || adm.approved_at || '',
       remarks: adm.remarks || '',
       photo_url: resolvedPhoto,
     });
@@ -706,12 +661,12 @@ router.post('/check-result', async (req, res) => {
       });
     };
 
-    let profileRow: { id: string; email: string; linked_type: string | null; linked_id: string | null } | null = null;
+    let profileRow: { id: string; email: string; status?: string; linked_type: string | null; linked_id: string | null } | null = null;
 
     if (clean.includes('@')) {
       const { data } = await admin
         .from('profiles')
-        .select('id, email, linked_type, linked_id')
+        .select('id, email, status, linked_type, linked_id')
         .eq('email', clean)
         .is('deleted_at', null)
         .maybeSingle();
@@ -721,8 +676,8 @@ router.post('/check-result', async (req, res) => {
       if (safeClean) {
         const { data } = await admin
           .from('profiles')
-          .select('id, email, linked_type, linked_id')
-          .or(`username.eq.${safeClean},user_code.eq.${safeClean}`)
+          .select('id, email, status, linked_type, linked_id')
+          .or(`username.eq.${safeClean},username.eq.${safeClean.toLowerCase()},user_code.eq.${safeClean.toUpperCase()}`)
           .is('deleted_at', null)
           .maybeSingle();
         profileRow = data;
@@ -738,7 +693,7 @@ router.post('/check-result', async (req, res) => {
         if (stByCode?.user_id) {
           const { data: p } = await admin
             .from('profiles')
-            .select('id, email, linked_type, linked_id')
+            .select('id, email, status, linked_type, linked_id')
             .eq('id', stByCode.user_id)
             .is('deleted_at', null)
             .maybeSingle();
@@ -761,6 +716,14 @@ router.post('/check-result', async (req, res) => {
     }
 
     await clearFailedLoginAttempts(req, 'result_login', clean);
+
+    const approvalState = await getStudentApprovalState(admin, profileRow, 'student');
+    if (approvalState === 'pending') {
+      return res.status(403).json({ error: STUDENT_PENDING_LOGIN_MESSAGE, code: 'ADMISSION_PENDING' });
+    }
+    if (approvalState === 'rejected') {
+      return res.status(403).json({ error: STUDENT_REJECTED_LOGIN_MESSAGE, code: 'ADMISSION_REJECTED' });
+    }
 
     let studentId: string | null = profileRow.linked_type === 'student' ? profileRow.linked_id : null;
     if (!studentId) {

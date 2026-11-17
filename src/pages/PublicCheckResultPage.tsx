@@ -4,6 +4,7 @@ import { MadrasaSettings } from '../types.ts';
 import { MadrasaLogo } from '../components/MadrasaLogo.tsx';
 import { PrintModal } from '../components/PrintModal.tsx';
 import { CaptchaChallengeData, SecurityCaptchaBox } from '../components/SecurityCaptchaBox.tsx';
+import { formatHttpErrorMessage, safeReadJson } from '../lib/imageUpload.ts';
 
 interface PublicCheckResultPageProps {
   settings: MadrasaSettings | null;
@@ -63,9 +64,11 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
     try {
       const res = await fetch('/api/auth/captcha');
       if (res.ok) {
-        const next = (await res.json()) as CaptchaChallengeData;
-        setCaptcha(next);
-        setCaptchaAnswer('');
+        const { data: next } = await safeReadJson<CaptchaChallengeData>(res);
+        if (next) {
+          setCaptcha(next);
+          setCaptchaAnswer('');
+        }
       }
     } catch {
       // ignore
@@ -90,7 +93,7 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
           captchaAnswer: captcha ? captchaAnswer : undefined,
         }),
       });
-      const data = await res.json();
+      const { data, rawText } = await safeReadJson(res);
       if (!res.ok) {
         if (res.status === 429 || data?.code === 'TOO_MANY_ATTEMPTS' || data?.code === 'RATE_LIMITED') {
           const lockEnd = Number(data?.lockedUntil) || Date.now() + (Number(data?.retryAfterSeconds) || 900) * 1000;
@@ -113,7 +116,7 @@ export const PublicCheckResultPage: React.FC<PublicCheckResultPageProps> = ({
             await refreshCaptcha();
           }
         }
-        throw new Error(data.error || 'Could not load result');
+        throw new Error(formatHttpErrorMessage(res.status, data, rawText, 'Could not load result'));
       }
       setAttemptsRemaining(null);
       setLockedUntil(null);

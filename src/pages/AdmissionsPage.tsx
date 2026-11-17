@@ -1,16 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import {
   CheckCircle,
+  Clock,
   Eye,
   FileText,
   FileUp,
+  GraduationCap,
   Pencil,
   Plus,
   Power,
   Printer,
   ScrollText,
   Search,
+  ShieldAlert,
   Trash2,
+  UserCheck,
   X,
   XCircle,
 } from 'lucide-react';
@@ -56,7 +60,7 @@ const emptyForm = {
 };
 
 export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, onSettingsUpdated }) => {
-  const [activeSection, setActiveSection] = useState<'applications' | 'iqrar'>('applications');
+  const [activeSection, setActiveSection] = useState<'pending' | 'applications' | 'iqrar'>('pending');
   const [admissions, setAdmissions] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [admissionsOpen, setAdmissionsOpen] = useState<boolean>(settings?.admissions_open !== false);
@@ -72,6 +76,16 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [viewItem, setViewItem] = useState<any>(null);
+  const [studentDetailsModal, setStudentDetailsModal] = useState<{
+    loading: boolean;
+    error: string;
+    admission?: any;
+    student?: any;
+    account?: any;
+  } | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<any>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [printItem, setPrintItem] = useState<any>(null);
   const [printMode, setPrintMode] = useState<PrintDocMode>('combined');
   const [selectedIqrarId, setSelectedIqrarId] = useState<string>('');
@@ -248,27 +262,82 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
 
   const handleApprove = async (id: string) => {
     setErr('');
+    setMsg('');
+    setActionBusyId(id);
     try {
-      const res = await apiRequest<{ admission_no?: string; reference_no?: string }>(`/api/admissions/${id}/approve`, { method: 'POST', body: JSON.stringify({}) });
+      const res = await apiRequest<{ admission_no?: string; reference_no?: string; username?: string }>(
+        `/api/admissions/${id}/approve`,
+        { method: 'POST', body: JSON.stringify({}) }
+      );
       setMsg(
         res?.admission_no
-          ? `Admission approved! Official Student Admission No assigned: ${res.admission_no}${res.reference_no ? ` (Ref: ${res.reference_no})` : ''}.`
-          : 'Admission approved and student profile automatically activated.'
+          ? `Admission approved! Official Admission No assigned: ${res.admission_no}${res.reference_no ? ` (Ref: ${res.reference_no})` : ''}${res.username ? ` · Student account @${res.username} unlocked.` : '.'}`
+          : 'Admission approved and existing student profile unlocked.'
       );
+      if (studentDetailsModal?.admission?.id === id) setStudentDetailsModal(null);
+      if (viewItem?.id === id) setViewItem(null);
       load();
     } catch (e: any) {
-      setErr(e.message);
+      setErr(e.message || 'Failed to approve admission');
+    } finally {
+      setActionBusyId(null);
     }
   };
 
-  const handleReject = async (id: string) => {
+  const openRejectModal = (adm: any) => {
+    setRejectTarget(adm);
+    setRejectionReason('');
     setErr('');
+  };
+
+  const confirmReject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejectTarget) return;
+    const reason = rejectionReason.trim();
+    if (!reason) {
+      setErr('Please provide a rejection reason before rejecting.');
+      return;
+    }
+    setErr('');
+    setMsg('');
+    setActionBusyId(rejectTarget.id);
     try {
-      await apiRequest(`/api/admissions/${id}/reject`, { method: 'POST', body: JSON.stringify({}) });
-      setMsg('Admission application rejected.');
+      await apiRequest(`/api/admissions/${rejectTarget.id}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ rejection_reason: reason }),
+      });
+      setMsg(`Admission ${rejectTarget.admission_no} rejected and student login access blocked.`);
+      if (studentDetailsModal?.admission?.id === rejectTarget.id) setStudentDetailsModal(null);
+      if (viewItem?.id === rejectTarget.id) setViewItem(null);
+      setRejectTarget(null);
+      setRejectionReason('');
       load();
     } catch (e: any) {
-      setErr(e.message);
+      setErr(e.message || 'Failed to reject admission');
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const openStudentDetails = async (adm: any) => {
+    setStudentDetailsModal({ loading: true, error: '', admission: adm });
+    try {
+      const res = await apiRequest<{ admission: any; student: any; account: any }>(
+        `/api/admissions/${adm.id}/details`
+      );
+      setStudentDetailsModal({
+        loading: false,
+        error: '',
+        admission: res.admission,
+        student: res.student,
+        account: res.account,
+      });
+    } catch (e: any) {
+      setStudentDetailsModal({
+        loading: false,
+        error: e.message || 'Failed to load student details',
+        admission: adm,
+      });
     }
   };
 
@@ -290,6 +359,8 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
     selectedIqrarId === 'blank'
       ? {}
       : admissions.find((a) => String(a.id) === String(selectedIqrarId)) || admissions[0] || {};
+
+  const pendingAdmissions = admissions.filter((a) => a.status === 'pending');
 
   return (
     <div className="space-y-5">
@@ -353,20 +424,32 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
         )}
       </div>
 
-      {/* Sub-Section Tabs under Admissions: Admission Applications | Iqrar Nama */}
+      {/* Sub-Section Tabs under Admissions: Pending Student Approvals | All Admissions | Iqrar Nama */}
       <div className="bg-white rounded-xl border border-neutral-200 p-2 shadow-xs flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setActiveSection('pending')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+              activeSection === 'pending'
+                ? 'bg-[#DC1726] text-white shadow-xs'
+                : 'text-[#525252] hover:bg-neutral-100'
+            }`}
+          >
+            <Clock className="w-4 h-4" />
+            <span>Pending Student Approvals ({pendingAdmissions.length})</span>
+          </button>
           <button
             type="button"
             onClick={() => setActiveSection('applications')}
             className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
               activeSection === 'applications'
-                ? 'bg-[#DC1726] text-white shadow-xs'
+                ? 'bg-[#171717] text-white shadow-xs'
                 : 'text-[#525252] hover:bg-neutral-100'
             }`}
           >
             <FileText className="w-4 h-4" />
-            <span>Admission Forms &amp; Papers</span>
+            <span>All Admission Applications ({admissions.length})</span>
           </button>
           <button
             type="button"
@@ -391,7 +474,153 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
         </button>
       </div>
 
-      {activeSection === 'iqrar' ? (
+      {activeSection === 'pending' ? (
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl border border-neutral-200 p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-neutral-100 pb-3">
+              <div>
+                <h2 className="text-base font-bold text-[#171717]">Pending Student Approvals</h2>
+                <p className="text-xs text-[#737373] mt-0.5">
+                  Review submitted applications and pre-created student accounts before approving login access or rejecting with a reason.
+                </p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-50 border border-amber-200 text-xs font-bold text-amber-800 self-start sm:self-center">
+                <Clock className="w-3.5 h-3.5" /> {pendingAdmissions.length} Pending Review
+              </span>
+            </div>
+
+            {loading ? (
+              <div className="py-10 text-center text-xs text-[#737373]">Loading pending approvals...</div>
+            ) : pendingAdmissions.length === 0 ? (
+              <div className="py-10 text-center text-xs text-[#737373]">
+                No pending student admissions awaiting approval right now.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {pendingAdmissions.map((adm) => {
+                  const regDate = adm.registration_date
+                    ? new Date(adm.registration_date).toLocaleDateString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                      })
+                    : adm.admission_date || '—';
+                  const isBusy = actionBusyId === adm.id;
+                  return (
+                    <div
+                      key={adm.id}
+                      className="border border-neutral-200 rounded-xl p-4 bg-neutral-50/50 hover:bg-white transition-colors space-y-3"
+                    >
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                        <div className="flex items-start gap-3 min-w-0">
+                          {adm.photo_url ? (
+                            <img
+                              src={adm.photo_url}
+                              alt={adm.student_name}
+                              referrerPolicy="no-referrer"
+                              className="w-12 h-14 rounded-lg object-cover border border-neutral-200 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-12 h-14 rounded-lg bg-[#3B0A0D] text-white flex items-center justify-center font-bold text-base shrink-0">
+                              {adm.student_name?.charAt(0)?.toUpperCase() || 'S'}
+                            </div>
+                          )}
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-bold text-[#171717]">{adm.student_name}</span>
+                              {adm.username && (
+                                <span className="text-xs font-mono-num font-semibold text-[#0EA5E9] bg-sky-50 border border-sky-200 px-2 py-0.5 rounded">
+                                  @{adm.username}
+                                </span>
+                              )}
+                              <span className="text-[11px] font-bold uppercase px-2 py-0.5 rounded bg-amber-100 text-amber-800">
+                                {adm.approval_status || adm.status}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-1 text-xs text-[#525252]">
+                              <div>
+                                <span className="text-[#737373]">Ref No:</span>{' '}
+                                <strong className="font-mono-num text-[#DC1726]">{adm.admission_no}</strong>
+                              </div>
+                              <div>
+                                <span className="text-[#737373]">Admission No:</span>{' '}
+                                <strong className="font-mono-num text-[#171717]">
+                                  {adm.official_admission_no || 'Assigned on Approval'}
+                                </strong>
+                              </div>
+                              <div>
+                                <span className="text-[#737373]">Class / Course:</span>{' '}
+                                <strong className="text-[#171717]">{adm.class_name}</strong>
+                              </div>
+                              <div>
+                                <span className="text-[#737373]">Reg. Date:</span>{' '}
+                                <strong className="font-mono-num text-[#171717]">{regDate}</strong>
+                              </div>
+                              <div>
+                                <span className="text-[#737373]">Guardian:</span>{' '}
+                                <strong className="text-[#171717]">{adm.guardian_name || adm.father_name}</strong>
+                              </div>
+                              <div>
+                                <span className="text-[#737373]">Mobile:</span>{' '}
+                                <strong className="font-mono-num text-[#171717]">{adm.guardian_mobile}</strong>
+                              </div>
+                              <div className="sm:col-span-2 truncate">
+                                <span className="text-[#737373]">Application Details:</span>{' '}
+                                <span className="text-[#171717]">
+                                  {adm.village ? `${adm.village}, ` : ''}
+                                  {adm.district || 'Palamu'}
+                                  {adm.previous_school ? ` · Prev: ${adm.previous_school}` : ''}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setViewItem(adm)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-100 whitespace-nowrap"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-[#0EA5E9]" /> View Application
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openStudentDetails(adm)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-100 whitespace-nowrap"
+                          >
+                            <GraduationCap className="w-3.5 h-3.5 text-[#141E30]" /> View Student Details
+                          </button>
+                          {canManageAdmissionToggle && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => handleApprove(adm.id)}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#10B981] text-white text-xs font-semibold hover:bg-emerald-600 disabled:opacity-60 whitespace-nowrap"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" /> Approve Admission
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => openRejectModal(adm)}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-60 whitespace-nowrap"
+                              >
+                                <XCircle className="w-3.5 h-3.5" /> Reject Admission
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : activeSection === 'iqrar' ? (
         <div className="bg-white rounded-xl border border-neutral-200 p-5 sm:p-6 shadow-xs space-y-5">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-neutral-100 pb-4">
             <div className="space-y-1">
@@ -497,12 +726,12 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
               <table className="w-full text-xs">
                 <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
                   <tr>
-                    <th className="px-4 py-3 text-start font-semibold">Reference No</th>
-                    <th className="px-4 py-3 text-start font-semibold">Student Name</th>
-                    <th className="px-4 py-3 text-start font-semibold">Father / Guardian</th>
+                    <th className="px-4 py-3 text-start font-semibold">Ref / Admission No</th>
+                    <th className="px-4 py-3 text-start font-semibold">Student &amp; Username</th>
+                    <th className="px-4 py-3 text-start font-semibold">Guardian &amp; Mobile</th>
                     <th className="px-4 py-3 text-start font-semibold">Class</th>
-                    <th className="px-4 py-3 text-start font-semibold">Date</th>
-                    <th className="px-4 py-3 text-start font-semibold">Status</th>
+                    <th className="px-4 py-3 text-start font-semibold">Reg. Date</th>
+                    <th className="px-4 py-3 text-start font-semibold">Approval Status</th>
                     <th className="px-4 py-3 text-end font-semibold">Actions</th>
                   </tr>
                 </thead>
@@ -514,10 +743,22 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
                   ) : (
                     admissions.map((adm) => (
                       <tr key={adm.id} className="hover:bg-neutral-50">
-                        <td className="px-4 py-3 font-mono-num font-semibold text-[#171717]">{adm.admission_no}</td>
-                        <td className="px-4 py-3 font-medium text-[#171717]">{adm.student_name}</td>
+                        <td className="px-4 py-3 font-mono-num">
+                          <div className="font-semibold text-[#171717]">{adm.admission_no}</div>
+                          {adm.official_admission_no && (
+                            <div className="text-[11px] font-semibold text-[#10B981]">
+                              {adm.official_admission_no}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-semibold text-[#171717]">{adm.student_name}</div>
+                          {adm.username && (
+                            <div className="font-mono-num text-[11px] text-[#0EA5E9]">@{adm.username}</div>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-[#737373]">
-                          <div>{adm.father_name}</div>
+                          <div>{adm.guardian_name || adm.father_name}</div>
                           <div className="font-mono-num text-[11px]">{adm.guardian_mobile}</div>
                         </td>
                         <td className="px-4 py-3 text-[#171717]">{adm.class_name}</td>
@@ -530,37 +771,44 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
                           >
                             {adm.status}
                           </span>
+                          {adm.status === 'rejected' && adm.rejection_reason && (
+                            <div className="text-[11px] text-[#737373] max-w-[180px] truncate" title={adm.rejection_reason}>
+                              {adm.rejection_reason}
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {adm.status === 'pending' && (
+                          <div className="flex items-center justify-end gap-1">
+                            {adm.status === 'pending' && canManageAdmissionToggle && (
                               <>
                                 <button
                                   type="button"
+                                  disabled={actionBusyId === adm.id}
                                   onClick={() => handleApprove(adm.id)}
-                                  title="Approve & Activate Student"
-                                  className="p-1.5 rounded-md text-[#10B981] hover:bg-emerald-50"
+                                  title="Approve Admission"
+                                  className="p-1.5 rounded-md text-[#10B981] hover:bg-emerald-50 disabled:opacity-50"
                                 >
                                   <CheckCircle className="w-4 h-4" />
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => handleReject(adm.id)}
-                                  title="Reject"
-                                  className="p-1.5 rounded-md text-[#DC1726] hover:bg-red-50"
+                                  disabled={actionBusyId === adm.id}
+                                  onClick={() => openRejectModal(adm)}
+                                  title="Reject Admission"
+                                  className="p-1.5 rounded-md text-[#DC1726] hover:bg-red-50 disabled:opacity-50"
                                 >
                                   <XCircle className="w-4 h-4" />
                                 </button>
                               </>
                             )}
-                            <button type="button" onClick={() => setViewItem(adm)} title="View Details" className="p-1.5 rounded-md text-[#0EA5E9] hover:bg-sky-50">
+                            <button type="button" onClick={() => setViewItem(adm)} title="View Application" className="p-1.5 rounded-md text-[#0EA5E9] hover:bg-sky-50">
                               <Eye className="w-4 h-4" />
+                            </button>
+                            <button type="button" onClick={() => openStudentDetails(adm)} title="View Student Details" className="p-1.5 rounded-md text-[#141E30] hover:bg-slate-100">
+                              <GraduationCap className="w-4 h-4" />
                             </button>
                             <button type="button" onClick={() => openPrint(adm, 'combined')} title="Print Admission & Iqrar Nama" className="p-1.5 rounded-md text-[#171717] hover:bg-neutral-100">
                               <Printer className="w-4 h-4" />
-                            </button>
-                            <button type="button" onClick={() => openPrint(adm, 'iqrar')} title="Print Iqrar Nama Only" className="p-1.5 rounded-md text-[#141E30] hover:bg-slate-100">
-                              <ScrollText className="w-4 h-4" />
                             </button>
                             <button type="button" onClick={() => openEdit(adm)} title="Edit" className="p-1.5 rounded-md text-[#F59E0B] hover:bg-amber-50">
                               <Pencil className="w-4 h-4" />
@@ -740,16 +988,40 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
         </div>
       )}
 
-      {/* View Modal */}
+      {/* View Application Modal (with Approve/Reject actions) */}
       {viewItem && (
         <div className="fixed inset-0 z-50 bg-black/50 overflow-y-auto p-4 flex items-start sm:items-center justify-center">
           <div className="max-w-3xl w-full bg-white rounded-xl border border-neutral-200 shadow-xl p-6 space-y-4 text-xs my-4">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-[#171717]">{viewItem.student_name}</h3>
-                <p className="text-[#737373] font-mono-num">{viewItem.admission_no} · {viewItem.class_name}</p>
+                <p className="text-[#737373] font-mono-num">
+                  {viewItem.admission_no}
+                  {viewItem.official_admission_no ? ` · ${viewItem.official_admission_no}` : ''}
+                  {viewItem.username ? ` · @${viewItem.username}` : ''} · {viewItem.class_name}
+                </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {viewItem.status === 'pending' && canManageAdmissionToggle && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={actionBusyId === viewItem.id}
+                      onClick={() => handleApprove(viewItem.id)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#10B981] text-white text-xs font-semibold hover:bg-emerald-600 disabled:opacity-60"
+                    >
+                      <CheckCircle className="w-3.5 h-3.5" /> Approve Admission
+                    </button>
+                    <button
+                      type="button"
+                      disabled={actionBusyId === viewItem.id}
+                      onClick={() => openRejectModal(viewItem)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-60"
+                    >
+                      <XCircle className="w-3.5 h-3.5" /> Reject Admission
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -772,30 +1044,205 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
                 >
                   <Printer className="w-3.5 h-3.5" /> Iqrar Nama
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const item = viewItem;
-                    setViewItem(null);
-                    openPrint(item, 'combined');
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700"
-                >
-                  <Printer className="w-3.5 h-3.5" /> Both
-                </button>
                 <button type="button" onClick={() => setViewItem(null)} className="p-1.5 rounded-lg hover:bg-neutral-100"><X className="w-4 h-4" /></button>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div><span className="text-[#737373]">Father:</span> <strong>{viewItem.father_name}</strong></div>
               <div><span className="text-[#737373]">Mother:</span> <strong>{viewItem.mother_name || '-'}</strong></div>
               <div><span className="text-[#737373]">DOB / Gender:</span> <strong>{viewItem.dob || '-'} / {viewItem.gender}</strong></div>
-              <div><span className="text-[#737373]">Guardian:</span> <strong>{viewItem.guardian_name} ({viewItem.guardian_mobile})</strong></div>
-              <div className="col-span-2"><span className="text-[#737373]">Address:</span> <strong>{viewItem.address}, {viewItem.village}, {viewItem.district}, {viewItem.state} - {viewItem.pin_code}</strong></div>
+              <div><span className="text-[#737373]">Guardian:</span> <strong>{viewItem.guardian_name || viewItem.father_name} ({viewItem.guardian_mobile})</strong></div>
+              <div className="sm:col-span-2"><span className="text-[#737373]">Address:</span> <strong>{viewItem.address}, {viewItem.village}, {viewItem.district}, {viewItem.state} - {viewItem.pin_code}</strong></div>
               <div><span className="text-[#737373]">Previous School:</span> <strong>{viewItem.previous_school || '-'}</strong></div>
-              <div><span className="text-[#737373]">Remarks:</span> <strong>{viewItem.remarks || '-'}</strong></div>
+              <div><span className="text-[#737373]">Approval Status:</span> <strong className="uppercase">{viewItem.approval_status || viewItem.status}</strong></div>
+              {viewItem.rejection_reason && (
+                <div className="sm:col-span-2 text-[#DC1726]">
+                  <span className="font-semibold">Rejection Reason:</span> {viewItem.rejection_reason}
+                </div>
+              )}
+              <div className="sm:col-span-2"><span className="text-[#737373]">Remarks:</span> <strong>{viewItem.remarks || '-'}</strong></div>
             </div>
             <IqrarNamaSheet compact settings={settings} data={viewItem} />
+          </div>
+        </div>
+      )}
+
+      {/* View Linked Student Details Modal */}
+      {studentDetailsModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 overflow-y-auto p-4 flex items-start sm:items-center justify-center">
+          <div className="max-w-2xl w-full bg-white rounded-xl border border-neutral-200 shadow-xl p-6 space-y-5 text-xs my-4">
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-[#DC1726]" />
+                <div>
+                  <h3 className="text-base font-bold text-[#171717]">Student Account &amp; Admission Details</h3>
+                  <p className="text-[11px] text-[#737373]">Linked student record and login status</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStudentDetailsModal(null)}
+                className="p-1.5 rounded-lg hover:bg-neutral-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {studentDetailsModal.loading ? (
+              <div className="py-10 text-center text-[#737373]">Loading linked student details...</div>
+            ) : studentDetailsModal.error ? (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-[#DC1726]">
+                {studentDetailsModal.error}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row items-start gap-4 bg-neutral-50 border border-neutral-200 rounded-xl p-4">
+                  {(studentDetailsModal.student?.photo_url || studentDetailsModal.admission?.photo_url) ? (
+                    <img
+                      src={studentDetailsModal.student?.photo_url || studentDetailsModal.admission?.photo_url}
+                      alt={studentDetailsModal.admission?.student_name}
+                      referrerPolicy="no-referrer"
+                      className="w-16 h-20 rounded-lg object-cover border border-neutral-200 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-16 h-20 rounded-lg bg-[#3B0A0D] text-white flex items-center justify-center text-xl font-bold shrink-0">
+                      {studentDetailsModal.admission?.student_name?.charAt(0)?.toUpperCase() || 'S'}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 flex-1 w-full">
+                    <div>
+                      <div className="text-[#737373]">Student Name</div>
+                      <div className="font-bold text-[#171717] text-sm">
+                        {studentDetailsModal.student?.full_name || studentDetailsModal.admission?.student_name}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#737373]">Generated Username</div>
+                      <div className="font-bold font-mono-num text-[#0EA5E9] text-sm">
+                        {studentDetailsModal.account?.username || studentDetailsModal.admission?.username || 'Not created'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#737373]">Reference Number</div>
+                      <div className="font-bold font-mono-num text-[#DC1726]">
+                        {studentDetailsModal.admission?.admission_no || '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#737373]">Official Admission No</div>
+                      <div className="font-bold font-mono-num text-[#171717]">
+                        {studentDetailsModal.student?.admission_no || studentDetailsModal.admission?.official_admission_no || 'Assigned upon Approval'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#737373]">Student Code</div>
+                      <div className="font-bold font-mono-num text-[#171717]">
+                        {studentDetailsModal.student?.student_code || '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#737373]">Account &amp; Approval Status</div>
+                      <div className="font-bold capitalize text-[#171717]">
+                        Account: {studentDetailsModal.account?.status || '—'} · Approval: {studentDetailsModal.admission?.approval_status || studentDetailsModal.admission?.status}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border border-neutral-200 rounded-xl p-4">
+                  <div><span className="text-[#737373]">Father Name:</span> <strong>{studentDetailsModal.admission?.father_name}</strong></div>
+                  <div><span className="text-[#737373]">Class / Course:</span> <strong>{studentDetailsModal.student?.class_name || studentDetailsModal.admission?.class_name || 'Unassigned'}</strong></div>
+                  <div><span className="text-[#737373]">Guardian:</span> <strong>{studentDetailsModal.admission?.guardian_name || studentDetailsModal.admission?.father_name}</strong></div>
+                  <div><span className="text-[#737373]">Mobile:</span> <strong className="font-mono-num">{studentDetailsModal.admission?.guardian_mobile}</strong></div>
+                  <div><span className="text-[#737373]">Registration Date:</span> <strong className="font-mono-num">{studentDetailsModal.admission?.admission_date || '-'}</strong></div>
+                  <div><span className="text-[#737373]">District / Village:</span> <strong>{studentDetailsModal.admission?.village || '-'}, {studentDetailsModal.admission?.district || 'Palamu'}</strong></div>
+                </div>
+
+                {studentDetailsModal.admission?.status === 'pending' && canManageAdmissionToggle && (
+                  <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-neutral-100">
+                    <button
+                      type="button"
+                      disabled={actionBusyId === studentDetailsModal.admission.id}
+                      onClick={() => openRejectModal(studentDetailsModal.admission)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-60"
+                    >
+                      <XCircle className="w-4 h-4" /> Reject Admission
+                    </button>
+                    <button
+                      type="button"
+                      disabled={actionBusyId === studentDetailsModal.admission.id}
+                      onClick={() => handleApprove(studentDetailsModal.admission.id)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#10B981] text-white text-xs font-semibold hover:bg-emerald-600 disabled:opacity-60"
+                    >
+                      <CheckCircle className="w-4 h-4" /> Approve Admission
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Mandatory Rejection Reason Modal */}
+      {rejectTarget && (
+        <div className="fixed inset-0 z-50 bg-black/50 p-4 flex items-center justify-center">
+          <div className="max-w-md w-full bg-white rounded-xl border border-neutral-200 shadow-xl p-6 space-y-4 text-xs">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-lg bg-red-50 text-[#DC1726] flex items-center justify-center shrink-0">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[#171717]">Reject Admission Application</h3>
+                  <p className="text-[11px] text-[#737373]">
+                    {rejectTarget.student_name} ({rejectTarget.admission_no})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRejectTarget(null)}
+                className="p-1 rounded-lg hover:bg-neutral-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={confirmReject} className="space-y-4">
+              <div>
+                <label className="block font-semibold text-[#171717] mb-1.5">
+                  Rejection Reason *
+                </label>
+                <textarea
+                  rows={3}
+                  required
+                  placeholder="Enter the clear reason for rejecting this admission application..."
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-[#DC1726]/20 focus:border-[#DC1726]"
+                />
+                <p className="text-[11px] text-[#737373] mt-1">
+                  This reason will be saved to the audit log and shown when checking admission status. Login access will remain blocked.
+                </p>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRejectTarget(null)}
+                  className="px-4 py-2 rounded-lg bg-neutral-100 text-[#171717] font-medium hover:bg-neutral-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={actionBusyId === rejectTarget.id || !rejectionReason.trim()}
+                  className="px-4 py-2 rounded-lg bg-[#DC1726] text-white font-semibold hover:bg-red-700 disabled:opacity-60"
+                >
+                  {actionBusyId === rejectTarget.id ? 'Rejecting...' : 'Confirm Rejection'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

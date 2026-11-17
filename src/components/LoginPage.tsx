@@ -52,6 +52,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(initialError);
+  const [errorCode, setErrorCode] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
   const [supabaseReady, setSupabaseReady] = useState(isSupabaseClientConfigured);
   const [apiReachable, setApiReachable] = useState<boolean | null>(null);
@@ -121,9 +122,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     try {
       const res = await fetch('/api/auth/captcha');
       if (res.ok) {
-        const next = (await res.json()) as CaptchaChallengeData;
-        setCaptcha(next);
-        setCaptchaAnswer('');
+        const next = (await res.json().catch(() => null)) as CaptchaChallengeData | null;
+        if (next) {
+          setCaptcha(next);
+          setCaptchaAnswer('');
+        }
       }
     } catch {
       // ignore
@@ -136,6 +139,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     e.preventDefault();
     if (isLocked) return;
     setError('');
+    setErrorCode('');
     setInfoMsg('');
     setLoading(true);
     try {
@@ -174,8 +178,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         setAttemptsRemaining(0);
         setCaptcha(null);
         setCaptchaAnswer('');
+        setErrorCode('TOO_MANY_ATTEMPTS');
         setError('Too many attempts. Please try again later.');
       } else {
+        setErrorCode(payload.code || err?.code || '');
         if (typeof payload.attemptsRemaining === 'number') {
           setAttemptsRemaining(payload.attemptsRemaining);
         }
@@ -405,7 +411,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         )}
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-[#DC1726] font-medium">
+          <div
+            className={`mb-4 p-3.5 rounded-lg border text-xs font-medium leading-relaxed ${
+              errorCode === 'ADMISSION_PENDING' || errorCode === 'ACCOUNT_PENDING'
+                ? 'bg-amber-50 border-amber-200 text-amber-900'
+                : 'bg-red-50 border-red-200 text-[#DC1726]'
+            }`}
+          >
             {error}
           </div>
         )}

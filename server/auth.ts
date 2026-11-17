@@ -1,5 +1,10 @@
 import type { Request, Response, NextFunction } from 'express';
 import { requireSupabaseAdmin, resolveStorageUrl, supabaseAdmin } from './supabase.ts';
+import {
+  STUDENT_PENDING_LOGIN_MESSAGE,
+  STUDENT_REJECTED_LOGIN_MESSAGE,
+  getStudentApprovalState,
+} from './studentProvisioning.ts';
 
 export type RoleSlug = 'super_admin' | 'teacher' | 'parent' | 'student' | 'committee_member' | 'public';
 
@@ -28,26 +33,43 @@ export interface AuthRequest extends Request {
 export async function getUserWithPermissions(userId: string): Promise<{
   user: AuthenticatedUser | null;
   pending?: boolean;
+  pendingStudent?: boolean;
   disabled?: boolean;
+  rejected?: boolean;
 }> {
   if (!supabaseAdmin) return { user: null };
 
   const { data: profile, error } = await supabaseAdmin
     .from('profiles')
-    .select('id, user_code, username, email, mobile, full_name, role_id, status, linked_type, linked_id, photo_url, deleted_at')
+    .select('*')
     .eq('id', userId)
     .is('deleted_at', null)
     .maybeSingle();
 
   if (error || !profile) return { user: null };
-  if (profile.status === 'pending' || !profile.role_id) return { user: null, pending: true };
-  if (profile.status !== 'active') return { user: null, disabled: true };
 
-  const { data: role } = await supabaseAdmin
-    .from('roles')
-    .select('id, name, slug')
-    .eq('id', profile.role_id)
-    .maybeSingle();
+  const { data: role } = profile.role_id
+    ? await supabaseAdmin
+        .from('roles')
+        .select('id, name, slug')
+        .eq('id', profile.role_id)
+        .maybeSingle()
+    : { data: null };
+
+  const isStudentAccount = role?.slug === 'student' || profile.linked_type === 'student';
+
+  if (isStudentAccount) {
+    const state = await getStudentApprovalState(supabaseAdmin, profile, role?.slug);
+    if (state === 'pending') {
+      return { user: null, pending: true, pendingStudent: true };
+    }
+    if (state === 'rejected') {
+      return { user: null, disabled: true, rejected: true };
+    }
+  } else {
+    if (profile.status === 'pending' || !profile.role_id) return { user: null, pending: true };
+    if (profile.status !== 'active') return { user: null, disabled: true };
+  }
 
   if (!role) return { user: null, pending: true };
 
@@ -103,10 +125,22 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
     }
 
     const resolved = await getUserWithPermissions(data.user.id);
+    if (resolved.pendingStudent) {
+      return res.status(403).json({
+        error: STUDENT_PENDING_LOGIN_MESSAGE,
+        code: 'ADMISSION_PENDING',
+      });
+    }
     if (resolved.pending) {
       return res.status(403).json({
         error: 'Your account is pending administrator approval and role assignment.',
         code: 'ACCOUNT_PENDING',
+      });
+    }
+    if (resolved.rejected) {
+      return res.status(403).json({
+        error: STUDENT_REJECTED_LOGIN_MESSAGE,
+        code: 'ADMISSION_REJECTED',
       });
     }
     if (resolved.disabled) {

@@ -1,50 +1,106 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, apiRequest, setStoredToken } from './lib/api.ts';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { ApiError, apiRequest, getStoredToken, setStoredToken } from './lib/api.ts';
 import { initSupabaseClient, isSupabaseClientConfigured, supabase } from './lib/supabase.ts';
 import { Language } from './i18n/translations.ts';
 import { MadrasaSettings, NavModuleId, NotificationItem, User } from './types.ts';
-import { LoginPage } from './components/LoginPage.tsx';
 import { SIDEBAR_ITEMS, Sidebar } from './components/Sidebar.tsx';
 import { TopBar } from './components/TopBar.tsx';
 import { MadrasaLogo } from './components/MadrasaLogo.tsx';
 import { HomePage, PublicHomeData } from './pages/HomePage.tsx';
-import { PublicAdmissionPage } from './pages/PublicAdmissionPage.tsx';
-import { PublicCheckResultPage } from './pages/PublicCheckResultPage.tsx';
-import { DashboardPage } from './pages/DashboardPage.tsx';
-import { SuperAdminPage } from './pages/SuperAdminPage.tsx';
-import { AdmissionsPage } from './pages/AdmissionsPage.tsx';
-import { StudentsPage } from './pages/StudentsPage.tsx';
-import { TeachersPage } from './pages/TeachersPage.tsx';
-import { ParentsPage } from './pages/ParentsPage.tsx';
-import { ClassesPage } from './pages/ClassesPage.tsx';
-import { SubjectsPage } from './pages/SubjectsPage.tsx';
-import { AttendancePage } from './pages/AttendancePage.tsx';
-import { ExaminationsPage } from './pages/ExaminationsPage.tsx';
-import { ResultsPage } from './pages/ResultsPage.tsx';
-import { CommitteePage } from './pages/CommitteePage.tsx';
-import { ChatsPage } from './pages/ChatsPage.tsx';
-import { LoginDetailsPage } from './pages/LoginDetailsPage.tsx';
-import { HomeworkPage } from './pages/HomeworkPage.tsx';
-import { OnlineClassesPage } from './pages/OnlineClassesPage.tsx';
-import { NoticesPage } from './pages/NoticesPage.tsx';
-import { ProgramsPage } from './pages/ProgramsPage.tsx';
-import { FeedPage } from './pages/FeedPage.tsx';
-import { ReportsPage } from './pages/ReportsPage.tsx';
-import { ActivityLogsPage } from './pages/ActivityLogsPage.tsx';
-import { ProfilePage } from './pages/ProfilePage.tsx';
-import { ContactUsPage } from './pages/ContactUsPage.tsx';
+
+const LoginPage = lazy(() => import('./components/LoginPage.tsx').then((m) => ({ default: m.LoginPage })));
+const PublicAdmissionPage = lazy(() =>
+  import('./pages/PublicAdmissionPage.tsx').then((m) => ({ default: m.PublicAdmissionPage }))
+);
+const PublicCheckResultPage = lazy(() =>
+  import('./pages/PublicCheckResultPage.tsx').then((m) => ({ default: m.PublicCheckResultPage }))
+);
+const DashboardPage = lazy(() => import('./pages/DashboardPage.tsx').then((m) => ({ default: m.DashboardPage })));
+const SuperAdminPage = lazy(() => import('./pages/SuperAdminPage.tsx').then((m) => ({ default: m.SuperAdminPage })));
+const AdmissionsPage = lazy(() => import('./pages/AdmissionsPage.tsx').then((m) => ({ default: m.AdmissionsPage })));
+const StudentsPage = lazy(() => import('./pages/StudentsPage.tsx').then((m) => ({ default: m.StudentsPage })));
+const TeachersPage = lazy(() => import('./pages/TeachersPage.tsx').then((m) => ({ default: m.TeachersPage })));
+const ParentsPage = lazy(() => import('./pages/ParentsPage.tsx').then((m) => ({ default: m.ParentsPage })));
+const ClassesPage = lazy(() => import('./pages/ClassesPage.tsx').then((m) => ({ default: m.ClassesPage })));
+const SubjectsPage = lazy(() => import('./pages/SubjectsPage.tsx').then((m) => ({ default: m.SubjectsPage })));
+const AttendancePage = lazy(() => import('./pages/AttendancePage.tsx').then((m) => ({ default: m.AttendancePage })));
+const ExaminationsPage = lazy(() =>
+  import('./pages/ExaminationsPage.tsx').then((m) => ({ default: m.ExaminationsPage }))
+);
+const ResultsPage = lazy(() => import('./pages/ResultsPage.tsx').then((m) => ({ default: m.ResultsPage })));
+const CommitteePage = lazy(() => import('./pages/CommitteePage.tsx').then((m) => ({ default: m.CommitteePage })));
+const ChatsPage = lazy(() => import('./pages/ChatsPage.tsx').then((m) => ({ default: m.ChatsPage })));
+const LoginDetailsPage = lazy(() =>
+  import('./pages/LoginDetailsPage.tsx').then((m) => ({ default: m.LoginDetailsPage }))
+);
+const HomeworkPage = lazy(() => import('./pages/HomeworkPage.tsx').then((m) => ({ default: m.HomeworkPage })));
+const OnlineClassesPage = lazy(() =>
+  import('./pages/OnlineClassesPage.tsx').then((m) => ({ default: m.OnlineClassesPage }))
+);
+const NoticesPage = lazy(() => import('./pages/NoticesPage.tsx').then((m) => ({ default: m.NoticesPage })));
+const ProgramsPage = lazy(() => import('./pages/ProgramsPage.tsx').then((m) => ({ default: m.ProgramsPage })));
+const FeedPage = lazy(() => import('./pages/FeedPage.tsx').then((m) => ({ default: m.FeedPage })));
+const ReportsPage = lazy(() => import('./pages/ReportsPage.tsx').then((m) => ({ default: m.ReportsPage })));
+const ActivityLogsPage = lazy(() =>
+  import('./pages/ActivityLogsPage.tsx').then((m) => ({ default: m.ActivityLogsPage }))
+);
+const ProfilePage = lazy(() => import('./pages/ProfilePage.tsx').then((m) => ({ default: m.ProfilePage })));
+const ContactUsPage = lazy(() => import('./pages/ContactUsPage.tsx').then((m) => ({ default: m.ContactUsPage })));
 
 type PublicView = 'home' | 'login' | 'admission' | 'check_result';
 
+const PUBLIC_HOME_CACHE_KEY = 'madrasa_public_home_v1';
+
+function readCachedPublicHome(): PublicHomeData | null {
+  try {
+    const raw = localStorage.getItem(PUBLIC_HOME_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && 'classes' in parsed) {
+      return parsed as PublicHomeData;
+    }
+  } catch {
+    // ignore corrupt cache
+  }
+  return null;
+}
+
+function hasLocalSessionHint(): boolean {
+  if (getStoredToken()) return true;
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i);
+      if (k && /^sb-.*-auth-token$/i.test(k)) {
+        return true;
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return false;
+}
+
+const PageLoaderFallback: React.FC<{ label?: string }> = ({ label = 'Loading module...' }) => (
+  <div className="min-h-[260px] flex items-center justify-center p-6">
+    <div className="text-center space-y-2">
+      <div className="w-7 h-7 rounded-full border-2 border-[#DC1726] border-t-transparent animate-spin mx-auto" />
+      <p className="text-xs font-medium text-[#737373]">{label}</p>
+    </div>
+  </div>
+);
+
 export default function App() {
+  const cachedHomeRef = useRef<PublicHomeData | null>(readCachedPublicHome());
+  const initialHasTokenRef = useRef<boolean>(hasLocalSessionHint());
+
   const [user, setUser] = useState<User | null>(null);
   const [pendingNotice, setPendingNotice] = useState<string | null>(null);
   const [loginMode, setLoginMode] = useState<'login' | 'forgot' | 'reset'>('login');
-  const [settings, setSettings] = useState<MadrasaSettings | null>(null);
-  const [publicData, setPublicData] = useState<PublicHomeData | null>(null);
+  const [settings, setSettings] = useState<MadrasaSettings | null>(cachedHomeRef.current?.settings || null);
+  const [publicData, setPublicData] = useState<PublicHomeData | null>(cachedHomeRef.current);
   const [publicView, setPublicView] = useState<PublicView>('home');
   const [publicAdmissionSection, setPublicAdmissionSection] = useState<'form' | 'status'>('form');
-  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [checkingAuth, setCheckingAuth] = useState(initialHasTokenRef.current);
   const [activeModule, setActiveModule] = useState<NavModuleId>('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
   const [supabaseReady, setSupabaseReady] = useState(isSupabaseClientConfigured);
@@ -65,10 +121,16 @@ export default function App() {
     try {
       const res = await fetch('/api/public/home');
       if (res.ok) {
-        const data = (await res.json()) as PublicHomeData;
+        const data = (await res.json().catch(() => null)) as PublicHomeData | null;
+        if (!data) return;
         setPublicData(data);
         if (data.settings) {
           setSettings((prev) => prev || data.settings);
+        }
+        try {
+          localStorage.setItem(PUBLIC_HOME_CACHE_KEY, JSON.stringify(data));
+        } catch {
+          // ignore quota exceeded
         }
       }
     } catch {
@@ -86,38 +148,53 @@ export default function App() {
     }
   }, []);
 
-  const fetchMe = useCallback(async (options?: { silent?: boolean; resetModule?: boolean }) => {
-    const silent = Boolean(options?.silent);
-    const resetModule = options?.resetModule !== false;
-    if (!silent) setCheckingAuth(true);
-    setPendingNotice(null);
-    try {
-      const res = await apiRequest<{ user: User; settings: MadrasaSettings }>('/api/auth/me');
-      currentUserIdRef.current = res.user?.id || null;
-      setUser(res.user);
-      setSettings(res.settings);
-      if (resetModule) setActiveModule('dashboard');
-      loadNotifications();
-    } catch (err: any) {
-      currentUserIdRef.current = null;
-      setUser(null);
-      if (err instanceof ApiError && err.status === 403 && err.code === 'ACCOUNT_PENDING') {
-        setPendingNotice(err.message);
-      } else {
-        setStoredToken(null);
+  const fetchMe = useCallback(
+    async (options?: { silent?: boolean; resetModule?: boolean; skipPublicFallback?: boolean }) => {
+      const silent = Boolean(options?.silent);
+      const resetModule = options?.resetModule !== false;
+      if (!silent) setCheckingAuth(true);
+      setPendingNotice(null);
+      try {
+        const res = await apiRequest<{ user: User; settings: MadrasaSettings }>('/api/auth/me');
+        currentUserIdRef.current = res.user?.id || null;
+        setUser(res.user);
+        setSettings(res.settings);
+        if (resetModule) setActiveModule('dashboard');
+        loadNotifications();
+      } catch (err: any) {
+        currentUserIdRef.current = null;
+        setUser(null);
+        if (
+          err instanceof ApiError &&
+          err.status === 403 &&
+          (err.code === 'ACCOUNT_PENDING' || err.code === 'ADMISSION_PENDING' || err.code === 'ADMISSION_REJECTED')
+        ) {
+          setStoredToken(null);
+          setPendingNotice(err.message);
+        } else {
+          setStoredToken(null);
+        }
+        if (!options?.skipPublicFallback) {
+          await loadPublicHome();
+        }
+      } finally {
+        if (!silent) setCheckingAuth(false);
       }
-      await loadPublicHome();
-    } finally {
-      if (!silent) setCheckingAuth(false);
-    }
-  }, [loadNotifications, loadPublicHome]);
+    },
+    [loadNotifications, loadPublicHome]
+  );
 
   useEffect(() => {
     initSupabaseClient().then((ready) => {
       if (ready) setSupabaseReady(true);
     });
-    fetchMe({ silent: false, resetModule: true });
-  }, [fetchMe]);
+    if (initialHasTokenRef.current) {
+      fetchMe({ silent: false, resetModule: true });
+    } else {
+      loadPublicHome();
+      fetchMe({ silent: true, resetModule: true, skipPublicFallback: true });
+    }
+  }, [fetchMe, loadPublicHome]);
 
   useEffect(() => {
     if (!supabaseReady || !supabase) return;
@@ -282,57 +359,63 @@ export default function App() {
   if (!user) {
     if (publicView === 'login') {
       return (
-        <LoginPage
-          lang={lang}
-          onSuccess={handleLoginSuccess}
-          initialMode={loginMode}
-          onBackHome={() => {
-            setLoginMode('login');
-            setPublicView('home');
-          }}
-        />
+        <Suspense fallback={<PageLoaderFallback label="Opening Login Portal..." />}>
+          <LoginPage
+            lang={lang}
+            onSuccess={handleLoginSuccess}
+            initialMode={loginMode}
+            onBackHome={() => {
+              setLoginMode('login');
+              setPublicView('home');
+            }}
+          />
+        </Suspense>
       );
     }
     if (publicView === 'admission') {
       return (
-        <PublicAdmissionPage
-          settings={settings || publicData?.settings || null}
-          admissionsOpen={
-            publicData?.admissionsOpen !== false &&
-            (settings?.admissions_open ?? publicData?.settings?.admissions_open) !== false
-          }
-          classes={publicData?.classes || []}
-          initialSection={publicAdmissionSection}
-          onBackHome={() => {
-            setPublicView('home');
-            loadPublicHome();
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }}
-          onGoLogin={() => {
-            setLoginMode('login');
-            setPublicView('login');
-          }}
-        />
+        <Suspense fallback={<PageLoaderFallback label="Loading Online Admission Form..." />}>
+          <PublicAdmissionPage
+            settings={settings || publicData?.settings || null}
+            admissionsOpen={
+              publicData?.admissionsOpen !== false &&
+              (settings?.admissions_open ?? publicData?.settings?.admissions_open) !== false
+            }
+            classes={publicData?.classes || []}
+            initialSection={publicAdmissionSection}
+            onBackHome={() => {
+              setPublicView('home');
+              loadPublicHome();
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            onGoLogin={() => {
+              setLoginMode('login');
+              setPublicView('login');
+            }}
+          />
+        </Suspense>
       );
     }
     if (publicView === 'check_result') {
       return (
-        <PublicCheckResultPage
-          settings={settings || publicData?.settings || null}
-          resultsOpen={
-            publicData?.resultsOpen !== false &&
-            (settings?.results_open ?? publicData?.settings?.results_open) !== false
-          }
-          onBackHome={() => {
-            setPublicView('home');
-            loadPublicHome();
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }}
-          onGoLogin={() => {
-            setLoginMode('login');
-            setPublicView('login');
-          }}
-        />
+        <Suspense fallback={<PageLoaderFallback label="Loading Result Verification..." />}>
+          <PublicCheckResultPage
+            settings={settings || publicData?.settings || null}
+            resultsOpen={
+              publicData?.resultsOpen !== false &&
+              (settings?.results_open ?? publicData?.settings?.results_open) !== false
+            }
+            onBackHome={() => {
+              setPublicView('home');
+              loadPublicHome();
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            onGoLogin={() => {
+              setLoginMode('login');
+              setPublicView('login');
+            }}
+          />
+        </Suspense>
       );
     }
     return (
@@ -481,7 +564,9 @@ export default function App() {
         />
 
         <main className="flex-1 p-4 sm:p-6">
-          {renderModule()}
+          <Suspense fallback={<PageLoaderFallback />}>
+            {renderModule()}
+          </Suspense>
         </main>
       </div>
     </div>

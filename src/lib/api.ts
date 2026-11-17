@@ -1,4 +1,5 @@
 import { supabase } from './supabase.ts';
+import { compressImageForUpload, formatHttpErrorMessage, safeReadJson } from './imageUpload.ts';
 
 const TOKEN_KEY = 'madrasa_auth_token';
 
@@ -14,7 +15,26 @@ export function setStoredToken(token: string | null) {
   }
 }
 
+function isTokenFresh(token: string): boolean {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(atob(base64));
+    if (typeof json?.exp === 'number') {
+      return json.exp * 1000 - Date.now() > 60_000;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function resolveAccessToken(): Promise<string | null> {
+  const cached = getStoredToken();
+  if (cached && isTokenFresh(cached)) {
+    return cached;
+  }
   if (supabase) {
     try {
       const { data } = await supabase.auth.getSession();
@@ -26,7 +46,7 @@ async function resolveAccessToken(): Promise<string | null> {
       // fall through to sessionStorage token
     }
   }
-  return getStoredToken();
+  return cached;
 }
 
 export class ApiError extends Error {
@@ -62,19 +82,24 @@ export async function apiRequest<T = any>(
     credentials: 'include',
   });
 
-  const data = await res.json().catch(() => ({}));
+  const { data, rawText } = await safeReadJson(res);
   if (!res.ok) {
-    throw new ApiError(data?.error || `Request failed (${res.status})`, res.status, data?.code, data);
+    const message = formatHttpErrorMessage(res.status, data, rawText, 'Request failed');
+    throw new ApiError(message, res.status, data?.code, data || {});
   }
-  return data as T;
+  if (data === null && rawText.trim()) {
+    throw new ApiError('Server returned an unexpected non-JSON response. Please try again.', res.status);
+  }
+  return (data ?? {}) as T;
 }
 
 export async function uploadFile(
   file: File,
   bucket = 'madrasa-assets'
 ): Promise<{ url: string; storedRef?: string; name: string; mimetype: string; size: number }> {
+  const preparedFile = await compressImageForUpload(file);
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append('file', preparedFile);
   const qs = bucket ? `?bucket=${encodeURIComponent(bucket)}` : '';
   return apiRequest(`/api/upload${qs}`, {
     method: 'POST',

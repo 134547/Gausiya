@@ -71,7 +71,7 @@ export async function resolveImageDataUrl(url: string): Promise<string> {
     try {
       const proxyRes = await fetch(`/api/public/image-data?url=${encodeURIComponent(url)}`);
       if (proxyRes.ok) {
-        const data = (await proxyRes.json()) as { dataUrl?: string };
+        const data = (await proxyRes.json().catch(() => null)) as { dataUrl?: string } | null;
         if (data?.dataUrl && data.dataUrl.startsWith('data:image/')) {
           return data.dataUrl;
         }
@@ -366,4 +366,132 @@ export async function downloadFeedPostCard(
     'madrasa-feed-post'
   );
   triggerBlobDownload(blob, `${fileSlug}.png`);
+}
+
+export interface DownloadableCredentials {
+  institutionName?: string;
+  student_name?: string;
+  father_name?: string;
+  reference_no?: string;
+  official_admission_no?: string;
+  student_code?: string;
+  username?: string;
+  temporary_password?: string;
+  class_name?: string;
+  admission_date?: string;
+}
+
+export async function downloadLoginCredentialsCard(creds: DownloadableCredentials): Promise<void> {
+  const width = 1080;
+  const height = 760;
+  const pad = 48;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas not supported in this browser');
+
+  // Background
+  ctx.fillStyle = '#FAFAFA';
+  ctx.fillRect(0, 0, width, height);
+
+  // Header
+  const headerH = 148;
+  const grad = ctx.createLinearGradient(0, 0, width, headerH);
+  grad.addColorStop(0, '#141E30');
+  grad.addColorStop(1, '#243B55');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, width, headerH);
+
+  ctx.fillStyle = '#DC1726';
+  ctx.fillRect(0, 0, width, 8);
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = '700 30px "Plus Jakarta Sans", system-ui, -apple-system, sans-serif';
+  ctx.fillText(creds.institutionName || 'Madrasa Ghausia Razvia', pad, 56);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = '500 18px "Plus Jakarta Sans", system-ui, -apple-system, sans-serif';
+  ctx.fillText('Islamnagar, Ramgarh, Palamu, Jharkhand · Student Portal Credentials Slip', pad, 92);
+
+  ctx.fillStyle = '#FCA5A5';
+  ctx.font = '700 15px "Plus Jakarta Sans", system-ui, -apple-system, sans-serif';
+  ctx.fillText('STATUS: PENDING SUPER ADMIN APPROVAL', pad, 124);
+
+  // Details Card
+  let y = headerH + 34;
+  ctx.fillStyle = '#FFFFFF';
+  ctx.strokeStyle = '#E5E5E5';
+  ctx.lineWidth = 2;
+  ctx.fillRect(pad, y, width - pad * 2, 230);
+  ctx.strokeRect(pad, y, width - pad * 2, 230);
+
+  const col1X = pad + 28;
+  const col2X = width / 2 + 16;
+
+  const drawField = (x: number, fy: number, label: string, val: string, color = '#171717') => {
+    ctx.fillStyle = '#737373';
+    ctx.font = '600 14px "Plus Jakarta Sans", system-ui, sans-serif';
+    ctx.fillText(label.toUpperCase(), x, fy);
+    ctx.fillStyle = color;
+    ctx.font = '700 20px "Plus Jakarta Sans", system-ui, sans-serif';
+    ctx.fillText(val || '—', x, fy + 26);
+  };
+
+  drawField(col1X, y + 40, 'Student Name', creds.student_name || '—');
+  drawField(col2X, y + 40, 'Father Name', creds.father_name || '—');
+  drawField(col1X, y + 112, 'Application Reference No', creds.reference_no || '—', '#DC1726');
+  drawField(col2X, y + 112, 'Admission Number', creds.official_admission_no || 'Pending Approval');
+  drawField(col1X, y + 184, 'Class / Course', creds.class_name || 'To be assigned');
+  drawField(col2X, y + 184, 'Account Status', 'Pending Approval', '#D97706');
+
+  // Credentials Box
+  y += 256;
+  ctx.fillStyle = '#FEF2F2';
+  ctx.strokeStyle = '#DC1726';
+  ctx.lineWidth = 2;
+  ctx.fillRect(pad, y, width - pad * 2, 165);
+  ctx.strokeRect(pad, y, width - pad * 2, 165);
+
+  ctx.fillStyle = '#DC1726';
+  ctx.font = '700 15px "Plus Jakarta Sans", system-ui, sans-serif';
+  ctx.fillText('CONFIDENTIAL PORTAL LOGIN CREDENTIALS', pad + 28, y + 34);
+
+  // Inner boxes
+  const boxW = (width - pad * 2 - 80) / 2;
+  ctx.fillStyle = '#FFFFFF';
+  ctx.strokeStyle = '#FECACA';
+  ctx.fillRect(pad + 28, y + 52, boxW, 88);
+  ctx.strokeRect(pad + 28, y + 52, boxW, 88);
+  ctx.fillRect(pad + 52 + boxW, y + 52, boxW, 88);
+  ctx.strokeRect(pad + 52 + boxW, y + 52, boxW, 88);
+
+  ctx.fillStyle = '#737373';
+  ctx.font = '600 13px "Plus Jakarta Sans", system-ui, sans-serif';
+  ctx.fillText('USERNAME', pad + 44, y + 80);
+  ctx.fillText('TEMPORARY PASSWORD', pad + 68 + boxW, y + 80);
+
+  ctx.fillStyle = '#171717';
+  ctx.font = '700 24px monospace';
+  ctx.fillText(creds.username || '—', pad + 44, y + 116);
+
+  ctx.fillStyle = '#DC1726';
+  ctx.fillText(creds.temporary_password || '—', pad + 68 + boxW, y + 116);
+
+  // Notice + Footer
+  y += 195;
+  ctx.fillStyle = '#525252';
+  ctx.font = '500 15px "Plus Jakarta Sans", system-ui, sans-serif';
+  ctx.fillText('Please save your username and password carefully. Login unlocks only after Super Admin approval.', pad, y);
+
+  ctx.fillStyle = '#737373';
+  ctx.font = '500 14px "Plus Jakarta Sans", system-ui, sans-serif';
+  ctx.fillText('Founder: Dilshad Ansari S/o MD Ayub Ansari · Contact: 7209629509 / 6202736648', pad, height - 30);
+
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('Failed to generate credentials slip image');
+
+  const slug = sanitizeFileName(`credentials-${creds.reference_no || creds.username || 'student'}`, 'student-credentials');
+  triggerBlobDownload(blob, `${slug}.png`);
 }
