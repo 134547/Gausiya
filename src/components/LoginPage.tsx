@@ -11,6 +11,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { apiRequest, setStoredSession } from '../lib/api.ts';
+import { safeReadJson } from '../lib/imageUpload.ts';
 import { initSupabaseClient, isSupabaseClientConfigured, missingSupabaseClientEnv, supabase } from '../lib/supabase.ts';
 import { User } from '../types.ts';
 import { Language } from '../i18n/translations.ts';
@@ -93,34 +94,47 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   }, [initialError]);
 
   useEffect(() => {
+    let active = true;
     initSupabaseClient().then((ready) => {
-      if (ready) setSupabaseReady(true);
+      if (active && ready) setSupabaseReady(true);
     });
-    fetch('/api/auth/setup-status')
-      .then(async (r) => {
-        if (!r.ok) {
-          setApiReachable(false);
-          return null;
+
+    (async () => {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const res = await fetch('/api/auth/setup-status', {
+            headers: { Accept: 'application/json' },
+          });
+          const { data } = await safeReadJson<{ needsSetup?: boolean }>(res);
+          if (res.ok && data) {
+            if (!active) return;
+            setApiReachable(true);
+            if (data.needsSetup) setNeedsSetup(true);
+            return;
+          }
+        } catch {
+          // retry once
         }
-        setApiReachable(true);
-        return r.json().catch(() => null);
-      })
-      .then((data) => {
-        if (data?.needsSetup) {
-          setNeedsSetup(true);
+        if (attempt < 2) {
+          await new Promise((r) => window.setTimeout(r, 700));
         }
-      })
-      .catch(() => {
-        setApiReachable(false);
-      });
+      }
+      if (active) setApiReachable(false);
+    })();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const refreshCaptcha = async () => {
     setRefreshingCaptcha(true);
     try {
-      const res = await fetch('/api/auth/captcha');
+      const res = await fetch('/api/auth/captcha', {
+        headers: { Accept: 'application/json' },
+      });
       if (res.ok) {
-        const next = (await res.json().catch(() => null)) as CaptchaChallengeData | null;
+        const { data: next } = await safeReadJson<CaptchaChallengeData>(res);
         if (next) {
           setCaptcha(next);
           setCaptchaAnswer('');

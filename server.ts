@@ -37,17 +37,35 @@ async function startServer() {
         return res.status(404).json({ error: 'API endpoint not found' });
       }
     });
-    app.use(vite.middlewares);
+    app.use((req, res, next) => {
+      if (req.originalUrl === '/api' || req.originalUrl.startsWith('/api/') || req.originalUrl.startsWith('/api?')) {
+        if (!res.headersSent) {
+          return res.status(404).json({ error: 'API endpoint not found' });
+        }
+        return;
+      }
+      return vite.middlewares(req, res, next);
+    });
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      if (req.path.startsWith('/api')) {
+      if (req.path === '/api' || req.path.startsWith('/api/')) {
         return res.status(404).json({ error: 'API endpoint not found' });
       }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (res.headersSent) return;
+    if (req.originalUrl === '/api' || req.originalUrl.startsWith('/api/') || req.originalUrl.startsWith('/api?')) {
+      return res.status(typeof err?.status === 'number' ? err.status : 500).json({
+        error: err?.message || 'Internal server error',
+      });
+    }
+    res.status(500).send('Internal server error');
+  });
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(
@@ -55,6 +73,14 @@ async function startServer() {
     );
   });
 }
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Promise Rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
 
 startServer().catch((err) => {
   console.error('Failed to start server:', err);

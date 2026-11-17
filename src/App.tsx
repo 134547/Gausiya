@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, apiRequest, clearStoredSession, getStoredRefreshToken, getStoredToken, setStoredSession } from './lib/api.ts';
+import { safeReadJson } from './lib/imageUpload.ts';
 import { initSupabaseClient, isSupabaseClientConfigured, supabase } from './lib/supabase.ts';
 import { Language } from './i18n/translations.ts';
 import { MadrasaSettings, NavModuleId, NotificationItem, User } from './types.ts';
@@ -120,23 +121,32 @@ export default function App() {
   }, []);
 
   const loadPublicHome = useCallback(async () => {
-    try {
-      const res = await fetch('/api/public/home');
-      if (res.ok) {
-        const data = (await res.json().catch(() => null)) as PublicHomeData | null;
-        if (!data) return;
-        setPublicData(data);
-        if (data.settings) {
-          setSettings((prev) => prev || data.settings);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetch('/api/public/home', {
+          headers: { Accept: 'application/json' },
+        });
+        if (res.ok) {
+          const { data } = await safeReadJson<PublicHomeData>(res);
+          if (data) {
+            setPublicData(data);
+            if (data.settings) {
+              setSettings((prev) => prev || data.settings);
+            }
+            try {
+              localStorage.setItem(PUBLIC_HOME_CACHE_KEY, JSON.stringify(data));
+            } catch {
+              // ignore quota exceeded
+            }
+            return;
+          }
         }
-        try {
-          localStorage.setItem(PUBLIC_HOME_CACHE_KEY, JSON.stringify(data));
-        } catch {
-          // ignore quota exceeded
-        }
+      } catch {
+        // retry on transient network error
       }
-    } catch {
-      // ignore
+      if (attempt < 2) {
+        await new Promise((r) => window.setTimeout(r, 700));
+      }
     }
   }, []);
 

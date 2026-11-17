@@ -34,26 +34,39 @@ export async function initSupabaseClient(): Promise<boolean> {
   if (supabase && isSupabaseClientConfigured) return true;
   if (!initPromise) {
     initPromise = (async () => {
-      try {
-        const res = await fetch('/api/public/config');
-        if (!res.ok) return false;
-        const data = (await res.json().catch(() => null)) as {
-          supabaseUrl?: string;
-          supabaseAnonKey?: string;
-        } | null;
-        const url = (data?.supabaseUrl || '').trim();
-        const anonKey = (data?.supabaseAnonKey || '').trim();
-        if (url && anonKey) {
-          supabaseUrl = url;
-          supabaseAnonKey = anonKey;
-          isSupabaseClientConfigured = true;
-          missingSupabaseClientEnv = [];
-          supabase = buildClient(url, anonKey);
-          return true;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const res = await fetch('/api/public/config', {
+            headers: { Accept: 'application/json' },
+          });
+          if (res.ok) {
+            const text = await res.text().catch(() => '');
+            const trimmed = text.trim();
+            if (trimmed && !trimmed.startsWith('<')) {
+              const data = JSON.parse(trimmed) as {
+                supabaseUrl?: string;
+                supabaseAnonKey?: string;
+              };
+              const url = (data?.supabaseUrl || '').trim();
+              const anonKey = (data?.supabaseAnonKey || '').trim();
+              if (url && anonKey) {
+                supabaseUrl = url;
+                supabaseAnonKey = anonKey;
+                isSupabaseClientConfigured = true;
+                missingSupabaseClientEnv = [];
+                supabase = buildClient(url, anonKey);
+                return true;
+              }
+            }
+          }
+        } catch {
+          // retry on transient startup errors
         }
-      } catch {
-        // ignore network errors
+        if (attempt < 2) {
+          await new Promise((r) => window.setTimeout(r, 700));
+        }
       }
+      initPromise = null;
       return false;
     })();
   }

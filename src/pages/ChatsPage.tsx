@@ -1,12 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  Ban,
   Bookmark,
   Check,
   CheckCheck,
+  Copy,
   Download,
+  Eraser,
+  Info,
   Lock,
   MessageCircle,
+  MoreVertical,
   Paperclip,
   Pencil,
   Phone,
@@ -14,6 +19,8 @@ import {
   Power,
   Search,
   Send,
+  Share2,
+  ShieldOff,
   Smile,
   SmilePlus,
   Trash2,
@@ -58,6 +65,7 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'status' | 'contacts'>('chats');
   const [conversations, setConversations] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
+  const [blockedUsers, setBlockedUsers] = useState<any[]>([]);
   const [statuses, setStatuses] = useState<any[]>([]);
   const [activeConv, setActiveConv] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -88,7 +96,16 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
   const [togglingChat, setTogglingChat] = useState(false);
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [connectingUserId, setConnectingUserId] = useState<string | null>(null);
+  const [openMenu, setOpenMenu] = useState<{ scope: 'sidebar' | 'header' | 'conv' | 'contact'; id?: string } | null>(null);
   const [deleteChannelTarget, setDeleteChannelTarget] = useState<any>(null);
+  const [deleteContactTarget, setDeleteContactTarget] = useState<any>(null);
+  const [clearChatTarget, setClearChatTarget] = useState<any>(null);
+  const [clearAllConfirmOpen, setClearAllConfirmOpen] = useState(false);
+  const [blockTarget, setBlockTarget] = useState<{ user: any; action: 'block' | 'unblock' } | null>(null);
+  const [shareContactTarget, setShareContactTarget] = useState<any>(null);
+  const [shareSendingConvId, setShareSendingConvId] = useState<string | null>(null);
+  const [contactInfoTarget, setContactInfoTarget] = useState<{ contact: any; conv?: any } | null>(null);
+  const [blockedListOpen, setBlockedListOpen] = useState(false);
   const [deleteMsgTarget, setDeleteMsgTarget] = useState<any>(null);
   const [editingMsg, setEditingMsg] = useState<{ id: string; originalText: string } | null>(null);
   const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
@@ -108,6 +125,13 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
   }, [activeConv?.id]);
 
   useEffect(() => {
+    if (!openMenu) return;
+    const close = () => setOpenMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [openMenu]);
+
+  useEffect(() => {
     if (typeof settings?.chats_open === 'boolean') {
       setChatsOpen(settings.chats_open);
     }
@@ -124,9 +148,23 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
     setReactionPickerMsgId(null);
     setReactionFullPickerMsgId(null);
     setComposerEmojiOpen(false);
+    setOpenMenu(null);
     try {
-      const res = await apiRequest<{ messages: any[] }>(`/api/chats/${conv.id}/messages`);
+      const res = await apiRequest<{ messages: any[]; blocked_by_me?: boolean; blocked_by_other?: boolean }>(
+        `/api/chats/${conv.id}/messages`
+      );
       setMessages(res.messages || []);
+      if (typeof res.blocked_by_me === 'boolean' || typeof res.blocked_by_other === 'boolean') {
+        setActiveConv((prev: any) =>
+          prev && prev.id === conv.id
+            ? {
+                ...prev,
+                blocked_by_me: Boolean(res.blocked_by_me),
+                blocked_by_other: Boolean(res.blocked_by_other),
+              }
+            : prev
+        );
+      }
     } catch (e: any) {
       setErr(e.message);
     }
@@ -135,12 +173,13 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
   const loadChats = async (preferConvId?: string, silent = false) => {
     try {
       const [res, statusRes, stListRes] = await Promise.all([
-        apiRequest<{ conversations: any[]; contacts: any[] }>('/api/chats'),
+        apiRequest<{ conversations: any[]; contacts: any[]; blockedUsers?: any[] }>('/api/chats'),
         apiRequest<{ chatsOpen: boolean }>('/api/chats/status'),
         apiRequest<{ statuses: any[] }>('/api/chats/statuses').catch(() => ({ statuses: [] })),
       ]);
       setConversations(res.conversations || []);
       setContacts(res.contacts || []);
+      setBlockedUsers(res.blockedUsers || []);
       setStatuses(stListRes.statuses || []);
       if (typeof statusRes?.chatsOpen === 'boolean') {
         setChatsOpen(statusRes.chatsOpen);
@@ -166,8 +205,21 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
     const timer = window.setInterval(() => {
       loadChats(undefined, true);
       if (activeConvIdRef.current) {
-        apiRequest<{ messages: any[] }>(`/api/chats/${activeConvIdRef.current}/messages`)
-          .then((r) => setMessages(r.messages || []))
+        apiRequest<{ messages: any[]; blocked_by_me?: boolean; blocked_by_other?: boolean }>(
+          `/api/chats/${activeConvIdRef.current}/messages`
+        )
+          .then((r) => {
+            setMessages(r.messages || []);
+            setActiveConv((prev: any) =>
+              prev && prev.id === activeConvIdRef.current
+                ? {
+                    ...prev,
+                    blocked_by_me: Boolean(r.blocked_by_me),
+                    blocked_by_other: Boolean(r.blocked_by_other),
+                  }
+                : prev
+            );
+          })
           .catch(() => {});
       }
     }, 9000);
@@ -474,6 +526,7 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
   const handleDeletePersonalChannel = async () => {
     if (!deleteChannelTarget) return;
     const targetId = deleteChannelTarget.id;
+    const wasChannel = Boolean(deleteChannelTarget.is_personal_channel);
     setErr('');
     try {
       await apiRequest(`/api/chats/${targetId}`, { method: 'DELETE' });
@@ -483,11 +536,130 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
         activeConvIdRef.current = null;
         setMessages([]);
       }
-      setMsg('Personal channel deleted.');
+      setMsg(wasChannel ? 'Personal channel deleted.' : 'Chat deleted from your chat list.');
       await loadChats();
     } catch (e: any) {
       setDeleteChannelTarget(null);
-      setErr(e.message || 'Failed to delete channel');
+      setErr(e.message || 'Failed to delete chat');
+    }
+  };
+
+  const handleConfirmDeleteContact = async () => {
+    if (!deleteContactTarget) return;
+    const target = deleteContactTarget;
+    const targetId = target.id || target.user_id;
+    setErr('');
+    try {
+      await apiRequest(`/api/chats/contacts/${targetId}`, { method: 'DELETE' });
+      setDeleteContactTarget(null);
+      setContacts((prev) => prev.filter((c) => c.id !== targetId));
+      if (contactInfoTarget?.contact?.id === targetId || contactInfoTarget?.contact?.user_id === targetId) {
+        setContactInfoTarget(null);
+      }
+      setMsg(`${target.full_name} removed from your chat contacts.`);
+    } catch (e: any) {
+      setDeleteContactTarget(null);
+      setErr(e.message || 'Failed to delete contact');
+    }
+  };
+
+  const handleConfirmClearChat = async () => {
+    if (!clearChatTarget) return;
+    const target = clearChatTarget;
+    setErr('');
+    try {
+      await apiRequest(`/api/chats/${target.id}/clear`, { method: 'POST' });
+      setClearChatTarget(null);
+      if (activeConv?.id === target.id) {
+        setMessages([]);
+      }
+      setMsg(`Cleared messages in "${target.display_title || 'chat'}".`);
+      await loadChats();
+    } catch (e: any) {
+      setClearChatTarget(null);
+      setErr(e.message || 'Failed to clear chat');
+    }
+  };
+
+  const handleConfirmClearAllChats = async () => {
+    setErr('');
+    try {
+      await apiRequest('/api/chats/clear-all', { method: 'POST' });
+      setClearAllConfirmOpen(false);
+      setMessages([]);
+      setMsg('All chat histories cleared for your account.');
+      await loadChats();
+    } catch (e: any) {
+      setClearAllConfirmOpen(false);
+      setErr(e.message || 'Failed to clear all chats');
+    }
+  };
+
+  const handleConfirmBlockAction = async () => {
+    if (!blockTarget) return;
+    const { user: targetUser, action } = blockTarget;
+    const targetId = targetUser.id || targetUser.user_id;
+    setErr('');
+    try {
+      await apiRequest(`/api/chats/contacts/${targetId}/${action}`, { method: 'POST' });
+      setBlockTarget(null);
+      const isNowBlocked = action === 'block';
+      setMsg(
+        isNowBlocked
+          ? `${targetUser.full_name} blocked. They can no longer message you.`
+          : `${targetUser.full_name} unblocked.`
+      );
+      if (contactInfoTarget?.contact && (contactInfoTarget.contact.id === targetId || contactInfoTarget.contact.user_id === targetId)) {
+        setContactInfoTarget({
+          ...contactInfoTarget,
+          contact: { ...contactInfoTarget.contact, is_blocked: isNowBlocked },
+        });
+      }
+      await loadChats();
+    } catch (e: any) {
+      setBlockTarget(null);
+      setErr(e.message || `Failed to ${action} contact`);
+    }
+  };
+
+  const formatContactShareText = (contact: any) => {
+    const lines = [
+      `📇 Contact Card`,
+      `Name: ${contact.full_name || 'Unknown'}`,
+      contact.role_name ? `Role: ${contact.role_name}` : '',
+      contact.mobile ? `Phone: ${contact.mobile}` : '',
+      contact.username ? `Username: @${contact.username}` : '',
+    ].filter(Boolean);
+    return lines.join('\n');
+  };
+
+  const handleCopyContact = async (contact: any) => {
+    try {
+      await navigator.clipboard.writeText(formatContactShareText(contact));
+      setMsg(`Copied contact details for ${contact.full_name}.`);
+    } catch {
+      setErr('Unable to copy to clipboard.');
+    }
+  };
+
+  const handleSendSharedContactToConv = async (conv: any) => {
+    if (!shareContactTarget || shareSendingConvId) return;
+    setShareSendingConvId(conv.id);
+    setErr('');
+    try {
+      await apiRequest(`/api/chats/${conv.id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({
+          content: formatContactShareText(shareContactTarget),
+        }),
+      });
+      setShareContactTarget(null);
+      setMsg(`Shared ${shareContactTarget.full_name}'s contact to "${conv.display_title}".`);
+      await loadChats(conv.id);
+    } catch (e: any) {
+      setErr(e.message || 'Failed to share contact');
+    } finally {
+      setShareSendingConvId(null);
     }
   };
 
@@ -718,7 +890,7 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
           <div className="bg-[#008069] text-white">
             <div className="px-4 pt-3.5 pb-2.5 flex items-center justify-between gap-2">
               <h2 className="text-base font-bold tracking-tight">Chats</h2>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 relative">
                 <button
                   type="button"
                   disabled={creatingChannel}
@@ -743,6 +915,83 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                 >
                   <Plus className="w-4 h-4" />
                 </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenMenu((prev) => (prev?.scope === 'sidebar' ? null : { scope: 'sidebar' }));
+                  }}
+                  title="More Chat Options"
+                  aria-label="More Chat Options"
+                  className="p-1.5 rounded-md bg-white/15 hover:bg-white/25 text-white transition-colors"
+                >
+                  <MoreVertical className="w-4 h-4" />
+                </button>
+
+                {openMenu?.scope === 'sidebar' && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute end-0 top-full mt-1.5 w-52 bg-white text-[#111B21] rounded-xl border border-neutral-200 shadow-xl py-1.5 z-40 text-xs"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenMenu(null);
+                        handleQuickPersonalChannel();
+                      }}
+                      className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                    >
+                      <Bookmark className="w-3.5 h-3.5 text-[#008069]" />
+                      <span>My Personal Channel</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenMenu(null);
+                        setChatType('private');
+                        setGroupTitle('');
+                        setSelectedContacts([]);
+                        setInitialMsg('');
+                        setNewChatOpen(true);
+                      }}
+                      className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                    >
+                      <UserPlus className="w-3.5 h-3.5 text-[#008069]" />
+                      <span>New Chat / Group</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenMenu(null);
+                        setBlockedListOpen(true);
+                      }}
+                      className="w-full px-3.5 py-2 text-start flex items-center justify-between gap-2 hover:bg-[#F5F6F6]"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <Ban className="w-3.5 h-3.5 text-[#667781]" />
+                        <span>Blocked Contacts</span>
+                      </span>
+                      {blockedUsers.length > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-red-50 text-[#DC1726] text-[10px] font-bold font-mono-num">
+                          {blockedUsers.length}
+                        </span>
+                      )}
+                    </button>
+                    <div className="my-1 border-t border-neutral-100" />
+                    <button
+                      type="button"
+                      disabled={conversations.length === 0}
+                      onClick={() => {
+                        setOpenMenu(null);
+                        setClearAllConfirmOpen(true);
+                      }}
+                      className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 text-[#DC1726] hover:bg-red-50 disabled:opacity-45"
+                    >
+                      <Eraser className="w-3.5 h-3.5" />
+                      <span>All Clear Chat</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -857,14 +1106,24 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                     )}
                   </div>
                 ) : (
-                  filteredConversations.map((c) => {
+                  filteredConversations.map((c, idx) => {
                     const isSelected = activeConv?.id === c.id;
+                    const menuOpenHere = openMenu?.scope === 'conv' && openMenu?.id === c.id;
+                    const isPrivateWithOther = Boolean(!c.is_personal_channel && c.type === 'private' && c.other_user);
+                    const openUp = idx >= filteredConversations.length - 2 && idx > 0;
                     return (
-                      <button
+                      <div
                         key={c.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => selectConv(c)}
-                        className={`w-full text-start px-3.5 py-3 flex items-center gap-3 hover:bg-[#F5F6F6] transition-colors ${
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            selectConv(c);
+                          }
+                        }}
+                        className={`group relative w-full text-start px-3.5 py-3 flex items-center gap-3 hover:bg-[#F5F6F6] transition-colors cursor-pointer ${
                           isSelected ? 'bg-[#F0F2F5]' : ''
                         }`}
                       >
@@ -886,6 +1145,11 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                                   Saved
                                 </span>
                               )}
+                              {c.blocked_by_me && (
+                                <span className="px-1.5 py-0.5 rounded bg-red-50 border border-red-200 text-[9px] font-bold text-[#DC1726] shrink-0">
+                                  Blocked
+                                </span>
+                              )}
                             </span>
                             <span
                               className={`text-[10px] font-mono-num shrink-0 ${
@@ -904,14 +1168,127 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                                     ? `📞 ${c.other_user.mobile}`
                                     : 'Tap to start messaging')}
                             </span>
-                            {c.unread_count > 0 && (
-                              <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#25D366] text-white text-[10px] font-bold font-mono-num flex items-center justify-center shrink-0">
-                                {c.unread_count}
-                              </span>
-                            )}
+                            <div className="flex items-center gap-1 shrink-0 relative">
+                              {c.unread_count > 0 && (
+                                <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#25D366] text-white text-[10px] font-bold font-mono-num flex items-center justify-center">
+                                  {c.unread_count}
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenMenu((prev) =>
+                                    prev?.scope === 'conv' && prev?.id === c.id ? null : { scope: 'conv', id: c.id }
+                                  );
+                                }}
+                                title="Chat options"
+                                aria-label="Chat options"
+                                className="p-1 rounded-full text-[#667781] hover:text-[#111B21] hover:bg-neutral-200/70 transition-colors"
+                              >
+                                <MoreVertical className="w-3.5 h-3.5" />
+                              </button>
+
+                              {menuOpenHere && (
+                                <div
+                                  onClick={(e) => e.stopPropagation()}
+                                  className={`absolute end-0 ${
+                                    openUp ? 'bottom-full mb-1' : 'top-full mt-1'
+                                  } w-48 bg-white text-[#111B21] rounded-xl border border-neutral-200 shadow-xl py-1.5 z-40 text-xs`}
+                                >
+                                  {isPrivateWithOther && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenMenu(null);
+                                          setContactInfoTarget({ contact: c.other_user, conv: c });
+                                        }}
+                                        className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                                      >
+                                        <Info className="w-3.5 h-3.5 text-[#54656F]" />
+                                        <span>View Contact</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenMenu(null);
+                                          setShareContactTarget(c.other_user);
+                                        }}
+                                        className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                                      >
+                                        <Share2 className="w-3.5 h-3.5 text-[#008069]" />
+                                        <span>Share Contact</span>
+                                      </button>
+                                    </>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenu(null);
+                                      setClearChatTarget(c);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                                  >
+                                    <Eraser className="w-3.5 h-3.5 text-[#54656F]" />
+                                    <span>Clear Chat</span>
+                                  </button>
+                                  {isPrivateWithOther && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenMenu(null);
+                                        setBlockTarget({
+                                          user: c.other_user,
+                                          action: c.blocked_by_me ? 'unblock' : 'block',
+                                        });
+                                      }}
+                                      className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                                    >
+                                      {c.blocked_by_me ? (
+                                        <>
+                                          <ShieldOff className="w-3.5 h-3.5 text-[#008069]" />
+                                          <span className="text-[#008069] font-medium">Unblock Contact</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Ban className="w-3.5 h-3.5 text-amber-600" />
+                                          <span className="text-amber-700 font-medium">Block Contact</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
+                                  <div className="my-1 border-t border-neutral-100" />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenMenu(null);
+                                      setDeleteChannelTarget(c);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 text-[#DC1726] hover:bg-red-50"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>{c.is_personal_channel ? 'Delete Channel' : 'Delete Chat'}</span>
+                                  </button>
+                                  {isPrivateWithOther && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenMenu(null);
+                                        setDeleteContactTarget(c.other_user);
+                                      }}
+                                      className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 text-[#DC1726] hover:bg-red-50"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <span>Delete Contact</span>
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </button>
+                      </div>
                     );
                   })
                 )}
@@ -1062,28 +1439,122 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                   {filteredContacts.length === 0 ? (
                     <div className="p-6 text-center text-xs text-[#667781]">No contacts match your search.</div>
                   ) : (
-                    filteredContacts.map((c) => (
-                      <div key={c.id} className="px-3.5 py-2.5 flex items-center justify-between gap-2 hover:bg-[#F5F6F6]">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          {renderAvatar(c, 38)}
-                          <div className="min-w-0">
-                            <div className="text-xs font-semibold text-[#111B21] truncate">{c.full_name}</div>
-                            <div className="text-[11px] text-[#667781] truncate font-mono-num">
-                              {c.role_name}
-                              {c.mobile ? ` · ${c.mobile}` : ''} · @{c.username}
+                    filteredContacts.map((c, idx) => {
+                      const menuOpenHere = openMenu?.scope === 'contact' && openMenu?.id === c.id;
+                      const openUp = idx >= filteredContacts.length - 2 && idx > 0;
+                      return (
+                        <div key={c.id} className="relative px-3.5 py-2.5 flex items-center justify-between gap-2 hover:bg-[#F5F6F6]">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {renderAvatar(c, 38)}
+                            <div className="min-w-0">
+                              <div className="text-xs font-semibold text-[#111B21] truncate flex items-center gap-1.5">
+                                <span className="truncate">{c.full_name}</span>
+                                {c.is_blocked && (
+                                  <span className="px-1.5 py-0.5 rounded bg-red-50 border border-red-200 text-[9px] font-bold text-[#DC1726] shrink-0">
+                                    Blocked
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-[#667781] truncate font-mono-num">
+                                {c.role_name}
+                                {c.mobile ? ` · ${c.mobile}` : ''} · @{c.username}
+                              </div>
                             </div>
                           </div>
+                          <div className="flex items-center gap-1 shrink-0 relative">
+                            <button
+                              type="button"
+                              disabled={connectingUserId === c.id}
+                              onClick={() => handleConnectUser(c, false)}
+                              className="px-2.5 py-1 rounded-md border border-[#008069] text-[#008069] text-[11px] font-semibold hover:bg-[#008069] hover:text-white transition-colors"
+                            >
+                              Chat
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenMenu((prev) =>
+                                  prev?.scope === 'contact' && prev?.id === c.id ? null : { scope: 'contact', id: c.id }
+                                );
+                              }}
+                              title="Contact options"
+                              aria-label={`More options for ${c.full_name}`}
+                              className="p-1.5 rounded-full text-[#54656F] hover:text-[#111B21] hover:bg-neutral-200/70 transition-colors"
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </button>
+
+                            {menuOpenHere && (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                className={`absolute end-0 ${
+                                  openUp ? 'bottom-full mb-1' : 'top-full mt-1'
+                                } w-48 bg-white text-[#111B21] rounded-xl border border-neutral-200 shadow-xl py-1.5 z-40 text-xs`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenu(null);
+                                    setContactInfoTarget({ contact: c });
+                                  }}
+                                  className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                                >
+                                  <Info className="w-3.5 h-3.5 text-[#54656F]" />
+                                  <span>Contact Info</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenu(null);
+                                    setShareContactTarget(c);
+                                  }}
+                                  className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                                >
+                                  <Share2 className="w-3.5 h-3.5 text-[#008069]" />
+                                  <span>Share Contact</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenu(null);
+                                    setBlockTarget({
+                                      user: c,
+                                      action: c.is_blocked ? 'unblock' : 'block',
+                                    });
+                                  }}
+                                  className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                                >
+                                  {c.is_blocked ? (
+                                    <>
+                                      <ShieldOff className="w-3.5 h-3.5 text-[#008069]" />
+                                      <span className="text-[#008069] font-medium">Unblock Contact</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Ban className="w-3.5 h-3.5 text-amber-600" />
+                                      <span className="text-amber-700 font-medium">Block Contact</span>
+                                    </>
+                                  )}
+                                </button>
+                                <div className="my-1 border-t border-neutral-100" />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenu(null);
+                                    setDeleteContactTarget(c);
+                                  }}
+                                  className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 text-[#DC1726] hover:bg-red-50"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Delete Contact</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <button
-                          type="button"
-                          disabled={connectingUserId === c.id}
-                          onClick={() => handleConnectUser(c, false)}
-                          className="px-2.5 py-1 rounded-md border border-[#008069] text-[#008069] text-[11px] font-semibold hover:bg-[#008069] hover:text-white transition-colors shrink-0"
-                        >
-                          Chat
-                        </button>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -1165,17 +1636,126 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                   </div>
                 </div>
 
-                {activeConv.is_personal_channel && (
+                <div className="relative shrink-0">
                   <button
                     type="button"
-                    onClick={() => setDeleteChannelTarget(activeConv)}
-                    title="Delete Personal Channel"
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-200 bg-white text-[11px] font-semibold text-[#DC1726] hover:bg-red-50 shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMenu((prev) => (prev?.scope === 'header' ? null : { scope: 'header' }));
+                    }}
+                    title="Chat Menu"
+                    aria-label="Chat Menu"
+                    className="p-2 rounded-full text-[#54656F] hover:text-[#111B21] hover:bg-neutral-200/70 transition-colors"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Delete</span>
+                    <MoreVertical className="w-5 h-5" />
                   </button>
-                )}
+
+                  {openMenu?.scope === 'header' && (
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute end-0 top-full mt-1.5 w-52 bg-white text-[#111B21] rounded-xl border border-neutral-200 shadow-xl py-1.5 z-40 text-xs"
+                    >
+                      {!activeConv.is_personal_channel && activeConv.type === 'private' && activeConv.other_user && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOpenMenu(null);
+                              setContactInfoTarget({ contact: activeConv.other_user, conv: activeConv });
+                            }}
+                            className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                          >
+                            <Info className="w-3.5 h-3.5 text-[#54656F]" />
+                            <span>Contact Info</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOpenMenu(null);
+                              setShareContactTarget(activeConv.other_user);
+                            }}
+                            className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                          >
+                            <Share2 className="w-3.5 h-3.5 text-[#008069]" />
+                            <span>Share Contact</span>
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenMenu(null);
+                          setClearChatTarget(activeConv);
+                        }}
+                        className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                      >
+                        <Eraser className="w-3.5 h-3.5 text-[#54656F]" />
+                        <span>Clear Chat</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenMenu(null);
+                          setClearAllConfirmOpen(true);
+                        }}
+                        className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                      >
+                        <Eraser className="w-3.5 h-3.5 text-[#DC1726]" />
+                        <span>All Clear Chat</span>
+                      </button>
+                      {!activeConv.is_personal_channel && activeConv.type === 'private' && activeConv.other_user && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenMenu(null);
+                            setBlockTarget({
+                              user: activeConv.other_user,
+                              action: activeConv.blocked_by_me ? 'unblock' : 'block',
+                            });
+                          }}
+                          className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 hover:bg-[#F5F6F6]"
+                        >
+                          {activeConv.blocked_by_me ? (
+                            <>
+                              <ShieldOff className="w-3.5 h-3.5 text-[#008069]" />
+                              <span className="text-[#008069] font-medium">Unblock Contact</span>
+                            </>
+                          ) : (
+                            <>
+                              <Ban className="w-3.5 h-3.5 text-amber-600" />
+                              <span className="text-amber-700 font-medium">Block Contact</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                      <div className="my-1 border-t border-neutral-100" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenMenu(null);
+                          setDeleteChannelTarget(activeConv);
+                        }}
+                        className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 text-[#DC1726] hover:bg-red-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>{activeConv.is_personal_channel ? 'Delete Channel' : 'Delete Chat'}</span>
+                      </button>
+                      {!activeConv.is_personal_channel && activeConv.type === 'private' && activeConv.other_user && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenMenu(null);
+                            setDeleteContactTarget(activeConv.other_user);
+                          }}
+                          className="w-full px-3.5 py-2 text-start flex items-center gap-2.5 text-[#DC1726] hover:bg-red-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete Contact</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* WhatsApp Wallpaper Message Area */}
@@ -1463,105 +2043,126 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                 </div>
               )}
 
-              {/* Bottom WhatsApp Composer Bar */}
-              <div className="relative">
-                {composerEmojiOpen && (
-                  <div className="absolute bottom-full start-2 sm:start-3 mb-2 z-30">
-                    <EmojiPickerPanel
-                      title="Insert Emoji"
-                      onSelect={insertEmojiToMessage}
-                      onClose={() => setComposerEmojiOpen(false)}
-                    />
+              {/* Bottom WhatsApp Composer Bar or Blocked Banner */}
+              {activeConv.blocked_by_me ? (
+                <div className="px-4 py-3 border-t border-neutral-200 bg-[#F0F2F5] flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2 text-[#54656F]">
+                    <Ban className="w-4 h-4 text-[#DC1726] shrink-0" />
+                    <span>You blocked this contact. Unblock to send messages.</span>
                   </div>
-                )}
-                <form onSubmit={handleSend} className="px-3 py-2.5 border-t border-neutral-200 bg-[#F0F2F5] flex items-center gap-1.5 sm:gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      setReactionPickerMsgId(null);
-                      setReactionFullPickerMsgId(null);
-                      setComposerEmojiOpen((prev) => !prev);
-                    }}
-                    title="Emoji Picker"
-                    aria-label="Open Emoji Picker"
-                    className={`p-2 rounded-full shrink-0 transition-colors ${
-                      composerEmojiOpen
-                        ? 'bg-[#008069] text-white'
-                        : 'hover:bg-neutral-200/70 text-[#54656F]'
-                    }`}
+                    onClick={() => setBlockTarget({ user: activeConv.other_user, action: 'unblock' })}
+                    className="px-3 py-1.5 rounded-lg bg-[#008069] text-white font-semibold hover:bg-[#006a57]"
                   >
-                    <Smile className="w-5 h-5" />
+                    Unblock
                   </button>
-
-                  {!editingMsg && (
-                    <label
-                      className={`p-2 rounded-full hover:bg-neutral-200/70 cursor-pointer shrink-0 text-[#54656F] ${
-                        uploadingFile ? 'opacity-50 pointer-events-none' : ''
-                      }`}
-                      title="Attach photo, PDF, or document"
-                    >
-                      <Paperclip className="w-5 h-5" />
-                      <input
-                        type="file"
-                        disabled={uploadingFile}
-                        onChange={async (e) => {
-                          const f = e.target.files?.[0];
-                          if (!f) return;
-                          setErr('');
-                          setUploadingFile(true);
-                          try {
-                            const up = await uploadFile(f, 'chat-attachments');
-                            setAttachment({ url: up.url, name: up.name });
-                          } catch (err: any) {
-                            setErr(err.message || 'Failed to upload attachment');
-                          } finally {
-                            setUploadingFile(false);
-                            e.target.value = '';
-                          }
-                        }}
-                        className="hidden"
+                </div>
+              ) : activeConv.blocked_by_other ? (
+                <div className="px-4 py-3 border-t border-neutral-200 bg-[#F0F2F5] flex items-center justify-center gap-2 text-xs text-[#667781]">
+                  <Ban className="w-4 h-4 text-[#DC1726] shrink-0" />
+                  <span>You cannot send messages to this contact.</span>
+                </div>
+              ) : (
+                <div className="relative">
+                  {composerEmojiOpen && (
+                    <div className="absolute bottom-full start-2 sm:start-3 mb-2 z-30">
+                      <EmojiPickerPanel
+                        title="Insert Emoji"
+                        onSelect={insertEmojiToMessage}
+                        onClose={() => setComposerEmojiOpen(false)}
                       />
-                    </label>
+                    </div>
                   )}
+                  <form onSubmit={handleSend} className="px-3 py-2.5 border-t border-neutral-200 bg-[#F0F2F5] flex items-center gap-1.5 sm:gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReactionPickerMsgId(null);
+                        setReactionFullPickerMsgId(null);
+                        setComposerEmojiOpen((prev) => !prev);
+                      }}
+                      title="Emoji Picker"
+                      aria-label="Open Emoji Picker"
+                      className={`p-2 rounded-full shrink-0 transition-colors ${
+                        composerEmojiOpen
+                          ? 'bg-[#008069] text-white'
+                          : 'hover:bg-neutral-200/70 text-[#54656F]'
+                      }`}
+                    >
+                      <Smile className="w-5 h-5" />
+                    </button>
 
-                  <div className="flex-1 flex flex-col min-w-0">
-                    {uploadingFile && <div className="text-[11px] text-[#667781] mb-1">Uploading file...</div>}
-                    {!editingMsg && attachment && (
-                      <div className="text-[11px] text-[#008069] font-medium flex items-center gap-1.5 mb-1 bg-white px-2.5 py-1 rounded-md border border-emerald-200">
-                        <Paperclip className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{attachment.name}</span>
-                        <button type="button" onClick={() => setAttachment(null)} className="ms-auto text-[#667781] hover:text-[#DC1726]">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                    {!editingMsg && (
+                      <label
+                        className={`p-2 rounded-full hover:bg-neutral-200/70 cursor-pointer shrink-0 text-[#54656F] ${
+                          uploadingFile ? 'opacity-50 pointer-events-none' : ''
+                        }`}
+                        title="Attach photo, PDF, or document"
+                      >
+                        <Paperclip className="w-5 h-5" />
+                        <input
+                          type="file"
+                          disabled={uploadingFile}
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            setErr('');
+                            setUploadingFile(true);
+                            try {
+                              const up = await uploadFile(f, 'chat-attachments');
+                              setAttachment({ url: up.url, name: up.name });
+                            } catch (err: any) {
+                              setErr(err.message || 'Failed to upload attachment');
+                            } finally {
+                              setUploadingFile(false);
+                              e.target.value = '';
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
                     )}
-                    <input
-                      ref={messageInputRef}
-                      type="text"
-                      value={text}
-                      onFocus={() => setComposerEmojiOpen(false)}
-                      onChange={(e) => setText(e.target.value)}
-                      placeholder={
-                        editingMsg
-                          ? 'Edit your message...'
-                          : activeConv.is_personal_channel
-                            ? 'Write a note or save a message to your channel...'
-                            : 'Type a message'
-                      }
-                      className="w-full px-4 py-2.5 text-xs rounded-full bg-white border border-neutral-200/80 text-[#111B21] placeholder:text-[#667781] focus:outline-none focus:border-[#008069]"
-                    />
-                  </div>
 
-                  <button
-                    type="submit"
-                    disabled={uploadingFile}
-                    aria-label={editingMsg ? 'Save Edit' : 'Send'}
-                    className="w-10 h-10 rounded-full bg-[#008069] text-white flex items-center justify-center hover:bg-[#006a57] disabled:opacity-60 shrink-0 shadow-xs"
-                  >
-                    {editingMsg ? <Check className="w-4 h-4" /> : <Send className="w-4 h-4" />}
-                  </button>
-                </form>
-              </div>
+                    <div className="flex-1 flex flex-col min-w-0">
+                      {uploadingFile && <div className="text-[11px] text-[#667781] mb-1">Uploading file...</div>}
+                      {!editingMsg && attachment && (
+                        <div className="text-[11px] text-[#008069] font-medium flex items-center gap-1.5 mb-1 bg-white px-2.5 py-1 rounded-md border border-emerald-200">
+                          <Paperclip className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{attachment.name}</span>
+                          <button type="button" onClick={() => setAttachment(null)} className="ms-auto text-[#667781] hover:text-[#DC1726]">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                      <input
+                        ref={messageInputRef}
+                        type="text"
+                        value={text}
+                        onFocus={() => setComposerEmojiOpen(false)}
+                        onChange={(e) => setText(e.target.value)}
+                        placeholder={
+                          editingMsg
+                            ? 'Edit your message...'
+                            : activeConv.is_personal_channel
+                              ? 'Write a note or save a message to your channel...'
+                              : 'Type a message'
+                        }
+                        className="w-full px-4 py-2.5 text-xs rounded-full bg-white border border-neutral-200/80 text-[#111B21] placeholder:text-[#667781] focus:outline-none focus:border-[#008069]"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={uploadingFile}
+                      aria-label={editingMsg ? 'Save Edit' : 'Send'}
+                      className="w-10 h-10 rounded-full bg-[#008069] text-white flex items-center justify-center hover:bg-[#006a57] disabled:opacity-60 shrink-0 shadow-xs"
+                    >
+                      {editingMsg ? <Check className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+                    </button>
+                  </form>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1873,13 +2474,302 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
         </div>
       )}
 
+      {/* Contact Info Modal */}
+      {contactInfoTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          onClick={() => setContactInfoTarget(null)}
+        >
+          <div
+            className="max-w-sm w-full bg-white rounded-2xl border border-neutral-200 shadow-xl overflow-hidden text-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-[#008069] text-white px-5 py-4 flex items-center justify-between">
+              <h3 className="text-sm font-bold">Contact Info</h3>
+              <button type="button" onClick={() => setContactInfoTarget(null)} className="p-1 rounded-full hover:bg-white/15">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="flex flex-col items-center text-center gap-2">
+                {renderAvatar(contactInfoTarget.contact, 68)}
+                <div>
+                  <div className="text-base font-bold text-[#111B21]">{contactInfoTarget.contact.full_name}</div>
+                  <div className="text-[11px] text-[#667781] font-mono-num">
+                    {contactInfoTarget.contact.role_name} · @{contactInfoTarget.contact.username}
+                  </div>
+                  {contactInfoTarget.contact.mobile && (
+                    <div className="text-xs font-semibold text-[#008069] font-mono-num mt-1">
+                      📞 {contactInfoTarget.contact.mobile}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleCopyContact(contactInfoTarget.contact)}
+                  className="px-3 py-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 flex items-center justify-center gap-1.5 font-semibold"
+                >
+                  <Copy className="w-3.5 h-3.5 text-[#008069]" />
+                  <span>Copy Details</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = contactInfoTarget.contact;
+                    setContactInfoTarget(null);
+                    setShareContactTarget(target);
+                  }}
+                  className="px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-[#008069] hover:bg-emerald-100 flex items-center justify-center gap-1.5 font-semibold"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Share Contact</span>
+                </button>
+              </div>
+
+              <div className="border-t border-neutral-100 pt-3 space-y-1.5">
+                {contactInfoTarget.conv && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const conv = contactInfoTarget.conv;
+                      setContactInfoTarget(null);
+                      setClearChatTarget(conv);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg hover:bg-neutral-50 text-start flex items-center gap-2.5 font-medium text-[#111B21]"
+                  >
+                    <Eraser className="w-4 h-4 text-[#54656F]" />
+                    <span>Clear Chat Messages</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const c = contactInfoTarget.contact;
+                    setBlockTarget({ user: c, action: c.is_blocked ? 'unblock' : 'block' });
+                  }}
+                  className="w-full px-3 py-2 rounded-lg hover:bg-neutral-50 text-start flex items-center gap-2.5 font-medium"
+                >
+                  {contactInfoTarget.contact.is_blocked ? (
+                    <>
+                      <ShieldOff className="w-4 h-4 text-[#008069]" />
+                      <span className="text-[#008069]">Unblock {contactInfoTarget.contact.full_name}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Ban className="w-4 h-4 text-amber-600" />
+                      <span className="text-amber-700">Block {contactInfoTarget.contact.full_name}</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const c = contactInfoTarget.contact;
+                    setContactInfoTarget(null);
+                    setDeleteContactTarget(c);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg hover:bg-red-50 text-start flex items-center gap-2.5 font-medium text-[#DC1726]"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete Contact</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Contact Modal */}
+      {shareContactTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          onClick={() => setShareContactTarget(null)}
+        >
+          <div
+            className="max-w-md w-full bg-white rounded-2xl border border-neutral-200 shadow-xl overflow-hidden text-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-neutral-100">
+              <div className="flex items-center gap-2">
+                <Share2 className="w-4 h-4 text-[#008069]" />
+                <h3 className="text-sm font-bold text-[#111B21]">Share Contact</h3>
+              </div>
+              <button type="button" onClick={() => setShareContactTarget(null)}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {renderAvatar(shareContactTarget, 38)}
+                  <div className="min-w-0">
+                    <div className="font-bold text-[#111B21] truncate">{shareContactTarget.full_name}</div>
+                    <div className="text-[11px] text-[#54656F] font-mono-num truncate">
+                      {shareContactTarget.mobile || 'No phone'} · @{shareContactTarget.username}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopyContact(shareContactTarget)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-emerald-200 text-[#008069] font-semibold hover:bg-emerald-50 shrink-0"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy</span>
+                </button>
+              </div>
+
+              <div className="text-[11px] font-semibold text-[#54656F]">Forward to a Chat or Channel:</div>
+              <div className="max-h-56 overflow-y-auto divide-y divide-neutral-100 border border-neutral-200 rounded-xl">
+                {conversations.filter((cv) => !cv.blocked_by_me && !cv.blocked_by_other).length === 0 ? (
+                  <div className="p-4 text-center text-[#667781]">No available chats to forward to. Copy the contact above.</div>
+                ) : (
+                  conversations
+                    .filter((cv) => !cv.blocked_by_me && !cv.blocked_by_other)
+                    .map((cv) => (
+                      <div key={cv.id} className="px-3.5 py-2.5 flex items-center justify-between gap-2 hover:bg-[#F5F6F6]">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {renderAvatar(
+                            {
+                              photo_url: cv.other_user?.photo_url,
+                              full_name: cv.display_title,
+                              is_personal_channel: cv.is_personal_channel,
+                              type: cv.type,
+                            },
+                            34
+                          )}
+                          <div className="min-w-0">
+                            <div className="font-semibold text-[#111B21] truncate">{cv.display_title}</div>
+                            <div className="text-[10px] text-[#667781] truncate">
+                              {cv.is_personal_channel ? 'Personal Channel' : cv.other_user?.role_name || cv.type}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={shareSendingConvId === cv.id}
+                          onClick={() => handleSendSharedContactToConv(cv)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#008069] text-white font-semibold hover:bg-[#006a57] disabled:opacity-60 shrink-0"
+                        >
+                          <Send className="w-3 h-3" />
+                          <span>{shareSendingConvId === cv.id ? '...' : 'Send'}</span>
+                        </button>
+                      </div>
+                    ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Blocked Contacts Modal */}
+      {blockedListOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          onClick={() => setBlockedListOpen(false)}
+        >
+          <div
+            className="max-w-md w-full bg-white rounded-2xl border border-neutral-200 shadow-xl overflow-hidden text-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-neutral-100">
+              <div className="flex items-center gap-2">
+                <Ban className="w-4 h-4 text-[#DC1726]" />
+                <h3 className="text-sm font-bold text-[#111B21]">Blocked Contacts</h3>
+              </div>
+              <button type="button" onClick={() => setBlockedListOpen(false)}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4">
+              {blockedUsers.length === 0 ? (
+                <div className="p-6 text-center text-[#667781]">You have not blocked any contacts.</div>
+              ) : (
+                <div className="max-h-72 overflow-y-auto divide-y divide-neutral-100 border border-neutral-200 rounded-xl">
+                  {blockedUsers.map((bu) => (
+                    <div key={bu.id} className="px-3.5 py-2.5 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {renderAvatar(bu, 36)}
+                        <div className="min-w-0">
+                          <div className="font-semibold text-[#111B21] truncate">{bu.full_name}</div>
+                          <div className="text-[11px] text-[#667781] font-mono-num truncate">
+                            {bu.role_name}
+                            {bu.mobile ? ` · ${bu.mobile}` : ''}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setBlockTarget({ user: bu, action: 'unblock' })}
+                        className="px-3 py-1.5 rounded-lg border border-[#008069] text-[#008069] font-semibold hover:bg-[#008069] hover:text-white transition-colors shrink-0"
+                      >
+                        Unblock
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
         open={Boolean(deleteChannelTarget)}
-        title="Delete Personal Channel"
-        message={`Delete "${deleteChannelTarget?.display_title || 'this channel'}" and all saved messages inside it?`}
-        confirmLabel="Delete Channel"
+        title={deleteChannelTarget?.is_personal_channel ? 'Delete Personal Channel' : 'Delete Chat'}
+        message={
+          deleteChannelTarget?.is_personal_channel
+            ? `Delete "${deleteChannelTarget?.display_title || 'this channel'}" and all saved messages inside it?`
+            : `Delete chat "${deleteChannelTarget?.display_title || 'this conversation'}" from your chat list?`
+        }
+        confirmLabel={deleteChannelTarget?.is_personal_channel ? 'Delete Channel' : 'Delete Chat'}
         onConfirm={handleDeletePersonalChannel}
         onCancel={() => setDeleteChannelTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteContactTarget)}
+        title="Delete Contact"
+        message={`Remove "${deleteContactTarget?.full_name || 'this contact'}" from your chat contacts list? You can always reconnect later using their contact number or username.`}
+        confirmLabel="Delete Contact"
+        onConfirm={handleConfirmDeleteContact}
+        onCancel={() => setDeleteContactTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(clearChatTarget)}
+        title="Clear Chat"
+        message={`Clear all messages in "${clearChatTarget?.display_title || 'this chat'}" for your account?`}
+        confirmLabel="Clear Chat"
+        onConfirm={handleConfirmClearChat}
+        onCancel={() => setClearChatTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={clearAllConfirmOpen}
+        title="All Clear Chat"
+        message="Clear message history across all your chats and personal channels? This cannot be undone."
+        confirmLabel="Clear All Chats"
+        onConfirm={handleConfirmClearAllChats}
+        onCancel={() => setClearAllConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(blockTarget)}
+        title={blockTarget?.action === 'unblock' ? 'Unblock Contact' : 'Block Contact'}
+        message={
+          blockTarget?.action === 'unblock'
+            ? `Unblock "${blockTarget?.user?.full_name || 'this contact'}"? You will be able to message each other again.`
+            : `Block "${blockTarget?.user?.full_name || 'this contact'}"? Blocked contacts will no longer be able to send messages to you.`
+        }
+        confirmLabel={blockTarget?.action === 'unblock' ? 'Unblock' : 'Block'}
+        onConfirm={handleConfirmBlockAction}
+        onCancel={() => setBlockTarget(null)}
       />
 
       <ConfirmDialog

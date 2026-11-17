@@ -174,7 +174,7 @@ export async function apiRequest<T = any>(
   options: RequestInit = {}
 ): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
-  const maxAttempts = method === 'GET' ? 2 : 1;
+  const maxAttempts = 3;
   let retriedAfterRefresh = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -190,14 +190,34 @@ export async function apiRequest<T = any>(
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const res = await fetch(url, {
-      ...options,
-      headers,
-      credentials: 'include',
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        ...options,
+        headers,
+        credentials: 'include',
+      });
+    } catch (networkErr: any) {
+      if (method === 'GET' && attempt < maxAttempts) {
+        await new Promise((r) => window.setTimeout(r, 650 * attempt));
+        continue;
+      }
+      throw new ApiError(
+        networkErr?.message || 'Unable to reach the server. Please check your connection and try again.',
+        0
+      );
+    }
 
     const { data, rawText } = await safeReadJson(res);
+    const trimmedRaw = rawText.trim();
+    const looksLikeHtml = trimmedRaw.startsWith('<');
+
     if (!res.ok) {
+      const isTransientGateway = res.status === 502 || res.status === 503 || res.status === 504;
+      if ((isTransientGateway && (method === 'GET' || looksLikeHtml)) && attempt < maxAttempts) {
+        await new Promise((r) => window.setTimeout(r, 650 * attempt));
+        continue;
+      }
       if (
         res.status === 401 &&
         !retriedAfterRefresh &&
@@ -235,21 +255,21 @@ export async function apiRequest<T = any>(
       throw new ApiError(message, res.status, data?.code, data || {});
     }
 
-    if (data === null && rawText.trim()) {
-      const looksLikeHtml = rawText.trim().startsWith('<');
-      if (attempt < maxAttempts) {
-        await new Promise((r) => window.setTimeout(r, 450));
+    if (data === null && trimmedRaw) {
+      // HTML on 2xx means a proxy/SPA splash responded before hitting our JSON API — safe to retry
+      if (attempt < maxAttempts && (looksLikeHtml || method === 'GET')) {
+        await new Promise((r) => window.setTimeout(r, 650 * attempt));
         continue;
       }
       console.warn('[apiRequest] Non-JSON 2xx response', {
         url,
         status: res.status,
         contentType: res.headers.get('content-type'),
-        preview: rawText.trim().slice(0, 140),
+        preview: trimmedRaw.slice(0, 140),
       });
       throw new ApiError(
         looksLikeHtml
-          ? 'API returned an HTML page instead of JSON. Please refresh or check server connection.'
+          ? 'Server returned an HTML page instead of JSON. Please wait a moment and refresh the page.'
           : 'Server returned an unexpected non-JSON response. Please try again.',
         res.status
       );
