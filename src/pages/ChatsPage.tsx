@@ -2,16 +2,19 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Bookmark,
+  Check,
   CheckCheck,
   Download,
   Lock,
   MessageCircle,
   Paperclip,
+  Pencil,
   Phone,
   Plus,
   Power,
   Search,
   Send,
+  SmilePlus,
   Trash2,
   UserPlus,
   Users,
@@ -21,6 +24,8 @@ import { apiRequest, uploadFile } from '../lib/api.ts';
 import { downloadImageFile, sanitizeFileName } from '../lib/download.ts';
 import { MadrasaSettings, User } from '../types.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
+
+const CHAT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 interface ChatsPageProps {
   user: User;
@@ -83,11 +88,15 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [connectingUserId, setConnectingUserId] = useState<string | null>(null);
   const [deleteChannelTarget, setDeleteChannelTarget] = useState<any>(null);
+  const [deleteMsgTarget, setDeleteMsgTarget] = useState<any>(null);
+  const [editingMsg, setEditingMsg] = useState<{ id: string; originalText: string } | null>(null);
+  const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
   const [lightboxImage, setLightboxImage] = useState<{ url: string; name: string } | null>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messageInputRef = useRef<HTMLInputElement>(null);
   const activeConvIdRef = useRef<string | null>(null);
   const isSuperAdmin = user.role_slug === 'super_admin';
 
@@ -108,9 +117,11 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
   const selectConv = async (conv: any) => {
     setActiveConv(conv);
     activeConvIdRef.current = conv.id;
+    setEditingMsg(null);
+    setReactionPickerMsgId(null);
     try {
       const res = await apiRequest<{ messages: any[] }>(`/api/chats/${conv.id}/messages`);
-      setMessages(res.messages);
+      setMessages(res.messages || []);
     } catch (e: any) {
       setErr(e.message);
     }
@@ -324,9 +335,56 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
     }
   };
 
+  const startEditMessage = (m: any) => {
+    setReactionPickerMsgId(null);
+    setAttachment(null);
+    setEditingMsg({ id: m.id, originalText: m.content || '' });
+    setText(m.content || '');
+    window.setTimeout(() => messageInputRef.current?.focus(), 20);
+  };
+
+  const cancelEditMessage = () => {
+    setEditingMsg(null);
+    setText('');
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeConv || (!text.trim() && !attachment)) return;
+    if (!activeConv) return;
+
+    if (editingMsg) {
+      const trimmed = text.trim();
+      const targetMsg = messages.find((m) => m.id === editingMsg.id);
+      if (!trimmed && !targetMsg?.attachment_url) {
+        setErr('Message text cannot be empty.');
+        return;
+      }
+      setErr('');
+      try {
+        const res = await apiRequest<{ content: string; edited_at: string }>(
+          `/api/chats/${activeConv.id}/messages/${editingMsg.id}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify({ content: trimmed }),
+          }
+        );
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === editingMsg.id
+              ? { ...m, content: res.content ?? trimmed, edited_at: res.edited_at || new Date().toISOString() }
+              : m
+          )
+        );
+        setEditingMsg(null);
+        setText('');
+        loadChats(undefined, true);
+      } catch (e: any) {
+        setErr(e.message || 'Failed to edit message');
+      }
+      return;
+    }
+
+    if (!text.trim() && !attachment) return;
     setErr('');
     try {
       await apiRequest(`/api/chats/${activeConv.id}/messages`, {
@@ -346,15 +404,41 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
     }
   };
 
-  const handleDeleteMessage = async (messageId: string) => {
+  const handleReactMessage = async (messageId: string, emoji: string) => {
     if (!activeConv) return;
+    setReactionPickerMsgId(null);
+    setErr('');
+    try {
+      const res = await apiRequest<{ reactions: any[] }>(
+        `/api/chats/${activeConv.id}/messages/${messageId}/react`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ emoji }),
+        }
+      );
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, reactions: res.reactions || [] } : m))
+      );
+    } catch (e: any) {
+      setErr(e.message || 'Failed to add reaction');
+    }
+  };
+
+  const handleConfirmDeleteMessage = async () => {
+    if (!activeConv || !deleteMsgTarget) return;
+    const messageId = deleteMsgTarget.id;
+    setDeleteMsgTarget(null);
     setErr('');
     try {
       await apiRequest(`/api/chats/${activeConv.id}/messages/${messageId}`, {
         method: 'DELETE',
       });
-      await selectConv(activeConv);
-      loadChats(activeConv.id, true);
+      if (editingMsg?.id === messageId) {
+        setEditingMsg(null);
+        setText('');
+      }
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      loadChats(undefined, true);
     } catch (e: any) {
       setErr(e.message || 'Failed to delete message');
     }
@@ -1068,7 +1152,10 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
               </div>
 
               {/* WhatsApp Wallpaper Message Area */}
-              <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-2.5 bg-[#EFEAE2]">
+              <div
+                onClick={() => reactionPickerMsgId && setReactionPickerMsgId(null)}
+                className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 bg-[#EFEAE2]"
+              >
                 {messages.length === 0 ? (
                   <div className="h-full min-h-[240px] flex flex-col items-center justify-center text-center">
                     <div className="bg-white/95 border border-neutral-200/80 rounded-xl px-5 py-4 max-w-sm shadow-xs space-y-1.5">
@@ -1095,84 +1182,177 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                 ) : (
                   messages.map((m) => {
                     const mine = m.sender_id === user.id;
+                    const canDelete = mine || isSuperAdmin;
                     const isImg = m.attachment_url && isImageAttachment(m.attachment_url, m.attachment_name || '');
+                    const reactions: Array<{ emoji: string; count: number; reactedByMe: boolean }> = Array.isArray(m.reactions)
+                      ? m.reactions
+                      : [];
+                    const pickerOpen = reactionPickerMsgId === m.id;
+                    const isBeingEdited = editingMsg?.id === m.id;
+
                     return (
                       <div key={m.id} className={`flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
-                        <div
-                          className={`group relative max-w-[82%] sm:max-w-[70%] rounded-lg px-3.5 py-2 text-xs shadow-xs ${
-                            mine
-                              ? 'bg-[#D9FDD3] text-[#111B21] rounded-tr-none'
-                              : 'bg-white text-[#111B21] rounded-tl-none'
-                          }`}
-                        >
-                          {!mine && (
-                            <div className="text-[11px] font-bold text-[#008069] mb-0.5">
-                              {m.sender_name} · <span className="font-normal text-[#667781]">{m.sender_role}</span>
-                            </div>
-                          )}
-                          {m.content && <p className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</p>}
+                        <div className={`group relative flex items-end gap-1.5 max-w-[88%] sm:max-w-[74%] ${mine ? 'flex-row-reverse' : 'flex-row'}`}>
+                          {/* Message Bubble */}
+                          <div
+                            className={`relative rounded-lg px-3.5 py-2 text-xs shadow-xs min-w-[110px] ${
+                              mine
+                                ? 'bg-[#D9FDD3] text-[#111B21] rounded-tr-none'
+                                : 'bg-white text-[#111B21] rounded-tl-none'
+                            } ${isBeingEdited ? 'ring-2 ring-[#008069]' : ''}`}
+                          >
+                            {!mine && (
+                              <div className="text-[11px] font-bold text-[#008069] mb-0.5">
+                                {m.sender_name} · <span className="font-normal text-[#667781]">{m.sender_role}</span>
+                              </div>
+                            )}
+                            {m.content && <p className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</p>}
 
-                          {m.attachment_url && isImg && (
-                            <div className="mt-1.5 space-y-1.5">
-                              <button
-                                type="button"
-                                onClick={() => setLightboxImage({ url: m.attachment_url, name: m.attachment_name || 'image' })}
-                                className="block rounded-lg overflow-hidden border border-black/10 bg-black/5"
-                              >
-                                <img
-                                  src={m.attachment_url}
-                                  alt={m.attachment_name || 'Attachment'}
-                                  referrerPolicy="no-referrer"
-                                  className="max-h-60 w-auto object-contain"
-                                />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDownloadAttachment(m.attachment_url, m.attachment_name || 'image.jpg')}
-                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#008069] hover:underline"
-                              >
-                                <Download className="w-3 h-3" /> Download Image
-                              </button>
-                            </div>
-                          )}
+                            {m.attachment_url && isImg && (
+                              <div className="mt-1.5 space-y-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setLightboxImage({ url: m.attachment_url, name: m.attachment_name || 'image' })}
+                                  className="block rounded-lg overflow-hidden border border-black/10 bg-black/5"
+                                >
+                                  <img
+                                    src={m.attachment_url}
+                                    alt={m.attachment_name || 'Attachment'}
+                                    referrerPolicy="no-referrer"
+                                    className="max-h-60 w-auto object-contain"
+                                  />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadAttachment(m.attachment_url, m.attachment_name || 'image.jpg')}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#008069] hover:underline"
+                                >
+                                  <Download className="w-3 h-3" /> Download Image
+                                </button>
+                              </div>
+                            )}
 
-                          {m.attachment_url && !isImg && (
-                            <div className="mt-1.5 flex flex-wrap items-center gap-2 bg-black/5 rounded-md px-2.5 py-1.5">
-                              <a
-                                href={m.attachment_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1 text-[#027EB5] font-medium hover:underline"
-                              >
-                                <Paperclip className="w-3 h-3" /> {m.attachment_name || 'Attachment'}
-                              </a>
-                              <button
-                                type="button"
-                                onClick={() => handleDownloadAttachment(m.attachment_url, m.attachment_name || 'attachment')}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white text-[#008069] text-[10px] font-semibold border border-neutral-200 hover:bg-neutral-50"
-                              >
-                                <Download className="w-3 h-3" /> Download
-                              </button>
-                            </div>
-                          )}
+                            {m.attachment_url && !isImg && (
+                              <div className="mt-1.5 flex flex-wrap items-center gap-2 bg-black/5 rounded-md px-2.5 py-1.5">
+                                <a
+                                  href={m.attachment_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 text-[#027EB5] font-medium hover:underline"
+                                >
+                                  <Paperclip className="w-3 h-3" /> {m.attachment_name || 'Attachment'}
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadAttachment(m.attachment_url, m.attachment_name || 'attachment')}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white text-[#008069] text-[10px] font-semibold border border-neutral-200 hover:bg-neutral-50"
+                                >
+                                  <Download className="w-3 h-3" /> Download
+                                </button>
+                              </div>
+                            )}
 
-                          <div className="flex items-center justify-end gap-1.5 mt-1">
-                            <span className="text-[10px] text-[#667781] font-mono-num">
-                              {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                            {mine && <CheckCheck className="w-3.5 h-3.5 text-[#53BDEB]" />}
+                            <div className="flex items-center justify-end gap-1.5 mt-1">
+                              {m.edited_at && (
+                                <span className="text-[9px] italic text-[#667781]">edited</span>
+                              )}
+                              <span className="text-[10px] text-[#667781] font-mono-num">
+                                {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                              {mine && <CheckCheck className="w-3.5 h-3.5 text-[#53BDEB]" />}
+                            </div>
+
+                            {/* Floating Emoji Reaction Picker Popover */}
+                            {pickerOpen && (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                className={`absolute -top-11 z-20 flex items-center gap-1 bg-white border border-neutral-200 rounded-full px-2 py-1 shadow-lg ${
+                                  mine ? 'end-0' : 'start-0'
+                                }`}
+                              >
+                                {CHAT_REACTION_EMOJIS.map((emoji) => {
+                                  const activeEmoji = reactions.some((r) => r.emoji === emoji && r.reactedByMe);
+                                  return (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      onClick={() => handleReactMessage(m.id, emoji)}
+                                      className={`w-7 h-7 rounded-full flex items-center justify-center text-base transition-transform hover:scale-125 ${
+                                        activeEmoji ? 'bg-emerald-100 ring-1 ring-[#008069]' : 'hover:bg-neutral-100'
+                                      }`}
+                                      title={`React ${emoji}`}
+                                    >
+                                      {emoji}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Hover / Tap Action Buttons (React, Edit, Delete) */}
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-center gap-0.5 bg-white/90 border border-neutral-200/80 rounded-full px-1 py-0.5 shadow-xs opacity-90 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setReactionPickerMsgId(pickerOpen ? null : m.id)}
+                              title="React to message"
+                              className="p-1 rounded-full text-[#54656F] hover:text-[#008069] hover:bg-emerald-50"
+                            >
+                              <SmilePlus className="w-3.5 h-3.5" />
+                            </button>
                             {mine && (
                               <button
                                 type="button"
-                                onClick={() => handleDeleteMessage(m.id)}
-                                title="Delete message"
-                                className="text-[#667781] hover:text-[#DC1726] ms-0.5"
+                                onClick={() => startEditMessage(m)}
+                                title="Edit message"
+                                className="p-1 rounded-full text-[#54656F] hover:text-[#008069] hover:bg-emerald-50"
                               >
-                                <Trash2 className="w-3 h-3" />
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {canDelete && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReactionPickerMsgId(null);
+                                  setDeleteMsgTarget(m);
+                                }}
+                                title="Delete message"
+                                className="p-1 rounded-full text-[#54656F] hover:text-[#DC1726] hover:bg-red-50"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
                           </div>
                         </div>
+
+                        {/* Displayed Reaction Pills Below Bubble */}
+                        {reactions.length > 0 && (
+                          <div className={`flex flex-wrap items-center gap-1 mt-1 px-1 ${mine ? 'justify-end' : 'justify-start'}`}>
+                            {reactions.map((r) => (
+                              <button
+                                key={r.emoji}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleReactMessage(m.id, r.emoji);
+                                }}
+                                title="Click to toggle your reaction"
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border shadow-2xs transition-colors ${
+                                  r.reactedByMe
+                                    ? 'bg-emerald-50 border-[#008069] text-[#008069] font-semibold'
+                                    : 'bg-white border-neutral-200 text-[#111B21] hover:bg-neutral-50'
+                                }`}
+                              >
+                                <span>{r.emoji}</span>
+                                <span className="font-mono-num text-[10px]">{r.count}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -1180,40 +1360,65 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                 <div ref={messagesEndRef} />
               </div>
 
+              {/* Editing Banner Strip */}
+              {editingMsg && (
+                <div className="px-4 py-2 bg-[#F0F2F5] border-t border-neutral-200 flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex items-center gap-2 border-s-4 border-[#008069] ps-2.5">
+                    <Pencil className="w-3.5 h-3.5 text-[#008069] shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-bold text-[#008069]">Editing message</div>
+                      <div className="text-[11px] text-[#54656F] truncate">
+                        {editingMsg.originalText || 'Attachment caption'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={cancelEditMessage}
+                    title="Cancel edit"
+                    className="p-1 rounded-full text-[#54656F] hover:bg-neutral-200/70 shrink-0"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               {/* Bottom WhatsApp Composer Bar */}
               <form onSubmit={handleSend} className="px-3 py-2.5 border-t border-neutral-200 bg-[#F0F2F5] flex items-center gap-2">
-                <label
-                  className={`p-2.5 rounded-full hover:bg-neutral-200/70 cursor-pointer shrink-0 text-[#54656F] ${
-                    uploadingFile ? 'opacity-50 pointer-events-none' : ''
-                  }`}
-                  title="Attach photo, PDF, or document"
-                >
-                  <Paperclip className="w-5 h-5" />
-                  <input
-                    type="file"
-                    disabled={uploadingFile}
-                    onChange={async (e) => {
-                      const f = e.target.files?.[0];
-                      if (!f) return;
-                      setErr('');
-                      setUploadingFile(true);
-                      try {
-                        const up = await uploadFile(f, 'chat-attachments');
-                        setAttachment({ url: up.url, name: up.name });
-                      } catch (err: any) {
-                        setErr(err.message || 'Failed to upload attachment');
-                      } finally {
-                        setUploadingFile(false);
-                        e.target.value = '';
-                      }
-                    }}
-                    className="hidden"
-                  />
-                </label>
+                {!editingMsg && (
+                  <label
+                    className={`p-2.5 rounded-full hover:bg-neutral-200/70 cursor-pointer shrink-0 text-[#54656F] ${
+                      uploadingFile ? 'opacity-50 pointer-events-none' : ''
+                    }`}
+                    title="Attach photo, PDF, or document"
+                  >
+                    <Paperclip className="w-5 h-5" />
+                    <input
+                      type="file"
+                      disabled={uploadingFile}
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        setErr('');
+                        setUploadingFile(true);
+                        try {
+                          const up = await uploadFile(f, 'chat-attachments');
+                          setAttachment({ url: up.url, name: up.name });
+                        } catch (err: any) {
+                          setErr(err.message || 'Failed to upload attachment');
+                        } finally {
+                          setUploadingFile(false);
+                          e.target.value = '';
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                )}
 
                 <div className="flex-1 flex flex-col min-w-0">
                   {uploadingFile && <div className="text-[11px] text-[#667781] mb-1">Uploading file...</div>}
-                  {attachment && (
+                  {!editingMsg && attachment && (
                     <div className="text-[11px] text-[#008069] font-medium flex items-center gap-1.5 mb-1 bg-white px-2.5 py-1 rounded-md border border-emerald-200">
                       <Paperclip className="w-3 h-3 shrink-0" />
                       <span className="truncate">{attachment.name}</span>
@@ -1223,13 +1428,16 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                     </div>
                   )}
                   <input
+                    ref={messageInputRef}
                     type="text"
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     placeholder={
-                      activeConv.is_personal_channel
-                        ? 'Write a note or save a message to your channel...'
-                        : 'Type a message'
+                      editingMsg
+                        ? 'Edit your message...'
+                        : activeConv.is_personal_channel
+                          ? 'Write a note or save a message to your channel...'
+                          : 'Type a message'
                     }
                     className="w-full px-4 py-2.5 text-xs rounded-full bg-white border border-neutral-200/80 text-[#111B21] placeholder:text-[#667781] focus:outline-none focus:border-[#008069]"
                   />
@@ -1238,10 +1446,10 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
                 <button
                   type="submit"
                   disabled={uploadingFile}
-                  aria-label="Send"
+                  aria-label={editingMsg ? 'Save Edit' : 'Send'}
                   className="w-10 h-10 rounded-full bg-[#008069] text-white flex items-center justify-center hover:bg-[#006a57] disabled:opacity-60 shrink-0 shadow-xs"
                 >
-                  <Send className="w-4 h-4" />
+                  {editingMsg ? <Check className="w-4 h-4" /> : <Send className="w-4 h-4" />}
                 </button>
               </form>
             </>
@@ -1562,6 +1770,15 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({ user, settings, onSettings
         confirmLabel="Delete Channel"
         onConfirm={handleDeletePersonalChannel}
         onCancel={() => setDeleteChannelTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteMsgTarget)}
+        title="Delete Message"
+        message="Are you sure you want to delete this message?"
+        confirmLabel="Delete Message"
+        onConfirm={handleConfirmDeleteMessage}
+        onCancel={() => setDeleteMsgTarget(null)}
       />
     </div>
   );

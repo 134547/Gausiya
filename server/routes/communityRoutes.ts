@@ -164,6 +164,95 @@ function getAllowedContactRoleSlugs(roleSlug: string): string[] {
   return ['super_admin'];
 }
 
+interface ChatMsgMeta {
+  edited_at: string | null;
+  reactions: Record<string, string[]>;
+}
+
+function parseMsgMeta(raw: string | null | undefined): ChatMsgMeta {
+  if (!raw) return { edited_at: null, reactions: {} };
+  try {
+    const parsed = JSON.parse(raw);
+    const reactions: Record<string, string[]> = {};
+    if (parsed?.reactions && typeof parsed.reactions === 'object') {
+      for (const [emoji, ids] of Object.entries(parsed.reactions)) {
+        if (typeof emoji === 'string' && emoji.trim() && Array.isArray(ids)) {
+          const cleanIds = Array.from(new Set(ids.filter((x): x is string => typeof x === 'string' && x.length > 0)));
+          if (cleanIds.length) reactions[emoji.trim()] = cleanIds;
+        }
+      }
+    }
+    return {
+      edited_at: typeof parsed?.edited_at === 'string' && parsed.edited_at ? parsed.edited_at : null,
+      reactions,
+    };
+  } catch {
+    return { edited_at: null, reactions: {} };
+  }
+}
+
+function formatReactionsList(reactions: Record<string, string[]>, currentUserId: string) {
+  return Object.entries(reactions)
+    .filter(([, ids]) => ids.length > 0)
+    .map(([emoji, ids]) => ({
+      emoji,
+      count: ids.length,
+      reactedByMe: ids.includes(currentUserId),
+      userIds: ids,
+    }));
+}
+
+async function getMsgMetaRow(admin: NonNullable<ReturnType<typeof requireSupabaseAdmin>>, convId: string, messageId: string) {
+  const { data } = await admin
+    .from('documents')
+    .select('id, file_url')
+    .eq('entity_type', 'general')
+    .eq('entity_id', convId)
+    .eq('title', 'CHAT_MSG_META')
+    .eq('file_type', messageId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data;
+}
+
+async function saveMsgMeta(
+  admin: NonNullable<ReturnType<typeof requireSupabaseAdmin>>,
+  convId: string,
+  messageId: string,
+  meta: ChatMsgMeta,
+  userId: string
+) {
+  const existing = await getMsgMetaRow(admin, convId, messageId);
+  const hasReactions = Object.keys(meta.reactions).length > 0;
+  if (!meta.edited_at && !hasReactions) {
+    if (existing?.id) {
+      await admin.from('documents').delete().eq('id', existing.id);
+    }
+    return;
+  }
+
+  const serialized = JSON.stringify({
+    edited_at: meta.edited_at || null,
+    reactions: meta.reactions,
+  });
+
+  if (existing?.id) {
+    const { error } = await admin.from('documents').update({ file_url: serialized }).eq('id', existing.id);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await admin.from('documents').insert({
+      entity_type: 'general',
+      entity_id: convId,
+      title: 'CHAT_MSG_META',
+      file_url: serialized,
+      file_type: messageId,
+      uploaded_by: userId,
+    });
+    if (error) throw new Error(error.message);
+  }
+}
+
 router.get('/chats/status', requireAuth, async (_req, res) => {
   const admin = requireSupabaseAdmin(res);
   if (!admin) return;
@@ -196,312 +285,357 @@ router.put('/chats/status', requireAuth, requireRole('super_admin'), async (req:
 });
 
 router.get('/chats', requireAuth, async (req: AuthRequest, res) => {
-  const admin = requireSupabaseAdmin(res);
-  if (!admin) return;
-  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
-    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const uid = req.user!.id;
+    const allowedRoles = getAllowedContactRoleSlugs(req.user!.role_slug);
+
+    const [{ data: contactsRaw }, { data: myPartRows }] = await Promise.all([
+      admin
+        .from('profiles')
+        .select('id, full_name, username, mobile, photo_url, roles!inner(name, slug)')
+        .neq('id', uid)
+        .eq('status', 'active')
+        .is('deleted_at', null)
+        .in('roles.slug', allowedRoles)
+        .order('full_name', { ascending: true }),
+      admin.from('conversation_participants').select('conversation_id, last_read_at').eq('user_id', uid),
+    ]);
+
+    const contactsResolved = await resolveStorageUrlsInRows(contactsRaw || [], ['photo_url']);
+    const contacts = contactsResolved.map((c: any) => ({
+      id: c.id,
+      full_name: c.full_name,
+      username: c.username,
+      mobile: c.mobile || '',
+      role_name: c.roles?.name || '',
+      role_slug: c.roles?.slug || '',
+      photo_url: c.photo_url || '',
+    }));
+
+    const convIds = (myPartRows || []).map((p) => p.conversation_id);
+    if (!convIds.length) return res.json({ conversations: [], contacts });
+
+    const [{ data: convs }, { data: allParticipants }, { data: recentMsgs }] = await Promise.all([
+      admin.from('conversations').select('*').in('id', convIds),
+      admin
+        .from('conversation_participants')
+        .select('conversation_id, user_id, profiles(full_name, username, mobile, photo_url, roles(name, slug))')
+        .in('conversation_id', convIds),
+      admin
+        .from('messages')
+        .select('id, conversation_id, sender_id, content, attachment_name, created_at')
+        .in('conversation_id', convIds)
+        .order('created_at', { ascending: false }),
+    ]);
+
+    const myLastReadMap = new Map((myPartRows || []).map((p) => [p.conversation_id, p.last_read_at]));
+    const rawParticipants = (allParticipants || []).map((p: any) => ({
+      conversation_id: p.conversation_id,
+      user_id: p.user_id,
+      full_name: p.profiles?.full_name || '',
+      username: p.profiles?.username || '',
+      mobile: p.profiles?.mobile || '',
+      photo_url: p.profiles?.photo_url || '',
+      role_name: p.profiles?.roles?.name || '',
+      role_slug: p.profiles?.roles?.slug || '',
+    }));
+    const participants = await resolveStorageUrlsInRows(rawParticipants, ['photo_url']);
+
+    const conversations = (convs || [])
+      .map((conv: any) => {
+        const msgs = (recentMsgs || []).filter((m) => m.conversation_id === conv.id);
+        const lastMsg = msgs[0];
+        const lastRead = myLastReadMap.get(conv.id) || '1970-01-01';
+        const unread_count = msgs.filter((m) => m.sender_id !== uid && m.created_at > lastRead).length;
+        const convParts = participants.filter((p) => p.conversation_id === conv.id);
+        const other = convParts.find((p) => p.user_id !== uid);
+        const is_personal_channel = convParts.length === 1 && convParts[0]?.user_id === uid;
+        const display_title = is_personal_channel
+          ? conv.title || 'My Personal Channel'
+          : conv.type === 'private' && !conv.title
+            ? other
+              ? other.full_name
+              : 'Direct Message'
+            : conv.title || 'Group Conversation';
+        return {
+          ...conv,
+          is_personal_channel,
+          other_user: other || null,
+          last_message: lastMsg?.content || (lastMsg?.attachment_name ? `📎 ${lastMsg.attachment_name}` : ''),
+          last_message_at: lastMsg?.created_at || conv.created_at,
+          unread_count,
+          participants: convParts,
+          display_title,
+        };
+      })
+      .sort((a: any, b: any) => String(b.last_message_at).localeCompare(String(a.last_message_at)));
+
+    return res.json({ conversations, contacts });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to load chats' });
   }
-  const uid = req.user!.id;
-  const allowedRoles = getAllowedContactRoleSlugs(req.user!.role_slug);
-
-  const [{ data: contactsRaw }, { data: myPartRows }] = await Promise.all([
-    admin
-      .from('profiles')
-      .select('id, full_name, username, mobile, photo_url, roles!inner(name, slug)')
-      .neq('id', uid)
-      .eq('status', 'active')
-      .is('deleted_at', null)
-      .in('roles.slug', allowedRoles)
-      .order('full_name', { ascending: true }),
-    admin.from('conversation_participants').select('conversation_id, last_read_at').eq('user_id', uid),
-  ]);
-
-  const contactsResolved = await resolveStorageUrlsInRows(contactsRaw || [], ['photo_url']);
-  const contacts = contactsResolved.map((c: any) => ({
-    id: c.id,
-    full_name: c.full_name,
-    username: c.username,
-    mobile: c.mobile || '',
-    role_name: c.roles?.name || '',
-    role_slug: c.roles?.slug || '',
-    photo_url: c.photo_url || '',
-  }));
-
-  const convIds = (myPartRows || []).map((p) => p.conversation_id);
-  if (!convIds.length) return res.json({ conversations: [], contacts });
-
-  const [{ data: convs }, { data: allParticipants }, { data: recentMsgs }] = await Promise.all([
-    admin.from('conversations').select('*').in('id', convIds),
-    admin
-      .from('conversation_participants')
-      .select('conversation_id, user_id, profiles(full_name, username, mobile, photo_url, roles(name, slug))')
-      .in('conversation_id', convIds),
-    admin
-      .from('messages')
-      .select('id, conversation_id, sender_id, content, attachment_name, created_at')
-      .in('conversation_id', convIds)
-      .order('created_at', { ascending: false }),
-  ]);
-
-  const myLastReadMap = new Map((myPartRows || []).map((p) => [p.conversation_id, p.last_read_at]));
-  const rawParticipants = (allParticipants || []).map((p: any) => ({
-    conversation_id: p.conversation_id,
-    user_id: p.user_id,
-    full_name: p.profiles?.full_name || '',
-    username: p.profiles?.username || '',
-    mobile: p.profiles?.mobile || '',
-    photo_url: p.profiles?.photo_url || '',
-    role_name: p.profiles?.roles?.name || '',
-    role_slug: p.profiles?.roles?.slug || '',
-  }));
-  const participants = await resolveStorageUrlsInRows(rawParticipants, ['photo_url']);
-
-  const conversations = (convs || [])
-    .map((conv: any) => {
-      const msgs = (recentMsgs || []).filter((m) => m.conversation_id === conv.id);
-      const lastMsg = msgs[0];
-      const lastRead = myLastReadMap.get(conv.id) || '1970-01-01';
-      const unread_count = msgs.filter((m) => m.sender_id !== uid && m.created_at > lastRead).length;
-      const convParts = participants.filter((p) => p.conversation_id === conv.id);
-      const other = convParts.find((p) => p.user_id !== uid);
-      const is_personal_channel = convParts.length === 1 && convParts[0]?.user_id === uid;
-      const display_title = is_personal_channel
-        ? conv.title || 'My Personal Channel'
-        : conv.type === 'private' && !conv.title
-          ? other
-            ? other.full_name
-            : 'Direct Message'
-          : conv.title || 'Group Conversation';
-      return {
-        ...conv,
-        is_personal_channel,
-        other_user: other || null,
-        last_message: lastMsg?.content || (lastMsg?.attachment_name ? `📎 ${lastMsg.attachment_name}` : ''),
-        last_message_at: lastMsg?.created_at || conv.created_at,
-        unread_count,
-        participants: convParts,
-        display_title,
-      };
-    })
-    .sort((a: any, b: any) => String(b.last_message_at).localeCompare(String(a.last_message_at)));
-
-  return res.json({ conversations, contacts });
 });
 
 // Connect / find registered active portal users by Contact Number, Username, or Name
 router.get('/chats/lookup', requireAuth, async (req: AuthRequest, res) => {
-  const admin = requireSupabaseAdmin(res);
-  if (!admin) return;
-  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
-    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
-  }
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
 
-  const rawQ = String(req.query.q || req.query.phone || '').trim();
-  if (!rawQ) return res.json({ matches: [] });
+    const rawQ = String(req.query.q || req.query.phone || '').trim();
+    if (!rawQ) return res.json({ matches: [] });
 
-  const uid = req.user!.id;
-  const digits = rawQ.replace(/\D/g, '');
-  const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
-  const qLower = rawQ.toLowerCase();
+    const uid = req.user!.id;
+    const digits = rawQ.replace(/\D/g, '');
+    const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
+    const qLower = rawQ.toLowerCase();
 
-  const { data: allActiveRaw } = await admin
-    .from('profiles')
-    .select('id, full_name, username, mobile, user_code, photo_url, roles(name, slug)')
-    .neq('id', uid)
-    .eq('status', 'active')
-    .is('deleted_at', null)
-    .order('full_name', { ascending: true });
+    const { data: allActiveRaw } = await admin
+      .from('profiles')
+      .select('id, full_name, username, mobile, user_code, photo_url, roles(name, slug)')
+      .neq('id', uid)
+      .eq('status', 'active')
+      .is('deleted_at', null)
+      .order('full_name', { ascending: true });
 
-  let extraPhonesByUserId = new Map<string, string>();
-  if (digits.length >= 4) {
-    const [{ data: stRows }, { data: trRows }, { data: prRows }] = await Promise.all([
-      admin.from('students').select('user_id, mobile').not('user_id', 'is', null).is('deleted_at', null),
-      admin.from('teachers').select('user_id, mobile').not('user_id', 'is', null).is('deleted_at', null),
-      admin.from('parents').select('user_id, mobile').not('user_id', 'is', null).is('deleted_at', null),
-    ]);
-    for (const row of [...(stRows || []), ...(trRows || []), ...(prRows || [])]) {
-      if (row.user_id && row.mobile && !extraPhonesByUserId.has(row.user_id)) {
-        extraPhonesByUserId.set(row.user_id, String(row.mobile));
+    const extraPhonesByUserId = new Map<string, string>();
+    if (digits.length >= 4) {
+      const [{ data: stRows }, { data: trRows }, { data: prRows }] = await Promise.all([
+        admin.from('students').select('user_id, mobile').not('user_id', 'is', null).is('deleted_at', null),
+        admin.from('teachers').select('user_id, mobile').not('user_id', 'is', null).is('deleted_at', null),
+        admin.from('parents').select('user_id, mobile').not('user_id', 'is', null).is('deleted_at', null),
+      ]);
+      for (const row of [...(stRows || []), ...(trRows || []), ...(prRows || [])]) {
+        if (row.user_id && row.mobile && !extraPhonesByUserId.has(row.user_id)) {
+          extraPhonesByUserId.set(row.user_id, String(row.mobile));
+        }
       }
     }
+
+    const matchedRaw = (allActiveRaw || []).filter((p: any) => {
+      const profileDigits = String(p.mobile || '').replace(/\D/g, '');
+      const linkedDigits = String(extraPhonesByUserId.get(p.id) || '').replace(/\D/g, '');
+      if (digits.length >= 4) {
+        const pMatch =
+          profileDigits &&
+          (profileDigits === digits ||
+            (last10.length >= 6 && profileDigits.endsWith(last10)) ||
+            profileDigits.includes(digits));
+        const lMatch =
+          linkedDigits &&
+          (linkedDigits === digits ||
+            (last10.length >= 6 && linkedDigits.endsWith(last10)) ||
+            linkedDigits.includes(digits));
+        if (pMatch || lMatch) return true;
+      }
+      if (
+        String(p.username || '').toLowerCase().includes(qLower) ||
+        String(p.user_code || '').toLowerCase().includes(qLower) ||
+        String(p.full_name || '').toLowerCase().includes(qLower)
+      ) {
+        return true;
+      }
+      return false;
+    });
+
+    const resolved = await resolveStorageUrlsInRows(matchedRaw.slice(0, 25), ['photo_url']);
+    const matches = resolved.map((c: any) => ({
+      id: c.id,
+      full_name: c.full_name,
+      username: c.username,
+      mobile: c.mobile || extraPhonesByUserId.get(c.id) || '',
+      role_name: c.roles?.name || '',
+      role_slug: c.roles?.slug || '',
+      photo_url: c.photo_url || '',
+    }));
+
+    return res.json({ matches });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Contact lookup failed' });
   }
-
-  const matchedRaw = (allActiveRaw || []).filter((p: any) => {
-    const profileDigits = String(p.mobile || '').replace(/\D/g, '');
-    const linkedDigits = String(extraPhonesByUserId.get(p.id) || '').replace(/\D/g, '');
-    if (digits.length >= 4) {
-      const pMatch =
-        profileDigits &&
-        (profileDigits === digits ||
-          (last10.length >= 6 && profileDigits.endsWith(last10)) ||
-          profileDigits.includes(digits));
-      const lMatch =
-        linkedDigits &&
-        (linkedDigits === digits ||
-          (last10.length >= 6 && linkedDigits.endsWith(last10)) ||
-          linkedDigits.includes(digits));
-      if (pMatch || lMatch) return true;
-    }
-    if (
-      String(p.username || '').toLowerCase().includes(qLower) ||
-      String(p.user_code || '').toLowerCase().includes(qLower) ||
-      String(p.full_name || '').toLowerCase().includes(qLower)
-    ) {
-      return true;
-    }
-    return false;
-  });
-
-  const resolved = await resolveStorageUrlsInRows(matchedRaw.slice(0, 25), ['photo_url']);
-  const matches = resolved.map((c: any) => ({
-    id: c.id,
-    full_name: c.full_name,
-    username: c.username,
-    mobile: c.mobile || extraPhonesByUserId.get(c.id) || '',
-    role_name: c.roles?.name || '',
-    role_slug: c.roles?.slug || '',
-    photo_url: c.photo_url || '',
-  }));
-
-  return res.json({ matches });
 });
 
 // 24-Hour WhatsApp-style Status Updates (stored in public.documents)
 const CHAT_STATUS_ENTITY_ID = '00000000-0000-0000-0000-000000000002';
 
 router.get('/chats/statuses', requireAuth, async (req: AuthRequest, res) => {
-  const admin = requireSupabaseAdmin(res);
-  if (!admin) return;
-  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
-    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
-  }
-
-  const cutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data: rows } = await admin
-    .from('documents')
-    .select('id, file_url, uploaded_by, created_at, profiles:uploaded_by(full_name, username, photo_url, roles(name))')
-    .eq('entity_type', 'general')
-    .eq('title', 'CHAT_STATUS')
-    .gte('created_at', cutoffIso)
-    .order('created_at', { ascending: false });
-
-  const statuses: any[] = [];
-  for (const r of rows || []) {
-    let payload: any = {};
-    try {
-      payload = JSON.parse(r.file_url || '{}');
-    } catch {
-      payload = { text: r.file_url || '' };
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
     }
-    const imageUrl = payload.image_url ? await resolveStorageUrl(payload.image_url) : '';
-    const authorPhoto = (r as any).profiles?.photo_url ? await resolveStorageUrl((r as any).profiles.photo_url) : '';
-    statuses.push({
-      id: r.id,
-      user_id: r.uploaded_by,
-      author_name: (r as any).profiles?.full_name || 'Portal User',
-      author_username: (r as any).profiles?.username || '',
-      author_role: (r as any).profiles?.roles?.name || '',
-      author_photo: authorPhoto,
-      text: payload.text || '',
-      image_url: imageUrl,
-      bg_color: payload.bg_color || '#008069',
-      created_at: r.created_at,
-    });
-  }
 
-  return res.json({ statuses });
+    const cutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: rows } = await admin
+      .from('documents')
+      .select('id, file_url, uploaded_by, created_at, profiles:uploaded_by(full_name, username, photo_url, roles(name))')
+      .eq('entity_type', 'general')
+      .eq('title', 'CHAT_STATUS')
+      .gte('created_at', cutoffIso)
+      .order('created_at', { ascending: false });
+
+    const statuses: any[] = [];
+    for (const r of rows || []) {
+      let payload: any = {};
+      try {
+        payload = JSON.parse(r.file_url || '{}');
+      } catch {
+        payload = { text: r.file_url || '' };
+      }
+      const imageUrl = payload.image_url ? await resolveStorageUrl(payload.image_url) : '';
+      const authorPhoto = (r as any).profiles?.photo_url ? await resolveStorageUrl((r as any).profiles.photo_url) : '';
+      statuses.push({
+        id: r.id,
+        user_id: r.uploaded_by,
+        author_name: (r as any).profiles?.full_name || 'Portal User',
+        author_username: (r as any).profiles?.username || '',
+        author_role: (r as any).profiles?.roles?.name || '',
+        author_photo: authorPhoto,
+        text: payload.text || '',
+        image_url: imageUrl,
+        bg_color: payload.bg_color || '#008069',
+        created_at: r.created_at,
+      });
+    }
+
+    return res.json({ statuses });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to load statuses' });
+  }
 });
 
 router.post('/chats/statuses', requireAuth, async (req: AuthRequest, res) => {
-  const admin = requireSupabaseAdmin(res);
-  if (!admin) return;
-  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
-    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+
+    const { text, image_url, bg_color } = req.body as {
+      text?: string;
+      image_url?: string;
+      bg_color?: string;
+    };
+
+    const cleanText = String(text || '').trim();
+    const cleanImage = normalizeStorageRef(image_url);
+    if (!cleanText && !cleanImage) {
+      return res.status(400).json({ error: 'Status text or photo is required.' });
+    }
+
+    const payloadJson = JSON.stringify({
+      text: cleanText,
+      image_url: cleanImage,
+      bg_color: bg_color || '#008069',
+    });
+
+    const { data: created, error } = await admin
+      .from('documents')
+      .insert({
+        entity_type: 'general',
+        entity_id: CHAT_STATUS_ENTITY_ID,
+        title: 'CHAT_STATUS',
+        file_url: payloadJson,
+        file_type: 'chat_status',
+        uploaded_by: req.user!.id,
+      })
+      .select('id')
+      .single();
+
+    if (error || !created) return res.status(400).json({ error: error?.message || 'Failed to post status' });
+    return res.status(201).json({ id: created.id });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to post status' });
   }
-
-  const { text, image_url, bg_color } = req.body as {
-    text?: string;
-    image_url?: string;
-    bg_color?: string;
-  };
-
-  const cleanText = String(text || '').trim();
-  const cleanImage = normalizeStorageRef(image_url);
-  if (!cleanText && !cleanImage) {
-    return res.status(400).json({ error: 'Status text or photo is required.' });
-  }
-
-  const payloadJson = JSON.stringify({
-    text: cleanText,
-    image_url: cleanImage,
-    bg_color: bg_color || '#008069',
-  });
-
-  const { data: created, error } = await admin
-    .from('documents')
-    .insert({
-      entity_type: 'general',
-      entity_id: CHAT_STATUS_ENTITY_ID,
-      title: 'CHAT_STATUS',
-      file_url: payloadJson,
-      file_type: 'chat_status',
-      uploaded_by: req.user!.id,
-    })
-    .select('id')
-    .single();
-
-  if (error || !created) return res.status(400).json({ error: error?.message || 'Failed to post status' });
-  return res.status(201).json({ id: created.id });
 });
 
 router.delete('/chats/statuses/:id', requireAuth, async (req: AuthRequest, res) => {
-  const admin = requireSupabaseAdmin(res);
-  if (!admin) return;
-  const id = req.params.id;
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const id = req.params.id;
 
-  const { data: existing } = await admin
-    .from('documents')
-    .select('id, uploaded_by')
-    .eq('id', id)
-    .eq('title', 'CHAT_STATUS')
-    .maybeSingle();
+    const { data: existing } = await admin
+      .from('documents')
+      .select('id, uploaded_by')
+      .eq('id', id)
+      .eq('title', 'CHAT_STATUS')
+      .maybeSingle();
 
-  if (!existing) return res.status(404).json({ error: 'Status not found' });
-  if (existing.uploaded_by !== req.user!.id && req.user!.role_slug !== 'super_admin') {
-    return res.status(403).json({ error: 'You can only delete your own status.' });
+    if (!existing) return res.status(404).json({ error: 'Status not found' });
+    if (existing.uploaded_by !== req.user!.id && req.user!.role_slug !== 'super_admin') {
+      return res.status(403).json({ error: 'You can only delete your own status.' });
+    }
+
+    const { error } = await admin.from('documents').delete().eq('id', id);
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to delete status' });
   }
-
-  const { error } = await admin.from('documents').delete().eq('id', id);
-  if (error) return res.status(400).json({ error: error.message });
-  return res.json({ success: true });
 });
 
 router.get('/chats/:id/messages', requireAuth, async (req: AuthRequest, res) => {
-  const admin = requireSupabaseAdmin(res);
-  if (!admin) return;
-  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
-    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const convId = req.params.id;
+    const uid = req.user!.id;
+    const { data: isPart } = await admin.from('conversation_participants').select('id').eq('conversation_id', convId).eq('user_id', uid).maybeSingle();
+    if (!isPart) return res.status(403).json({ error: 'Access denied to this conversation' });
+
+    const [, { data: msgsRaw }, { data: metaRows }] = await Promise.all([
+      admin.from('conversation_participants').update({ last_read_at: new Date().toISOString() }).eq('conversation_id', convId).eq('user_id', uid),
+      admin
+        .from('messages')
+        .select('*, profiles(full_name, roles(name))')
+        .eq('conversation_id', convId)
+        .order('created_at', { ascending: true }),
+      admin
+        .from('documents')
+        .select('file_type, file_url, created_at')
+        .eq('entity_type', 'general')
+        .eq('entity_id', convId)
+        .eq('title', 'CHAT_MSG_META')
+        .order('created_at', { ascending: true }),
+    ]);
+
+    const metaMap = new Map<string, ChatMsgMeta>();
+    for (const row of metaRows || []) {
+      if (row.file_type) {
+        metaMap.set(row.file_type, parseMsgMeta(row.file_url));
+      }
+    }
+
+    const resolved = await resolveStorageUrlsInRows(msgsRaw || [], ['attachment_url']);
+    const messages = resolved.map((m: any) => {
+      const meta = metaMap.get(m.id) || { edited_at: null, reactions: {} };
+      return {
+        ...m,
+        sender_name: m.profiles?.full_name || '',
+        sender_role: m.profiles?.roles?.name || '',
+        edited_at: meta.edited_at,
+        reactions: formatReactionsList(meta.reactions, uid),
+      };
+    });
+
+    return res.json({ messages });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to load messages' });
   }
-  const convId = req.params.id;
-  const uid = req.user!.id;
-  const { data: isPart } = await admin.from('conversation_participants').select('id').eq('conversation_id', convId).eq('user_id', uid).maybeSingle();
-  if (!isPart) return res.status(403).json({ error: 'Access denied to this conversation' });
-
-  await admin.from('conversation_participants').update({ last_read_at: new Date().toISOString() }).eq('conversation_id', convId).eq('user_id', uid);
-  const { data: msgsRaw } = await admin
-    .from('messages')
-    .select('*, profiles(full_name, roles(name))')
-    .eq('conversation_id', convId)
-    .order('created_at', { ascending: true });
-
-  const resolved = await resolveStorageUrlsInRows(msgsRaw || [], ['attachment_url']);
-  const messages = resolved.map((m: any) => ({
-    ...m,
-    sender_name: m.profiles?.full_name || '',
-    sender_role: m.profiles?.roles?.name || '',
-  }));
-
-  return res.json({ messages });
 });
 
 router.post('/chats', requireAuth, async (req: AuthRequest, res) => {
@@ -601,97 +735,232 @@ router.post('/chats', requireAuth, async (req: AuthRequest, res) => {
       }
     }
     return res.status(201).json({ id: createdConv.id });
-  } catch {
-    return res.status(500).json({ error: 'Failed to create conversation' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to create conversation' });
   }
 });
 
 router.post('/chats/:id/messages', requireAuth, async (req: AuthRequest, res) => {
-  const admin = requireSupabaseAdmin(res);
-  if (!admin) return;
-  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
-    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const convId = req.params.id;
+    const uid = req.user!.id;
+    const { data: isPart } = await admin.from('conversation_participants').select('id').eq('conversation_id', convId).eq('user_id', uid).maybeSingle();
+    if (!isPart) return res.status(403).json({ error: 'Access denied' });
+
+    const { content, attachment_url, attachment_name } = req.body as { content?: string; attachment_url?: string; attachment_name?: string };
+    if (!content && !attachment_url) return res.status(400).json({ error: 'Message text or attachment required' });
+
+    const { data: createdMsg, error } = await admin
+      .from('messages')
+      .insert({
+        conversation_id: convId,
+        sender_id: uid,
+        content: content || '',
+        attachment_url: normalizeStorageRef(attachment_url),
+        attachment_name: attachment_name || '',
+      })
+      .select('id')
+      .single();
+    if (error || !createdMsg) return res.status(400).json({ error: error?.message || 'Failed to send message' });
+
+    await Promise.all([
+      admin.from('conversations').update({ updated_at: new Date().toISOString() }).eq('id', convId),
+      admin.from('conversation_participants').update({ last_read_at: new Date().toISOString() }).eq('conversation_id', convId).eq('user_id', uid),
+    ]);
+
+    const { data: others } = await admin.from('conversation_participants').select('user_id').eq('conversation_id', convId).neq('user_id', uid);
+    for (const o of others || []) {
+      await createNotification(o.user_id, 'message', 'New Message', `${req.user!.full_name}: ${(content || attachment_name || 'Attachment').slice(0, 80)}`, 'chats', convId);
+    }
+    return res.status(201).json({ id: createdMsg.id });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to send message' });
   }
-  const convId = req.params.id;
-  const uid = req.user!.id;
-  const { data: isPart } = await admin.from('conversation_participants').select('id').eq('conversation_id', convId).eq('user_id', uid).maybeSingle();
-  if (!isPart) return res.status(403).json({ error: 'Access denied' });
+});
 
-  const { content, attachment_url, attachment_name } = req.body as { content?: string; attachment_url?: string; attachment_name?: string };
-  if (!content && !attachment_url) return res.status(400).json({ error: 'Message text or attachment required' });
+router.put('/chats/:id/messages/:messageId', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const { id: convId, messageId } = req.params;
+    const uid = req.user!.id;
 
-  const { data: createdMsg, error } = await admin
-    .from('messages')
-    .insert({
-      conversation_id: convId,
-      sender_id: uid,
-      content: content || '',
-      attachment_url: normalizeStorageRef(attachment_url),
-      attachment_name: attachment_name || '',
-    })
-    .select('id')
-    .single();
-  if (error || !createdMsg) return res.status(400).json({ error: error?.message || 'Failed to send message' });
+    const { data: isPart } = await admin.from('conversation_participants').select('id').eq('conversation_id', convId).eq('user_id', uid).maybeSingle();
+    if (!isPart) return res.status(403).json({ error: 'Access denied' });
 
-  await Promise.all([
-    admin.from('conversations').update({ updated_at: new Date().toISOString() }).eq('id', convId),
-    admin.from('conversation_participants').update({ last_read_at: new Date().toISOString() }).eq('conversation_id', convId).eq('user_id', uid),
-  ]);
+    const { data: msgRow } = await admin
+      .from('messages')
+      .select('id, sender_id, attachment_url')
+      .eq('id', messageId)
+      .eq('conversation_id', convId)
+      .maybeSingle();
 
-  const { data: others } = await admin.from('conversation_participants').select('user_id').eq('conversation_id', convId).neq('user_id', uid);
-  for (const o of others || []) {
-    await createNotification(o.user_id, 'message', 'New Message', `${req.user!.full_name}: ${(content || attachment_name || 'Attachment').slice(0, 80)}`, 'chats', convId);
+    if (!msgRow) return res.status(404).json({ error: 'Message not found' });
+    if (msgRow.sender_id !== uid) {
+      return res.status(403).json({ error: 'You can only edit your own messages.' });
+    }
+
+    const cleanContent = String((req.body as { content?: string })?.content || '').trim();
+    if (!cleanContent && !msgRow.attachment_url) {
+      return res.status(400).json({ error: 'Message text cannot be empty.' });
+    }
+
+    const { error } = await admin
+      .from('messages')
+      .update({ content: cleanContent })
+      .eq('id', messageId)
+      .eq('conversation_id', convId);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const existingRow = await getMsgMetaRow(admin, convId, messageId);
+    const meta = parseMsgMeta(existingRow?.file_url);
+    const editedAt = new Date().toISOString();
+    meta.edited_at = editedAt;
+    await saveMsgMeta(admin, convId, messageId, meta, uid);
+    await admin.from('conversations').update({ updated_at: editedAt }).eq('id', convId);
+
+    return res.json({ success: true, content: cleanContent, edited_at: editedAt });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to edit message' });
   }
-  return res.status(201).json({ id: createdMsg.id });
+});
+
+router.post('/chats/:id/messages/:messageId/react', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const { id: convId, messageId } = req.params;
+    const uid = req.user!.id;
+
+    const { data: isPart } = await admin.from('conversation_participants').select('id').eq('conversation_id', convId).eq('user_id', uid).maybeSingle();
+    if (!isPart) return res.status(403).json({ error: 'Access denied' });
+
+    const { data: msgRow } = await admin
+      .from('messages')
+      .select('id')
+      .eq('id', messageId)
+      .eq('conversation_id', convId)
+      .maybeSingle();
+    if (!msgRow) return res.status(404).json({ error: 'Message not found' });
+
+    const emoji = String((req.body as { emoji?: string })?.emoji || '').trim();
+    if (!emoji || emoji.length > 16) {
+      return res.status(400).json({ error: 'Valid reaction emoji is required.' });
+    }
+
+    const existingRow = await getMsgMetaRow(admin, convId, messageId);
+    const meta = parseMsgMeta(existingRow?.file_url);
+
+    const alreadyReactedThis = (meta.reactions[emoji] || []).includes(uid);
+    // Remove user's previous reaction from any emoji on this message (WhatsApp single-reaction-per-user toggle)
+    for (const [key, users] of Object.entries(meta.reactions)) {
+      const filtered = users.filter((id) => id !== uid);
+      if (filtered.length) {
+        meta.reactions[key] = filtered;
+      } else {
+        delete meta.reactions[key];
+      }
+    }
+    if (!alreadyReactedThis) {
+      meta.reactions[emoji] = [...(meta.reactions[emoji] || []), uid];
+    }
+
+    await saveMsgMeta(admin, convId, messageId, meta, uid);
+    return res.json({ reactions: formatReactionsList(meta.reactions, uid) });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to update reaction' });
+  }
 });
 
 router.delete('/chats/:id/messages/:messageId', requireAuth, async (req: AuthRequest, res) => {
-  const admin = requireSupabaseAdmin(res);
-  if (!admin) return;
-  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
-    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const { id: convId, messageId } = req.params;
+    const uid = req.user!.id;
+
+    const { data: isPart } = await admin.from('conversation_participants').select('id').eq('conversation_id', convId).eq('user_id', uid).maybeSingle();
+    if (!isPart && req.user!.role_slug !== 'super_admin') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { data: msgRow } = await admin
+      .from('messages')
+      .select('id, sender_id, conversation_id')
+      .eq('id', messageId)
+      .eq('conversation_id', convId)
+      .maybeSingle();
+
+    if (!msgRow) return res.status(404).json({ error: 'Message not found' });
+    if (msgRow.sender_id !== uid && req.user!.role_slug !== 'super_admin') {
+      return res.status(403).json({ error: 'You can only delete your own messages.' });
+    }
+
+    const { error } = await admin.from('messages').delete().eq('id', messageId).eq('conversation_id', convId);
+    if (error) return res.status(400).json({ error: error.message });
+
+    await admin
+      .from('documents')
+      .delete()
+      .eq('entity_type', 'general')
+      .eq('entity_id', convId)
+      .eq('title', 'CHAT_MSG_META')
+      .eq('file_type', messageId);
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to delete message' });
   }
-  const { id: convId, messageId } = req.params;
-  const uid = req.user!.id;
-
-  const { data: msgRow } = await admin
-    .from('messages')
-    .select('id, sender_id, conversation_id')
-    .eq('id', messageId)
-    .eq('conversation_id', convId)
-    .maybeSingle();
-
-  if (!msgRow) return res.status(404).json({ error: 'Message not found' });
-  if (msgRow.sender_id !== uid) return res.status(403).json({ error: 'You can only delete your own saved messages.' });
-
-  const { error } = await admin.from('messages').delete().eq('id', messageId).eq('sender_id', uid);
-  if (error) return res.status(400).json({ error: error.message });
-  return res.json({ success: true });
 });
 
 router.delete('/chats/:id', requireAuth, async (req: AuthRequest, res) => {
-  const admin = requireSupabaseAdmin(res);
-  if (!admin) return;
-  if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
-    return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const convId = req.params.id;
+    const uid = req.user!.id;
+
+    const [{ data: conv }, { data: parts }] = await Promise.all([
+      admin.from('conversations').select('id, created_by').eq('id', convId).maybeSingle(),
+      admin.from('conversation_participants').select('user_id').eq('conversation_id', convId),
+    ]);
+
+    if (!conv) return res.status(404).json({ error: 'Channel not found' });
+    const isPersonal = (parts || []).length === 1 && parts?.[0]?.user_id === uid && conv.created_by === uid;
+    if (!isPersonal) {
+      return res.status(403).json({ error: 'Only your own Personal Channel can be deleted.' });
+    }
+
+    await admin
+      .from('documents')
+      .delete()
+      .eq('entity_type', 'general')
+      .eq('entity_id', convId)
+      .eq('title', 'CHAT_MSG_META');
+
+    const { error } = await admin.from('conversations').delete().eq('id', convId);
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to delete channel' });
   }
-  const convId = req.params.id;
-  const uid = req.user!.id;
-
-  const [{ data: conv }, { data: parts }] = await Promise.all([
-    admin.from('conversations').select('id, created_by').eq('id', convId).maybeSingle(),
-    admin.from('conversation_participants').select('user_id').eq('conversation_id', convId),
-  ]);
-
-  if (!conv) return res.status(404).json({ error: 'Channel not found' });
-  const isPersonal = (parts || []).length === 1 && parts?.[0]?.user_id === uid && conv.created_by === uid;
-  if (!isPersonal) {
-    return res.status(403).json({ error: 'Only your own Personal Channel can be deleted.' });
-  }
-
-  const { error } = await admin.from('conversations').delete().eq('id', convId);
-  if (error) return res.status(400).json({ error: error.message });
-  return res.json({ success: true });
 });
 
 // ==================== NOTICES ====================

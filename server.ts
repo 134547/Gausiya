@@ -32,18 +32,26 @@ async function startServer() {
         next(err);
       }
     });
+    app.use('/api', (_req, res) => {
+      if (!res.headersSent) {
+        return res.status(404).json({ error: 'API endpoint not found' });
+      }
+    });
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res) => {
+      if (req.path.startsWith('/api')) {
+        return res.status(404).json({ error: 'API endpoint not found' });
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(
-      `Madrasa Ghausia Razvia Portal running on http://0.0.0.0:${PORT} (Supabase: ${isSupabaseServerConfigured ? 'configured' : 'awaiting credentials'})`
+      `Madrasa Gausiya Razvia Portal running on http://0.0.0.0:${PORT} (Supabase: ${isSupabaseServerConfigured ? 'configured' : 'awaiting credentials'})`
     );
   });
 }

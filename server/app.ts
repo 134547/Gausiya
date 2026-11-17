@@ -77,6 +77,13 @@ export async function createApiApp(): Promise<express.Express> {
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
 
+  app.use('/api', (req, res, next) => {
+    if (req.path !== '/public/config') {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+    next();
+  });
+
   // API Routes (backed by Supabase PostgreSQL, Auth & ImgBB)
   app.use('/api/public', publicRoutes);
   app.use('/api/auth', authRoutes);

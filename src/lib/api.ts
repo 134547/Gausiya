@@ -65,32 +65,58 @@ export async function apiRequest<T = any>(
   url: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = await resolveAccessToken();
-  const headers: Record<string, string> = {
-    ...((options.headers as Record<string, string>) || {}),
-  };
-  if (!(options.body instanceof FormData) && !headers['Content-Type']) {
-    headers['Content-Type'] = 'application/json';
-  }
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  const method = (options.method || 'GET').toUpperCase();
+  const maxAttempts = method === 'GET' ? 2 : 1;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const token = await resolveAccessToken();
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      ...((options.headers as Record<string, string>) || {}),
+    };
+    if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const res = await fetch(url, {
+      ...options,
+      headers,
+      credentials: 'include',
+    });
+
+    const { data, rawText } = await safeReadJson(res);
+    if (!res.ok) {
+      const message = formatHttpErrorMessage(res.status, data, rawText, 'Request failed');
+      throw new ApiError(message, res.status, data?.code, data || {});
+    }
+
+    if (data === null && rawText.trim()) {
+      const looksLikeHtml = rawText.trim().startsWith('<');
+      if (attempt < maxAttempts) {
+        await new Promise((r) => window.setTimeout(r, 450));
+        continue;
+      }
+      console.warn('[apiRequest] Non-JSON 2xx response', {
+        url,
+        status: res.status,
+        contentType: res.headers.get('content-type'),
+        preview: rawText.trim().slice(0, 140),
+      });
+      throw new ApiError(
+        looksLikeHtml
+          ? 'API returned an HTML page instead of JSON. Please refresh or check server connection.'
+          : 'Server returned an unexpected non-JSON response. Please try again.',
+        res.status
+      );
+    }
+
+    return (data ?? {}) as T;
   }
 
-  const res = await fetch(url, {
-    ...options,
-    headers,
-    credentials: 'include',
-  });
-
-  const { data, rawText } = await safeReadJson(res);
-  if (!res.ok) {
-    const message = formatHttpErrorMessage(res.status, data, rawText, 'Request failed');
-    throw new ApiError(message, res.status, data?.code, data || {});
-  }
-  if (data === null && rawText.trim()) {
-    throw new ApiError('Server returned an unexpected non-JSON response. Please try again.', res.status);
-  }
-  return (data ?? {}) as T;
+  return {} as T;
 }
 
 export async function uploadFile(
