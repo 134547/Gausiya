@@ -540,7 +540,7 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
 
   let q = admin
     .from('results')
-    .select('*, students!inner(full_name, student_code, admission_no, father_name, photo_url, deleted_at), classes(name), examinations!inner(name, start_date, results_published, academic_session_id, deleted_at, academic_sessions(name))')
+    .select('*, students!inner(full_name, student_code, admission_no, father_name, photo_url, deleted_at), classes(name, teachers(full_name)), examinations!inner(name, start_date, results_published, academic_session_id, deleted_at, academic_sessions(name))')
     .is('students.deleted_at', null)
     .is('examinations.deleted_at', null)
     .order('position', { ascending: true })
@@ -649,6 +649,7 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
         father_name: r.students?.father_name || '',
         photo_url: await resolveStorageUrl(r.students?.photo_url),
         class_name: r.classes?.name || '',
+        class_teacher_name: r.classes?.teachers?.full_name || '',
         exam_name: r.examinations?.name || '',
         exam_date: r.examinations?.start_date || '',
         session_name: r.examinations?.academic_sessions?.name || '',

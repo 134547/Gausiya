@@ -2436,6 +2436,7 @@ router.get('/parent/children/:studentId/overview', requireAuth, requireRole('par
       father_name: student.father_name,
       photo_url: student.photo_url,
       class_name: r.classes?.name || student.class_name,
+      class_teacher_name: student.class_teacher_name || '',
       exam_name: r.examinations?.name || '',
       exam_date: r.examinations?.start_date || '',
       session_name: r.examinations?.academic_sessions?.name || student.session_name || '',

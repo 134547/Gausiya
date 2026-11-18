@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   Award,
   Bell,
   BookMarked,
@@ -17,6 +18,7 @@ import {
   KeyRound,
   Monitor,
   Plus,
+  Printer,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -77,17 +79,27 @@ export const MyChildPage: React.FC<MyChildPageProps> = ({
   const [uploadingHwFile, setUploadingHwFile] = useState(false);
   const [submittingHw, setSubmittingHw] = useState(false);
 
-  // Official Grade Card modal state
+  // Official Grade Card modal & inline export state
   const [viewResult, setViewResult] = useState<any>(null);
   const [downloadingPng, setDownloadingPng] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [inlineExportKey, setInlineExportKey] = useState<string | null>(null);
   const viewCardRef = useRef<HTMLDivElement>(null);
+  const inlineCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
+  const hasLoadedOnceRef = useRef(false);
+  const onInitialHandledRef = useRef(onInitialStudentHandled);
+  useEffect(() => {
+    onInitialHandledRef.current = onInitialStudentHandled;
+  }, [onInitialStudentHandled]);
+
   const loadChildren = useCallback(async (preferStudentId?: string) => {
-    setLoadingChildren(true);
+    if (!hasLoadedOnceRef.current) {
+      setLoadingChildren(true);
+    }
     try {
       const res = await apiRequest<{ parent: any; children: any[]; pendingRequests: any[] }>('/api/parent/children');
       const list = res.children || [];
@@ -100,8 +112,9 @@ export const MyChildPage: React.FC<MyChildPageProps> = ({
       setSelectedChildId((prev) => {
         if (preferStudentId && list.some((c) => c.id === preferStudentId)) return preferStudentId;
         if (prev && list.some((c) => c.id === prev)) return prev;
-        return list[0]?.id || '';
+        return '';
       });
+      hasLoadedOnceRef.current = true;
     } catch (e: any) {
       setErr(e?.message || 'Failed to load connected children');
     } finally {
@@ -127,12 +140,13 @@ export const MyChildPage: React.FC<MyChildPageProps> = ({
   }, []);
 
   useEffect(() => {
+    if (hasLoadedOnceRef.current && !initialStudentId) return;
     loadChildren(initialStudentId || undefined).then(() => {
-      if (initialStudentId && onInitialStudentHandled) {
-        onInitialStudentHandled();
+      if (initialStudentId && onInitialHandledRef.current) {
+        onInitialHandledRef.current();
       }
     });
-  }, [loadChildren, initialStudentId, onInitialStudentHandled]);
+  }, [loadChildren, initialStudentId]);
 
   useEffect(() => {
     if (selectedChildId) {
@@ -227,9 +241,9 @@ export const MyChildPage: React.FC<MyChildPageProps> = ({
         delete next[reqItem.id];
         return next;
       });
-      setMsg(`${res.student_name} (${res.student_code}) connected successfully to My Child!`);
+      setMsg(`${res.student_name} (${res.student_code}) connected successfully to My Child! Click on their card below to view details.`);
       setShowConnectBox(false);
-      await loadChildren(res.student_id);
+      await loadChildren();
       window.dispatchEvent(new Event('madrasa:notifications-updated'));
     } catch (e: any) {
       setErr(e?.message || 'OTP verification failed');
@@ -308,6 +322,26 @@ export const MyChildPage: React.FC<MyChildPageProps> = ({
     }
   };
 
+  const handleInlineDownload = async (r: any, type: 'pdf' | 'png') => {
+    const el = inlineCardRefs.current[String(r.id)];
+    const key = `${type}-${r.id}`;
+    if (!el || inlineExportKey) return;
+    setInlineExportKey(key);
+    setErr('');
+    try {
+      const baseName = `Result_Grade_Card_-_${r.student_name || st?.full_name || 'Student'}_-_${r.exam_name || 'Examination'}`;
+      if (type === 'pdf') {
+        await exportResultCardPdf(el, baseName);
+      } else {
+        await exportResultCardPng(el, baseName);
+      }
+    } catch (e: any) {
+      setErr(e?.message || `Failed to download ${type.toUpperCase()}`);
+    } finally {
+      setInlineExportKey(null);
+    }
+  };
+
   const selectedChild = childrenList.find((c) => c.id === selectedChildId) || null;
   const st = overview?.student || selectedChild || null;
   const att = overview?.attendanceSummary || { total: 0, present: 0, absent: 0, late: 0, on_leave: 0, percentage: 0 };
@@ -320,7 +354,15 @@ export const MyChildPage: React.FC<MyChildPageProps> = ({
   const onlineClassesList = overview?.onlineClasses || [];
   const noticesList = overview?.notices || [];
 
-  const viewCardData = viewResult ? buildCardDataFromSavedResult(viewResult, settings) : null;
+  const viewCardData = viewResult
+    ? buildCardDataFromSavedResult(
+        {
+          ...viewResult,
+          class_teacher_name: viewResult.class_teacher_name || st?.class_teacher_name || '',
+        },
+        settings
+      )
+    : null;
 
   return (
     <div className="space-y-5">
@@ -519,66 +561,85 @@ export const MyChildPage: React.FC<MyChildPageProps> = ({
             Enter your child&apos;s Student ID above (you can add 1, 2, 3, or more children) and verify the 6-digit OTP sent to their student notification to view their Homework, Attendance, and Results.
           </p>
         </div>
+      ) : !selectedChildId ? (
+        <div className="bg-white rounded-xl border border-neutral-200 p-4 sm:p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-[#737373]">
+                My Children ({childrenList.length})
+              </div>
+              <p className="text-xs text-[#525252] mt-0.5">
+                Kisi bhi bachhe ke card par click karein unka Homework, Attendance, aur Result dekhne ke liye.
+              </p>
+            </div>
+            <div className="text-[11px] text-[#737373]">Logged in as {user.full_name}</div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {childrenList.map((child) => (
+              <button
+                key={child.id}
+                type="button"
+                onClick={() => {
+                  setActiveTab('overview');
+                  setAttFilter('all');
+                  setSelectedChildId(child.id);
+                }}
+                className="text-start p-4 rounded-xl border border-neutral-200 bg-white hover:border-[#DC1726] hover:bg-red-50/30 transition-all flex items-center gap-3 shadow-xs cursor-pointer group"
+              >
+                {child.photo_url ? (
+                  <img
+                    src={child.photo_url}
+                    alt={child.full_name}
+                    referrerPolicy="no-referrer"
+                    className="w-12 h-12 rounded-full object-cover border border-neutral-200 shrink-0"
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-full bg-[#450A0A] group-hover:bg-[#DC1726] text-white flex items-center justify-center font-bold text-base shrink-0 transition-colors">
+                    {(child.full_name || 'S').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold text-[#171717] truncate">{child.full_name}</span>
+                    <span className="px-2 py-0.5 rounded bg-neutral-100 group-hover:bg-[#DC1726] group-hover:text-white text-[#525252] text-[10px] font-bold uppercase shrink-0 transition-colors">
+                      View
+                    </span>
+                  </div>
+                  <div className="text-xs text-[#525252] truncate mt-0.5">
+                    {child.class_name || 'Unassigned'} · {child.relationship || 'Child'}
+                  </div>
+                  <div className="text-[11px] font-mono-num text-[#737373] truncate">
+                    ID: {child.student_code}
+                    {child.admission_no ? ` · Adm: ${child.admission_no}` : ''}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
       ) : (
         <>
-          <div className="bg-white rounded-xl border border-neutral-200 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs font-bold uppercase tracking-wider text-[#737373]">
-                Select Child to View Full Progress ({childrenList.length})
+          {/* Back Bar */}
+          <div className="bg-white rounded-xl border border-neutral-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedChildId('');
+                setOverview(null);
+                setActiveTab('overview');
+                setAttFilter('all');
+              }}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg border border-neutral-200 bg-neutral-50 hover:bg-neutral-100 text-xs font-semibold text-[#171717] transition-colors cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4 text-[#DC1726]" />
+              <span>Back to My Children ({childrenList.length})</span>
+            </button>
+            {selectedChild && (
+              <div className="text-xs text-[#737373]">
+                Viewing: <strong className="text-[#171717]">{selectedChild.full_name}</strong>{' '}
+                <span className="font-mono-num">({selectedChild.student_code})</span>
               </div>
-              <div className="text-[11px] text-[#737373]">Logged in as {user.full_name}</div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {childrenList.map((child) => {
-                const isSelected = child.id === selectedChildId;
-                return (
-                  <button
-                    key={child.id}
-                    type="button"
-                    onClick={() => setSelectedChildId(child.id)}
-                    className={`text-start p-3.5 rounded-xl border transition-all flex items-center gap-3 ${
-                      isSelected
-                        ? 'border-[#DC1726] bg-red-50/50 ring-2 ring-[#DC1726]/20 shadow-xs'
-                        : 'border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50'
-                    }`}
-                  >
-                    {child.photo_url ? (
-                      <img
-                        src={child.photo_url}
-                        alt={child.full_name}
-                        referrerPolicy="no-referrer"
-                        className="w-12 h-12 rounded-full object-cover border border-neutral-200 shrink-0"
-                      />
-                    ) : (
-                      <div
-                        className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-base shrink-0 ${
-                          isSelected ? 'bg-[#DC1726] text-white' : 'bg-[#450A0A] text-white'
-                        }`}
-                      >
-                        {(child.full_name || 'S').charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-bold text-[#171717] truncate">{child.full_name}</span>
-                        {isSelected && (
-                          <span className="px-2 py-0.5 rounded bg-[#DC1726] text-white text-[10px] font-bold uppercase shrink-0">
-                            Selected
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-[#525252] truncate mt-0.5">
-                        {child.class_name || 'Unassigned'} · {child.relationship || 'Child'}
-                      </div>
-                      <div className="text-[11px] font-mono-num text-[#737373] truncate">
-                        ID: {child.student_code}
-                        {child.admission_no ? ` · Adm: ${child.admission_no}` : ''}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            )}
           </div>
 
           {/* Selected Child Full Workspace */}
@@ -946,73 +1007,81 @@ export const MyChildPage: React.FC<MyChildPageProps> = ({
                 </div>
               )}
 
-              {/* TAB 4: EXAM RESULTS */}
+              {/* TAB 4: EXAM RESULTS (Official Grade Card) */}
               {activeTab === 'results' && (
-                <div className="space-y-4">
+                <div className="space-y-5">
                   {resultsList.length === 0 ? (
                     <div className="bg-white rounded-xl border border-neutral-200 p-8 text-center text-xs text-[#737373]">
                       No published examination results available for {st.full_name} yet.
                     </div>
                   ) : (
-                    resultsList.map((r: any) => (
-                      <div key={r.id} className="bg-white rounded-xl border border-neutral-200 p-5 space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <h4 className="text-sm font-bold text-[#171717]">{r.exam_name}</h4>
-                            <p className="text-xs text-[#737373] font-mono-num">
-                              {r.class_name} · {r.obtained_marks}/{r.total_marks} Marks ({r.percentage}%) · Grade{' '}
-                              <strong>{r.grade}</strong>
-                              {r.position ? ` · Rank #${r.position}` : ''}
-                            </p>
+                    resultsList.map((r: any) => {
+                      const inlineCardData = buildCardDataFromSavedResult(
+                        {
+                          ...r,
+                          class_teacher_name: r.class_teacher_name || st?.class_teacher_name || '',
+                        },
+                        settings
+                      );
+                      return (
+                        <div
+                          key={r.id}
+                          className="bg-white rounded-2xl border border-neutral-200 shadow-xs overflow-hidden"
+                        >
+                          <div className="px-4 sm:px-5 py-3 bg-neutral-50 border-b border-neutral-200 flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <h4 className="text-sm font-bold text-[#171717]">
+                                Result Grade Card — {r.student_name || st.full_name} ({r.exam_name})
+                              </h4>
+                              <p className="text-[11px] text-[#737373] font-mono-num">
+                                {r.class_name} · Marks: {r.obtained_marks}/{r.total_marks} ({Number(r.percentage).toFixed(2)}%) · Grade{' '}
+                                <strong>{r.grade}</strong>
+                                {r.position ? ` · Rank #${r.position}` : ''}
+                                {r.total_students ? ` / ${r.total_students}` : ''}
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={inlineExportKey !== null}
+                                onClick={() => handleInlineDownload(r, 'pdf')}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2563eb] text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-60 cursor-pointer"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>{inlineExportKey === `pdf-${r.id}` ? 'Saving PDF...' : 'Download PDF'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={inlineExportKey !== null}
+                                onClick={() => handleInlineDownload(r, 'png')}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ea580c] text-white text-xs font-semibold hover:bg-orange-600 disabled:opacity-60 cursor-pointer"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>{inlineExportKey === `png-${r.id}` ? 'Saving PNG...' : 'Download PNG'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setViewResult(r)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 cursor-pointer"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                                <span>Print</span>
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`px-2.5 py-1 rounded text-[11px] font-bold uppercase ${
-                                r.status === 'pass'
-                                  ? 'bg-emerald-50 text-[#10B981] border border-emerald-200'
-                                  : 'bg-red-50 text-[#DC1726] border border-red-200'
-                              }`}
-                            >
-                              {r.status}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setViewResult(r)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>View / Download Grade Card</span>
-                            </button>
+                          <div className="p-2 sm:p-5 bg-white overflow-x-auto">
+                            <div className="min-w-[680px]">
+                              <ResultGradeCard
+                                data={inlineCardData}
+                                cardRef={(el) => {
+                                  inlineCardRefs.current[String(r.id)] = el;
+                                }}
+                              />
+                            </div>
                           </div>
                         </div>
-                        {(r.subjects || []).length > 0 && (
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-xs border border-neutral-200">
-                              <thead className="bg-neutral-50 text-[#737373]">
-                                <tr>
-                                  <th className="px-3 py-1.5 text-start border-b border-neutral-200">Subject</th>
-                                  <th className="px-3 py-1.5 text-end border-b border-neutral-200">Obtained</th>
-                                  <th className="px-3 py-1.5 text-end border-b border-neutral-200">Max Marks</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-neutral-100">
-                                {r.subjects.map((sub: any) => (
-                                  <tr key={sub.id || sub.subject_id}>
-                                    <td className="px-3 py-1.5 font-medium text-[#171717]">{sub.subject_name}</td>
-                                    <td className="px-3 py-1.5 text-end font-mono-num font-semibold">
-                                      {sub.obtained_marks}
-                                    </td>
-                                    <td className="px-3 py-1.5 text-end font-mono-num text-[#737373]">
-                                      {sub.total_marks}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               )}

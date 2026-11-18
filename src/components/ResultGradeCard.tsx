@@ -150,7 +150,7 @@ export function buildCardDataFromSavedResult(result: any, settings: any): Result
     admNo: meta.admNo || result?.admission_no || result?.student_code || '-',
     studentName: meta.studentName || result?.student_name || '-',
     division: meta.division || 'A',
-    teacher: meta.teacher || 'Class Teacher',
+    teacher: meta.teacher || result?.class_teacher_name || 'Class Teacher',
     photo: meta.photo || result?.photo_url || '',
     remarks: meta.remarks || result?.teacher_remarks || '',
     rank: result?.position ? Number(result.position) : (meta.rank ? Number(meta.rank) : undefined),

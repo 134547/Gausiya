@@ -7,8 +7,10 @@ import {
   Building2,
   Calendar,
   CalendarCheck,
+  Check,
   ClipboardCheck,
   ClipboardList,
+  Copy,
   ExternalLink,
   FileText,
   GraduationCap,
@@ -51,6 +53,31 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
   const [error, setError] = useState('');
   const [analyticsTab, setAnalyticsTab] = useState<'daily' | 'weekly' | 'monthly'>('daily');
   const [reloadTick, setReloadTick] = useState(0);
+  const [copiedOtpId, setCopiedOtpId] = useState<string | null>(null);
+
+  const handleCopyOtp = async (id: string, code: string) => {
+    if (!code) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = code;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedOtpId(id);
+      window.setTimeout(() => {
+        setCopiedOtpId((cur) => (cur === id ? null : cur));
+      }, 2000);
+    } catch {
+      // ignore clipboard errors
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -129,7 +156,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => goMyChild(children[0]?.id || null)}
+              onClick={() => goMyChild(null)}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700"
             >
               <UsersRound className="w-3.5 h-3.5" />
@@ -170,7 +197,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
             {children.length > 0 && (
               <button
                 type="button"
-                onClick={() => goMyChild(children[0].id)}
+                onClick={() => goMyChild(null)}
                 className="text-xs font-semibold text-[#DC1726] hover:underline"
               >
                 Open Full My Child Workspace
@@ -260,20 +287,38 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white rounded-xl border border-neutral-200 p-5">
-            <h3 className="text-sm font-semibold text-[#171717] mb-3">Published Examination Results</h3>
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <h3 className="text-sm font-semibold text-[#171717]">Published Examination Results</h3>
+              {(data.recentResults || []).length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('results')}
+                  className="text-xs font-semibold text-[#DC1726] hover:underline"
+                >
+                  View Grade Cards
+                </button>
+              )}
+            </div>
             {(data.recentResults || []).length === 0 ? (
               <p className="text-xs text-[#737373] py-4">No published results available.</p>
             ) : (
               <div className="divide-y divide-neutral-100">
                 {data.recentResults.map((r: any) => (
-                  <div key={r.id} className="py-2.5 flex items-center justify-between text-xs">
+                  <div key={r.id} className="py-2.5 flex items-center justify-between gap-2 text-xs">
                     <div>
                       <div className="font-semibold text-[#171717]">{r.student_name} — {r.exam_name}</div>
-                      <div className="text-[#737373] font-mono-num">{r.obtained_marks}/{r.total_marks} ({r.percentage}%)</div>
+                      <div className="text-[#737373] font-mono-num">
+                        {r.obtained_marks}/{r.total_marks} ({r.percentage}%) · Grade {r.grade}
+                        {r.position ? ` · Rank #${r.position}` : ''}
+                      </div>
                     </div>
-                    <span className={`font-bold ${r.status === 'pass' ? 'text-[#10B981]' : 'text-[#DC1726]'}`}>
-                      Grade {r.grade} · {r.status.toUpperCase()}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('results')}
+                      className="px-2.5 py-1 rounded-md bg-red-50 border border-red-200 text-[#DC1726] font-semibold hover:bg-[#DC1726] hover:text-white transition-colors shrink-0 cursor-pointer"
+                    >
+                      Grade Card
+                    </button>
                   </div>
                 ))}
               </div>
@@ -336,8 +381,31 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
                     <p className="text-[#525252]">{otpNotif.message}</p>
                   </div>
                   {otpNotif.otp_code && (
-                    <div className="px-4 py-2 rounded-lg bg-[#DC1726] text-white font-mono-num text-lg font-extrabold tracking-widest shrink-0">
-                      OTP: {otpNotif.otp_code}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="px-4 py-2 rounded-lg bg-[#DC1726] text-white font-mono-num text-lg font-extrabold tracking-widest">
+                        OTP: {otpNotif.otp_code}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyOtp(otpNotif.id, otpNotif.otp_code)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
+                          copiedOtpId === otpNotif.id
+                            ? 'bg-[#10B981] border-[#10B981] text-white'
+                            : 'bg-white border-neutral-200 text-[#171717] hover:bg-neutral-50'
+                        }`}
+                      >
+                        {copiedOtpId === otpNotif.id ? (
+                          <>
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copy OTP</span>
+                          </>
+                        )}
+                      </button>
                     </div>
                   )}
                 </div>

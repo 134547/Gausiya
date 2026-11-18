@@ -110,6 +110,8 @@ export default function App() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [supabaseReady, setSupabaseReady] = useState(isSupabaseClientConfigured);
   const currentUserIdRef = useRef<string | null>(null);
+  const currentAuthUidRef = useRef<string | null>(null);
+  const lastNotifSigRef = useRef<string>('');
 
   const lang: Language = 'en';
 
@@ -157,8 +159,13 @@ export default function App() {
   const loadNotifications = useCallback(async () => {
     try {
       const res = await apiRequest<{ notifications: NotificationItem[]; unreadCount: number }>('/api/notifications');
-      setNotifications(res.notifications || []);
-      setUnreadCount(res.unreadCount || 0);
+      const nextList = res.notifications || [];
+      const nextUnread = res.unreadCount || 0;
+      const sig = `${nextUnread}|${nextList.map((n) => `${n.id}:${n.is_read}`).join(',')}`;
+      if (sig === lastNotifSigRef.current) return;
+      lastNotifSigRef.current = sig;
+      setNotifications(nextList);
+      setUnreadCount(nextUnread);
     } catch {
       // Ignore notification polling error if session expired
     }
@@ -173,12 +180,21 @@ export default function App() {
       try {
         const res = await apiRequest<{ user: User; settings: MadrasaSettings }>('/api/auth/me');
         currentUserIdRef.current = res.user?.id || null;
+        if (supabase) {
+          supabase.auth
+            .getSession()
+            .then(({ data }) => {
+              if (data.session?.user?.id) currentAuthUidRef.current = data.session.user.id;
+            })
+            .catch(() => {});
+        }
         setUser(res.user);
         setSettings(res.settings);
         if (resetModule) setActiveModule('dashboard');
         loadNotifications();
       } catch (err: any) {
         currentUserIdRef.current = null;
+        currentAuthUidRef.current = null;
         setUser(null);
         if (
           err instanceof ApiError &&
@@ -248,9 +264,14 @@ export default function App() {
         }
         if (event === 'SIGNED_IN') {
           const authUid = session?.user?.id || null;
-          if (authUid && currentUserIdRef.current === authUid) {
+          if (
+            currentUserIdRef.current &&
+            (!authUid || currentUserIdRef.current === authUid || currentAuthUidRef.current === authUid)
+          ) {
+            if (authUid) currentAuthUidRef.current = authUid;
             return;
           }
+          if (authUid) currentAuthUidRef.current = authUid;
           fetchMe({ silent: true, resetModule: !currentUserIdRef.current });
         }
         return;
@@ -258,6 +279,8 @@ export default function App() {
 
       if (event === 'SIGNED_OUT') {
         currentUserIdRef.current = null;
+        currentAuthUidRef.current = null;
+        lastNotifSigRef.current = '';
         clearStoredSession();
         setUser(null);
         setPendingNotice(null);
@@ -273,19 +296,19 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
-    const timer = window.setInterval(loadNotifications, 25000);
     const onNotifsUpdated = () => {
       loadNotifications();
     };
     window.addEventListener('madrasa:notifications-updated', onNotifsUpdated);
     return () => {
-      window.clearInterval(timer);
       window.removeEventListener('madrasa:notifications-updated', onNotifsUpdated);
     };
   }, [user, loadNotifications]);
 
   const handleLoginSuccess = async (loggedInUser: User) => {
     currentUserIdRef.current = loggedInUser.id;
+    currentAuthUidRef.current = loggedInUser.id;
+    lastNotifSigRef.current = '';
     setPendingNotice(null);
     setSessionNotice('');
     setUser(loggedInUser);
@@ -323,24 +346,40 @@ export default function App() {
     loadPublicHome();
   };
 
-  const handleSelectModule = (mod: NavModuleId) => {
-    if (!user) return;
-    if (mod === 'profile') {
-      setActiveModule('profile');
-      return;
-    }
-    const chatsOpen = settings?.chats_open !== false;
-    const navConfig = SIDEBAR_ITEMS.find((i) => i.id === mod);
-    if (
-      navConfig &&
-      navConfig.roles.includes(user.role_slug) &&
-      !(mod === 'chats' && !chatsOpen && user.role_slug !== 'super_admin')
-    ) {
-      setActiveModule(mod);
-    } else {
-      setActiveModule('dashboard');
-    }
-  };
+  const handleSelectModule = useCallback(
+    (mod: NavModuleId) => {
+      if (!user) return;
+      if (mod === 'profile') {
+        setActiveModule('profile');
+        return;
+      }
+      const chatsOpen = settings?.chats_open !== false;
+      const navConfig = SIDEBAR_ITEMS.find((i) => i.id === mod);
+      if (
+        navConfig &&
+        navConfig.roles.includes(user.role_slug) &&
+        !(mod === 'chats' && !chatsOpen && user.role_slug !== 'super_admin')
+      ) {
+        setActiveModule(mod);
+      } else {
+        setActiveModule('dashboard');
+      }
+    },
+    [user, settings?.chats_open]
+  );
+
+  const handleOpenParentChild = useCallback((studentId: string | null) => {
+    setSelectedParentChildId(studentId);
+    setActiveModule('my_child');
+  }, []);
+
+  const handleClearSelectedParentChild = useCallback(() => {
+    setSelectedParentChildId(null);
+  }, []);
+
+  const handleClearTargetChatConv = useCallback(() => {
+    setTargetChatConvId(null);
+  }, []);
 
   const handleMarkNotificationRead = async (id: string) => {
     const clicked = notifications.find((n) => n.id === id);
@@ -505,11 +544,6 @@ export default function App() {
     );
   }
 
-  const handleOpenParentChild = (studentId: string | null) => {
-    setSelectedParentChildId(studentId);
-    setActiveModule('my_child');
-  };
-
   const renderModule = () => {
     switch (activeModule) {
       case 'super_admin':
@@ -526,7 +560,7 @@ export default function App() {
             user={user}
             settings={settings}
             initialStudentId={selectedParentChildId}
-            onInitialStudentHandled={() => setSelectedParentChildId(null)}
+            onInitialStudentHandled={handleClearSelectedParentChild}
           />
         ) : (
           <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} onOpenChild={handleOpenParentChild} />
@@ -538,7 +572,7 @@ export default function App() {
             settings={settings}
             onSettingsUpdated={(s) => setSettings(s)}
             initialConvId={targetChatConvId}
-            onInitialConvHandled={() => setTargetChatConvId(null)}
+            onInitialConvHandled={handleClearTargetChatConv}
           />
         ) : (
           <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} onOpenChild={handleOpenParentChild} />
@@ -640,6 +674,7 @@ export default function App() {
           onSelectModule={handleSelectModule}
           onMarkNotificationRead={handleMarkNotificationRead}
           onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
+          onRefreshNotifications={loadNotifications}
           onLogout={handleLogout}
         />
 

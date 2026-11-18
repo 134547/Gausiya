@@ -643,7 +643,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
         </div>
       )}
 
-      {tab === 'results' && (
+      {tab === 'results' && (canEnterMarks || user.role_slug === 'committee_member') && (
         <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -760,7 +760,11 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
 
       {tab === 'results' &&
         (user.role_slug === 'student' || user.role_slug === 'parent') &&
-        results.length > 0 && (
+        (results.length === 0 ? (
+          <div className="bg-white rounded-xl border border-neutral-200 p-8 text-center text-xs text-[#737373]">
+            No published examination results available yet.
+          </div>
+        ) : (
           <div className="space-y-5">
             {results.map((r) => {
               const inlineCardData = {
@@ -828,7 +832,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
               );
             })}
           </div>
-        )}
+        ))}
 
       {tab === 'create' && canEnterMarks && (
         <CreateResultBuilder
