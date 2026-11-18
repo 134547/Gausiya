@@ -292,9 +292,12 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       const pid = await getParentIdForUser(user);
       const studentIds = pid ? await getParentStudentIds(pid) : [];
 
-      const [childrenRes, attRes, resultsRes, noticesRes] = await Promise.all([
+      const [parentRes, childrenRes, attRes, resultsRes, noticesRes, pendingOtpRes] = await Promise.all([
+        pid
+          ? admin.from('parents').select('id, parent_code, full_name, mobile, relationship').eq('id', pid).maybeSingle()
+          : Promise.resolve({ data: null }),
         studentIds.length
-          ? admin.from('students').select('id, student_code, full_name, photo_url, class_id, classes(name)').in('id', studentIds).is('deleted_at', null)
+          ? admin.from('students').select('id, student_code, admission_no, full_name, photo_url, class_id, classes(name)').in('id', studentIds).is('deleted_at', null)
           : Promise.resolve({ data: [] }),
         studentIds.length
           ? admin.from('attendance').select('student_id, status').in('student_id', studentIds)
@@ -315,7 +318,24 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
           .in('target_audience', ['all', 'parents'])
           .order('created_at', { ascending: false })
           .limit(5),
+        admin
+          .from('documents')
+          .select('id, file_url')
+          .eq('entity_type', 'student')
+          .eq('title', 'PARENT_LINK_OTP')
+          .eq('file_type', 'pending')
+          .eq('uploaded_by', user.id),
       ]);
+
+      const nowMs = Date.now();
+      const pendingRequestsCount = (pendingOtpRes.data || []).filter((doc: any) => {
+        try {
+          const parsed = JSON.parse(doc.file_url || '{}');
+          return parsed.expires_at && new Date(parsed.expires_at).getTime() > nowMs;
+        } catch {
+          return false;
+        }
+      }).length;
 
       const childrenResolved = await resolveStorageUrlsInRows(childrenRes.data || [], ['photo_url']);
       const children = childrenResolved.map((st: any) => {
@@ -323,6 +343,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
         return {
           id: st.id,
           student_code: st.student_code,
+          admission_no: st.admission_no || '',
           full_name: st.full_name,
           photo_url: st.photo_url,
           class_id: st.class_id,
@@ -341,6 +362,8 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       return res.json({
         role: 'parent',
         activeSession: activeSession?.name || '2026-2027',
+        parentProfile: parentRes.data || null,
+        pendingRequestsCount,
         children,
         recentResults,
         notices: noticesRes.data || [],
@@ -409,6 +432,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       syllabusDocsRes,
       programsRes,
       classTeacherRes,
+      parentOtpRes,
     ] = await Promise.all([
       stId
         ? admin
@@ -503,6 +527,13 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
             .select('is_class_teacher, teachers(full_name, mobile, deleted_at)')
             .eq('class_id', student.class_id)
         : Promise.resolve({ data: [] }),
+      admin
+        .from('notifications')
+        .select('id, title, message, reference_id, created_at, is_read')
+        .eq('user_id', user.id)
+        .eq('type', 'parent_link_otp')
+        .order('created_at', { ascending: false })
+        .limit(5),
     ]);
 
     let classTeacher: { full_name: string; mobile?: string } | null = null;
@@ -659,6 +690,21 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
           remarks: '',
         };
 
+    const parentOtpNotifications = (parentOtpRes?.data || [])
+      .filter((n: any) => {
+        const ageMs = Date.now() - new Date(n.created_at).getTime();
+        return !Number.isNaN(ageMs) && ageMs <= 15 * 60 * 1000;
+      })
+      .map((n: any) => {
+        const match =
+          String(n.title || '').match(/(\d{6})/) ||
+          String(n.message || '').match(/(\d{6})/);
+        return {
+          ...n,
+          otp_code: match ? match[1] : '',
+        };
+      });
+
     return res.json({
       role: 'student',
       activeSession: activeSession?.name || '2026-2027',
@@ -683,6 +729,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       syllabusItems,
       upcomingPrograms,
       notices,
+      parentOtpNotifications,
       committeeMembers,
     });
   } catch (err) {

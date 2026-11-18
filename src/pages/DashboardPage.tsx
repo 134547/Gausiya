@@ -12,8 +12,11 @@ import {
   ExternalLink,
   FileText,
   GraduationCap,
+  KeyRound,
   Phone,
+  Plus,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
   UserCheck,
   Users,
@@ -38,9 +41,10 @@ interface DashboardPageProps {
   user: User;
   lang: Language;
   onNavigate: (mod: NavModuleId) => void;
+  onOpenChild?: (studentId: string | null) => void;
 }
 
-export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavigate }) => {
+export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavigate, onOpenChild }) => {
   const t = translations[lang];
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -100,69 +104,158 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
 
   // ==================== PARENT DASHBOARD ====================
   if (data.role === 'parent') {
+    const children = data.children || [];
+    const pendingRequestsCount = Number(data.pendingRequestsCount || 0);
+    const goMyChild = (childId: string | null = null) => {
+      if (onOpenChild) {
+        onOpenChild(childId);
+      } else {
+        onNavigate('my_child');
+      }
+    };
+
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-white rounded-xl border border-neutral-200 p-5">
           <div>
-            <h2 className="text-base font-semibold text-[#171717]">Parent Portal Overview</h2>
-            <p className="text-xs text-[#737373]">Session {data.activeSession} · Linked Children Progress</p>
+            <h2 className="text-base font-bold text-[#171717]">
+              Parent Dashboard — {user.full_name}
+            </h2>
+            <p className="text-xs text-[#737373]">
+              Session {data.activeSession} · {children.length} Connected Child(ren)
+              {pendingRequestsCount > 0 ? ` · ${pendingRequestsCount} Pending OTP Verification` : ''}
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={() => onNavigate('homework')}
-            className="px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700"
-          >
-            View Homework
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => goMyChild(children[0]?.id || null)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700"
+            >
+              <UsersRound className="w-3.5 h-3.5" />
+              <span>My Child Section</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => goMyChild(null)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-[#10B981] text-xs font-semibold hover:bg-emerald-100"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Connect Child (OTP)</span>
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {(data.children || []).map((child: any) => {
-            const pct = child.total_days > 0 ? Math.round((child.present_days / child.total_days) * 100) : 0;
-            return (
-              <div key={child.id} className="bg-white rounded-xl border border-neutral-200 p-5 shadow-xs">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-[#450A0A] text-white flex items-center justify-center font-bold text-base">
-                      {child.full_name.charAt(0)}
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-[#171717]">{child.full_name}</h3>
-                      <p className="text-xs text-[#737373] font-mono-num">
-                        {child.student_code} · {child.class_name || 'Unassigned'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-end">
-                    <div className="text-lg font-bold text-[#10B981] font-mono-num">{pct}%</div>
-                    <div className="text-[11px] text-[#737373]">Attendance</div>
-                  </div>
-                </div>
-                <div className="mt-4 pt-3 border-t border-neutral-100 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => onNavigate('attendance')}
-                    className="text-xs font-medium text-[#0EA5E9] hover:underline"
-                  >
-                    Attendance History
-                  </button>
-                  <span className="text-neutral-300">·</span>
-                  <button
-                    type="button"
-                    onClick={() => onNavigate('results')}
-                    className="text-xs font-medium text-[#DC1726] hover:underline"
-                  >
-                    View Marksheet
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-          {(!data.children || data.children.length === 0) && (
-            <div className="col-span-full bg-white rounded-xl border border-neutral-200 p-8 text-center text-sm text-[#737373]">
-              No children linked to this parent account yet. Contact Madrasa office.
+        {pendingRequestsCount > 0 && (
+          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 text-xs text-amber-900">
+              <KeyRound className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                You have <strong>{pendingRequestsCount}</strong> pending OTP verification request(s). Ask the student for the 6-digit OTP from their Student Notification &amp; enter it in <strong>My Child</strong>.
+              </span>
             </div>
-          )}
+            <button
+              type="button"
+              onClick={() => goMyChild(null)}
+              className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700"
+            >
+              Enter OTP in My Child
+            </button>
+          </div>
+        )}
+
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold text-[#171717]">My Child ({children.length})</h3>
+            {children.length > 0 && (
+              <button
+                type="button"
+                onClick={() => goMyChild(children[0].id)}
+                className="text-xs font-semibold text-[#DC1726] hover:underline"
+              >
+                Open Full My Child Workspace
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {children.map((child: any) => {
+              const pct = child.total_days > 0 ? Math.round((child.present_days / child.total_days) * 100) : 0;
+              return (
+                <div key={child.id} className="bg-white rounded-xl border border-neutral-200 p-5 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {child.photo_url ? (
+                        <img
+                          src={child.photo_url}
+                          alt={child.full_name}
+                          referrerPolicy="no-referrer"
+                          className="w-12 h-12 rounded-full object-cover border border-neutral-200 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-full bg-[#450A0A] text-white flex items-center justify-center font-bold text-base shrink-0">
+                          {child.full_name.charAt(0)}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-bold text-[#171717] truncate">{child.full_name}</h3>
+                        <p className="text-xs text-[#737373] font-mono-num truncate">
+                          {child.student_code} · {child.class_name || 'Unassigned'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-end shrink-0">
+                      <div className="text-lg font-bold text-[#10B981] font-mono-num">{pct}%</div>
+                      <div className="text-[10px] text-[#737373] uppercase">Attendance</div>
+                    </div>
+                  </div>
+                  <div className="pt-3 border-t border-neutral-100 flex flex-wrap items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => goMyChild(child.id)}
+                      className="px-3 py-1.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700"
+                    >
+                      Open My Child View
+                    </button>
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => onNavigate('homework')}
+                        className="font-medium text-[#0EA5E9] hover:underline"
+                      >
+                        Homework
+                      </button>
+                      <span className="text-neutral-300">·</span>
+                      <button
+                        type="button"
+                        onClick={() => onNavigate('results')}
+                        className="font-medium text-[#DC1726] hover:underline"
+                      >
+                        Results
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {children.length === 0 && (
+              <div className="col-span-full bg-white rounded-xl border border-dashed border-neutral-300 p-8 text-center space-y-3">
+                <ShieldCheck className="w-10 h-10 text-[#10B981] mx-auto" />
+                <h4 className="text-sm font-bold text-[#171717]">Connect Your Child Using Student ID &amp; OTP</h4>
+                <p className="text-xs text-[#737373] max-w-md mx-auto">
+                  Enter your child&apos;s Student ID in the My Child section. A 6-digit OTP will be sent directly to your child&apos;s Student Profile Notification to verify and unlock their Attendance, Homework, Results, and Syllabus.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => goMyChild(null)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Connect Child Now</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -189,12 +282,16 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
 
           <div className="bg-white rounded-xl border border-neutral-200 p-5">
             <h3 className="text-sm font-semibold text-[#171717] mb-3">Recent Notices</h3>
-            {(data.notices || []).map((n: any) => (
-              <div key={n.id} className="py-2.5 border-b last:border-0 border-neutral-100 flex items-center justify-between text-xs">
-                <span className="font-medium text-[#171717]">{n.title}</span>
-                <span className="text-[#737373] font-mono-num">{n.publish_date}</span>
-              </div>
-            ))}
+            {(data.notices || []).length === 0 ? (
+              <p className="text-xs text-[#737373] py-4">No notices available.</p>
+            ) : (
+              data.notices.map((n: any) => (
+                <div key={n.id} className="py-2.5 border-b last:border-0 border-neutral-100 flex items-center justify-between text-xs">
+                  <span className="font-medium text-[#171717]">{n.title}</span>
+                  <span className="text-[#737373] font-mono-num">{n.publish_date}</span>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
@@ -218,9 +315,37 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ user, lang, onNavi
     const syllabusItems = data.syllabusItems || [];
     const upcomingPrograms = data.upcomingPrograms || [];
     const notices = data.notices || [];
+    const parentOtpNotifications = data.parentOtpNotifications || [];
 
     return (
       <div className="space-y-6">
+        {parentOtpNotifications.length > 0 && (
+          <div className="p-4 rounded-xl bg-amber-50 border-2 border-amber-300 space-y-2.5 shadow-xs">
+            <div className="flex items-center gap-2 text-sm font-bold text-amber-900">
+              <KeyRound className="w-4 h-4 text-[#DC1726]" />
+              <span>Parent Connection OTP Request ({parentOtpNotifications.length})</span>
+            </div>
+            <div className="space-y-2">
+              {parentOtpNotifications.map((otpNotif: any) => (
+                <div
+                  key={otpNotif.id}
+                  className="p-3 rounded-lg bg-white border border-amber-200 flex flex-wrap items-center justify-between gap-3"
+                >
+                  <div className="text-xs text-[#171717] space-y-0.5 max-w-2xl">
+                    <div className="font-bold">{otpNotif.title}</div>
+                    <p className="text-[#525252]">{otpNotif.message}</p>
+                  </div>
+                  {otpNotif.otp_code && (
+                    <div className="px-4 py-2 rounded-lg bg-[#DC1726] text-white font-mono-num text-lg font-extrabold tracking-widest shrink-0">
+                      OTP: {otpNotif.otp_code}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Student Profile & Admission Details Header */}
         <div className="bg-white rounded-xl border border-neutral-200 p-5 shadow-xs">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

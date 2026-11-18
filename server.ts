@@ -48,11 +48,12 @@ async function startServer() {
     });
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, { index: false }));
     app.get('*', (req, res) => {
       if (req.path === '/api' || req.path.startsWith('/api/')) {
         return res.status(404).json({ error: 'API endpoint not found' });
       }
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

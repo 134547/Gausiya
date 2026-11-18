@@ -40,6 +40,7 @@ export interface NavItemConfig {
 export const SIDEBAR_ITEMS: NavItemConfig[] = [
   { id: 'super_admin', icon: Settings, roles: ['super_admin'] },
   { id: 'dashboard', icon: LayoutGrid, roles: ['super_admin', 'teacher', 'parent', 'student', 'committee_member', 'public'] },
+  { id: 'my_child', icon: UsersRound, roles: ['parent'] },
   { id: 'chats', icon: MessageCircle, roles: ['super_admin', 'teacher', 'parent', 'student', 'committee_member', 'public'] },
   { id: 'committee', icon: Users, roles: ['super_admin', 'teacher', 'parent', 'student', 'committee_member', 'public'] },
   { id: 'admissions', icon: ClipboardList, roles: ['super_admin', 'committee_member'] },

@@ -17,6 +17,7 @@ const PublicCheckResultPage = lazy(() =>
   import('./pages/PublicCheckResultPage.tsx').then((m) => ({ default: m.PublicCheckResultPage }))
 );
 const DashboardPage = lazy(() => import('./pages/DashboardPage.tsx').then((m) => ({ default: m.DashboardPage })));
+const MyChildPage = lazy(() => import('./pages/MyChildPage.tsx').then((m) => ({ default: m.MyChildPage })));
 const SuperAdminPage = lazy(() => import('./pages/SuperAdminPage.tsx').then((m) => ({ default: m.SuperAdminPage })));
 const AdmissionsPage = lazy(() => import('./pages/AdmissionsPage.tsx').then((m) => ({ default: m.AdmissionsPage })));
 const StudentsPage = lazy(() => import('./pages/StudentsPage.tsx').then((m) => ({ default: m.StudentsPage })));
@@ -98,7 +99,8 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [pendingNotice, setPendingNotice] = useState<string | null>(null);
   const [sessionNotice, setSessionNotice] = useState<string>('');
-  const [loginMode, setLoginMode] = useState<'login' | 'forgot' | 'reset'>('login');
+  const [loginMode, setLoginMode] = useState<'login' | 'forgot' | 'reset' | 'register'>('login');
+  const [loginAccountType, setLoginAccountType] = useState<'public' | 'parent'>('parent');
   const [settings, setSettings] = useState<MadrasaSettings | null>(cachedHomeRef.current?.settings || null);
   const [publicData, setPublicData] = useState<PublicHomeData | null>(cachedHomeRef.current);
   const [publicView, setPublicView] = useState<PublicView>('home');
@@ -114,6 +116,7 @@ export default function App() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [targetChatConvId, setTargetChatConvId] = useState<string | null>(null);
+  const [selectedParentChildId, setSelectedParentChildId] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.dir = 'ltr';
@@ -412,6 +415,7 @@ export default function App() {
             lang={lang}
             onSuccess={handleLoginSuccess}
             initialMode={loginMode}
+            initialAccountType={loginAccountType}
             initialError={sessionNotice}
             onBackHome={() => {
               setSessionNotice('');
@@ -477,6 +481,12 @@ export default function App() {
           setPublicView('login');
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
+        onOpenParentRegister={() => {
+          setLoginAccountType('parent');
+          setLoginMode('register');
+          setPublicView('login');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
         onOpenAdmission={() => {
           setPublicAdmissionSection('form');
           setPublicView('admission');
@@ -495,16 +505,32 @@ export default function App() {
     );
   }
 
+  const handleOpenParentChild = (studentId: string | null) => {
+    setSelectedParentChildId(studentId);
+    setActiveModule('my_child');
+  };
+
   const renderModule = () => {
     switch (activeModule) {
       case 'super_admin':
         return user.role_slug === 'super_admin' ? (
           <SuperAdminPage user={user} onSettingsUpdated={(s) => setSettings(s)} />
         ) : (
-          <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} />
+          <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} onOpenChild={handleOpenParentChild} />
         );
       case 'dashboard':
-        return <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} />;
+        return <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} onOpenChild={handleOpenParentChild} />;
+      case 'my_child':
+        return user.role_slug === 'parent' ? (
+          <MyChildPage
+            user={user}
+            settings={settings}
+            initialStudentId={selectedParentChildId}
+            onInitialStudentHandled={() => setSelectedParentChildId(null)}
+          />
+        ) : (
+          <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} onOpenChild={handleOpenParentChild} />
+        );
       case 'chats':
         return user.role_slug === 'super_admin' || settings?.chats_open !== false ? (
           <ChatsPage
@@ -515,7 +541,7 @@ export default function App() {
             onInitialConvHandled={() => setTargetChatConvId(null)}
           />
         ) : (
-          <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} />
+          <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} onOpenChild={handleOpenParentChild} />
         );
       case 'committee':
         return <CommitteePage user={user} settings={settings} />;

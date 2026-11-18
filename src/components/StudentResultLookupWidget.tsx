@@ -361,58 +361,26 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
       )}
 
       <div className="bg-white rounded-xl border border-neutral-200 px-4 py-3 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              setReport(null);
-              setError('');
-              setPassword('');
-              setDownloadReady(null);
-            }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 cursor-pointer"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" /> Check Another Student
-          </button>
-          <div className="text-[#525252]">
-            <strong className="text-[#171717]">{report.student?.full_name}</strong> ·{' '}
-            <span className="font-mono-num">{report.student?.admission_no || report.student?.student_code}</span> ·{' '}
-            <span>{report.student?.class_name}</span> ·{' '}
-            <span className="font-mono-num text-[#10B981] font-semibold">
-              Attendance: {report.attendanceSummary?.present || 0}/{report.attendanceSummary?.total || 0}
-            </span>
-          </div>
+        <button
+          type="button"
+          onClick={() => {
+            setReport(null);
+            setError('');
+            setPassword('');
+            setDownloadReady(null);
+          }}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 cursor-pointer"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" /> Check Another Student
+        </button>
+        <div className="text-[#525252]">
+          <strong className="text-[#171717]">{report.student?.full_name}</strong> ·{' '}
+          <span className="font-mono-num">{report.student?.admission_no || report.student?.student_code}</span> ·{' '}
+          <span>{report.student?.class_name}</span> ·{' '}
+          <span className="font-mono-num text-[#10B981] font-semibold">
+            Attendance: {report.attendanceSummary?.present || 0}/{report.attendanceSummary?.total || 0}
+          </span>
         </div>
-
-        {report.results[0] && (
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              disabled={exportingKey !== null}
-              onClick={() => handleDownloadPdf(report.results[0])}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#2563eb] text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-60 cursor-pointer"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>{exportingKey === `pdf-${report.results[0].id}` ? 'Downloading PDF...' : 'Download PDF'}</span>
-            </button>
-            <button
-              type="button"
-              disabled={exportingKey !== null}
-              onClick={() => handleDownloadPng(report.results[0])}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#ea580c] text-white text-xs font-semibold hover:bg-orange-600 disabled:opacity-60 cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{exportingKey === `png-${report.results[0].id}` ? 'Downloading PNG...' : 'Download PNG'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setPrintResult(report.results[0])}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 cursor-pointer"
-            >
-              <Printer className="w-4 h-4" /> Print / Full View
-            </button>
-          </div>
-        )}
       </div>
 
       {report.results.length === 0 ? (

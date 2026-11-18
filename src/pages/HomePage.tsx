@@ -46,6 +46,7 @@ interface HomePageProps {
   data: PublicHomeData | null;
   lang: Language;
   onOpenLogin: () => void;
+  onOpenParentRegister?: () => void;
   onOpenAdmission: () => void;
   onOpenAdmissionStatus?: () => void;
   onOpenCheckResult: () => void;
@@ -133,6 +134,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   data,
   lang,
   onOpenLogin,
+  onOpenParentRegister,
   onOpenAdmission,
   onOpenAdmissionStatus,
   onOpenCheckResult,
@@ -434,6 +436,17 @@ export const HomePage: React.FC<HomePageProps> = ({
                 className="px-6 py-3 rounded-lg bg-white/95 text-[#171717] hover:bg-white text-sm font-semibold shadow-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 {lang === 'ur' ? 'نتیجہ دیکھیں' : 'Check Result'}
+              </button>
+            )}
+
+            {onOpenParentRegister && (
+              <button
+                type="button"
+                onClick={onOpenParentRegister}
+                className="inline-flex items-center gap-1.5 px-5 py-3 rounded-lg bg-[#1E3A8A] hover:bg-blue-900 text-white text-sm font-semibold shadow-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <Users className="w-4 h-4" />
+                <span>{lang === 'ur' ? 'والدین اکاؤنٹ' : 'Parent Register'}</span>
               </button>
             )}
 

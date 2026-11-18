@@ -24,6 +24,7 @@ import {
 import {
   STUDENT_PENDING_LOGIN_MESSAGE,
   STUDENT_REJECTED_LOGIN_MESSAGE,
+  safeTableUpsert,
 } from '../studentProvisioning.ts';
 
 const router = Router();
@@ -43,6 +44,24 @@ async function ensurePublicRole(admin: NonNullable<ReturnType<typeof requireSupa
         name: 'Public',
         slug: 'public',
         description: 'Public account access to feed, notices, programs, committee, and contact information',
+      },
+      { onConflict: 'slug' }
+    )
+    .select('id, name, slug')
+    .single();
+  return { role: inserted || null, error: error?.message || null };
+}
+
+async function ensureParentRole(admin: NonNullable<ReturnType<typeof requireSupabaseAdmin>>) {
+  const { data: existing } = await admin.from('roles').select('id, name, slug').eq('slug', 'parent').maybeSingle();
+  if (existing?.id) return { role: existing, error: null as string | null };
+  const { data: inserted, error } = await admin
+    .from('roles')
+    .upsert(
+      {
+        name: 'Parent',
+        slug: 'parent',
+        description: 'Access to linked children profiles, attendance, results, homework, and notices',
       },
       { onConflict: 'slug' }
     )
@@ -208,7 +227,7 @@ router.post('/setup-admin', async (req, res) => {
   }
 });
 
-// Public Self-Registration (defaults safely to 'public' role; Super Admin can view & change role anytime)
+// Public & Parent Self-Registration
 router.post('/register', async (req, res) => {
   try {
     if (!checkIpRateLimit(req, res, 'register', 10)) return;
@@ -219,7 +238,21 @@ router.post('/register', async (req, res) => {
       return res.status(503).json({ error: 'Supabase anon key is not configured on the server.' });
     }
 
-    const { full_name, username, email, mobile, password, father_name, village, district } = req.body as {
+    const {
+      account_type,
+      full_name,
+      username,
+      email,
+      mobile,
+      password,
+      father_name,
+      village,
+      district,
+      address,
+      relationship,
+      occupation,
+    } = req.body as {
+      account_type?: 'public' | 'parent';
       full_name?: string;
       username?: string;
       email?: string;
@@ -228,17 +261,25 @@ router.post('/register', async (req, res) => {
       father_name?: string;
       village?: string;
       district?: string;
+      address?: string;
+      relationship?: string;
+      occupation?: string;
     };
 
+    const targetAccountType = account_type === 'parent' ? 'parent' : 'public';
     const cleanName = (full_name || '').trim();
     const cleanUsername = (username || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
     const cleanEmail = (email || '').trim().toLowerCase();
     const cleanMobile = (mobile || '').trim();
+    const cleanAddress = (address || village || '').trim();
 
-    if (!cleanName || !cleanUsername || !cleanEmail.includes('@') || !password || password.length < 6) {
+    if (!cleanName || !cleanUsername || cleanUsername.length < 3 || !cleanEmail.includes('@') || !password || password.length < 6) {
       return res.status(400).json({
-        error: 'Full name, valid username, email address, and password (min 6 chars) are required.',
+        error: 'Full name, valid username (min 3 chars), email address, and password (min 6 chars) are required.',
       });
+    }
+    if (targetAccountType === 'parent' && !cleanMobile) {
+      return res.status(400).json({ error: 'Mobile number is required for creating a Parent account.' });
     }
 
     const { data: existingUsername } = await admin
@@ -261,12 +302,13 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
 
-    const { role: publicRole, error: roleErr } = await ensurePublicRole(admin);
-    if (!publicRole?.id) {
+    const { role: targetRole, error: roleErr } =
+      targetAccountType === 'parent' ? await ensureParentRole(admin) : await ensurePublicRole(admin);
+    if (!targetRole?.id) {
       const hint =
         roleErr && roleErr.includes('roles_slug_check')
-          ? 'Please run supabase/migrations/2026_add_public_role.sql in your Supabase SQL Editor to enable the public role.'
-          : roleErr || 'Public role could not be initialized.';
+          ? 'Please run supabase/migrations/2026_add_public_role.sql in your Supabase SQL Editor to enable registration roles.'
+          : roleErr || `${targetAccountType} role could not be initialized.`;
       return res.status(500).json({ error: hint });
     }
 
@@ -274,36 +316,85 @@ router.post('/register', async (req, res) => {
       email: cleanEmail,
       password,
       email_confirm: true,
-      user_metadata: { full_name: cleanName, username: cleanUsername },
+      user_metadata: { full_name: cleanName, username: cleanUsername, account_type: targetAccountType },
     });
     if (createErr || !createdAuth.user) {
       return res.status(400).json({ error: createErr?.message || 'Failed to create account.' });
     }
 
     const uid = createdAuth.user.id;
-    const userCode = `PUB-${String(Date.now()).slice(-6)}`;
-    const { error: profErr } = await admin.from('profiles').upsert(
-      {
-        id: uid,
-        user_code: userCode,
-        username: cleanUsername,
-        email: cleanEmail,
-        mobile: cleanMobile,
-        full_name: cleanName,
-        father_name: (father_name || '').trim(),
-        village: (village || '').trim(),
-        district: (district || 'Palamu').trim(),
-        state: 'Jharkhand',
-        role_id: publicRole.id,
-        status: 'active',
-        linked_type: 'public',
-        deleted_at: null,
-      },
-      { onConflict: 'id' }
-    );
-    if (profErr) {
+    let createdParentId: string | null = null;
+    const prefix = targetAccountType === 'parent' ? 'PAR' : 'PUB';
+    const userCode = `${prefix}-${String(Date.now()).slice(-6)}`;
+
+    try {
+      await safeTableUpsert(
+        admin,
+        'profiles',
+        {
+          id: uid,
+          user_code: userCode,
+          username: cleanUsername,
+          email: cleanEmail,
+          mobile: cleanMobile,
+          full_name: cleanName,
+          father_name: (father_name || '').trim(),
+          address: cleanAddress,
+          village: (village || '').trim(),
+          district: (district || 'Palamu').trim(),
+          state: 'Jharkhand',
+          role_id: targetRole.id,
+          status: 'active',
+          approval_status: 'approved',
+          linked_type: targetAccountType,
+          deleted_at: null,
+        },
+        'id'
+      );
+    } catch (profErr: any) {
       await admin.auth.admin.deleteUser(uid).catch(() => {});
-      return res.status(400).json({ error: profErr.message });
+      return res.status(400).json({ error: profErr?.message || 'Failed to save user profile.' });
+    }
+
+    if (targetAccountType === 'parent') {
+      const { count: pCount } = await admin.from('parents').select('id', { count: 'exact', head: true });
+      const parentCode = `PAR-${200 + (pCount || 0) + 1}`;
+      const { data: parentRow, error: parentErr } = await admin
+        .from('parents')
+        .insert({
+          parent_code: parentCode,
+          user_id: uid,
+          full_name: cleanName,
+          mobile: cleanMobile,
+          email: cleanEmail,
+          address: cleanAddress,
+          relationship: (relationship || 'Father').trim(),
+          occupation: (occupation || '').trim(),
+          status: 'active',
+        })
+        .select('id')
+        .single();
+
+      if (parentErr || !parentRow) {
+        try {
+          await admin.from('profiles').delete().eq('id', uid);
+          await admin.auth.admin.deleteUser(uid);
+        } catch {
+          // ignore cleanup failure
+        }
+        return res.status(400).json({ error: parentErr?.message || 'Failed to initialize parent profile.' });
+      }
+      createdParentId = parentRow.id;
+      await admin.from('profiles').update({ linked_id: createdParentId, linked_type: 'parent' }).eq('id', uid);
+
+      await admin.from('notifications').insert({
+        user_id: uid,
+        type: 'parent_welcome',
+        title: 'Parent Account Created',
+        message: `Assalamu Alaikum ${cleanName}! Open "My Child" to connect your child using their Student ID and OTP verification.`,
+        link_module: 'my_child',
+        reference_id: createdParentId,
+      });
     }
 
     const { data: signInData, error: signInErr } = await authClient.auth.signInWithPassword({
@@ -319,20 +410,21 @@ router.post('/register', async (req, res) => {
       return res.status(500).json({ error: 'Account created, but failed to load profile.' });
     }
 
+    const roleLabel = targetAccountType === 'parent' ? 'Parent' : 'Public';
     await notifyRoles(
       ['super_admin'],
       'ACCOUNT_CREATED',
-      'New Account Registered',
-      `${cleanName} (@${cleanUsername}) created a new portal account (Role: Public).`,
-      'super_admin',
-      uid
+      `New ${roleLabel} Account Registered`,
+      `${cleanName} (@${cleanUsername}) created a new ${roleLabel} portal account.`,
+      targetAccountType === 'parent' ? 'parents' : 'super_admin',
+      createdParentId || uid
     );
     await logActivity(
       { id: resolved.user.id, username: resolved.user.username, role_name: resolved.user.role_name },
       'USER_REGISTERED',
       'auth',
       uid,
-      `Self-registered account @${cleanUsername} (${cleanEmail})`,
+      `Self-registered ${roleLabel} account @${cleanUsername} (${cleanEmail})`,
       req.ip
     );
 

@@ -3,6 +3,7 @@ export type RoleSlug = 'super_admin' | 'teacher' | 'parent' | 'student' | 'commi
 export type NavModuleId =
   | 'super_admin'
   | 'dashboard'
+  | 'my_child'
   | 'chats'
   | 'committee'
   | 'admissions'

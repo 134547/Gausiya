@@ -9,6 +9,7 @@ export const translations = {
     nav: {
       super_admin: 'Super Admin',
       dashboard: 'Dashboard',
+      my_child: 'My Child',
       chats: 'Chats',
       committee: 'Committee',
       admissions: 'Admissions',
@@ -94,6 +95,7 @@ export const translations = {
     nav: {
       super_admin: 'سپر ایڈمن',
       dashboard: 'ڈیش بورڈ',
+      my_child: 'میرے بچے',
       chats: 'پیغامات',
       committee: 'کمیٹی',
       admissions: 'داخلہ فارم',

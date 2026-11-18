@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowUpRight, CreditCard, Eye, FileUp, Pencil, Plus, Printer, Search, Trash2, X } from 'lucide-react';
+import { ArrowUpRight, CreditCard, Eye, EyeOff, FileUp, KeyRound, Pencil, Plus, Printer, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import { apiRequest, uploadFile } from '../lib/api.ts';
 import { MadrasaSettings, User } from '../types.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
@@ -25,12 +25,15 @@ const emptyStudent = {
   pin_code: '',
   mobile: '',
   class_id: '',
+  admission_no: '',
   admission_date: new Date().toISOString().slice(0, 10),
   photo_url: '',
   status: 'active',
   previous_school: '',
   previous_class: '',
   remarks: '',
+  username: '',
+  password: '',
 };
 
 export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) => {
@@ -45,6 +48,9 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingHasLogin, setEditingHasLogin] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyStudent);
 
   const [profileData, setProfileData] = useState<any>(null);
@@ -56,6 +62,19 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+
+  const suggestUsernameFromName = (name: string) => {
+    const clean = name
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .join('.');
+    const rand = Math.floor(100 + Math.random() * 900);
+    return `${clean || 'student'}${rand}`;
+  };
 
   const load = async () => {
     setLoading(true);
@@ -97,18 +116,41 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr('');
+    setMsg('');
+    setSaving(true);
     try {
       if (editingId) {
-        await apiRequest(`/api/students/${editingId}`, { method: 'PUT', body: JSON.stringify(form) });
-        setMsg('Student updated.');
+        const res = await apiRequest<{ success: boolean; username?: string; dashboard_created?: boolean }>(
+          `/api/students/${editingId}`,
+          { method: 'PUT', body: JSON.stringify(form) }
+        );
+        setMsg(
+          !editingHasLogin && res.username && res.dashboard_created
+            ? `Student updated & Dashboard created (@${res.username}).`
+            : 'Student updated.'
+        );
       } else {
-        const res = await apiRequest<{ student_code: string }>('/api/students', { method: 'POST', body: JSON.stringify(form) });
-        setMsg(`Student ${res.student_code} enrolled.`);
+        const res = await apiRequest<{
+          student_code: string;
+          admission_no?: string;
+          username?: string;
+          dashboard_created?: boolean;
+        }>('/api/students', {
+          method: 'POST',
+          body: JSON.stringify({ ...form, create_account: true }),
+        });
+        setMsg(
+          res.dashboard_created && res.username
+            ? `Student ${res.student_code} enrolled & Dashboard created (Username: @${res.username}).`
+            : `Student ${res.student_code} enrolled.`
+        );
       }
       setFormOpen(false);
       load();
     } catch (e: any) {
       setErr(e.message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -204,7 +246,10 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
             type="button"
             onClick={() => {
               setEditingId(null);
-              setForm(emptyStudent);
+              setEditingHasLogin(false);
+              setShowPassword(false);
+              setErr('');
+              setForm({ ...emptyStudent, admission_date: new Date().toISOString().slice(0, 10) });
               setFormOpen(true);
             }}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 whitespace-nowrap"
@@ -237,7 +282,12 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
               ) : (
                 students.map((st) => (
                   <tr key={st.id} className="hover:bg-neutral-50">
-                    <td className="px-4 py-3 font-mono-num font-semibold text-[#171717]">{st.student_code}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-mono-num font-semibold text-[#171717]">{st.student_code}</div>
+                      {st.admission_no && (
+                        <div className="text-[10px] font-mono-num text-[#737373]">{st.admission_no}</div>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
                         {st.photo_url ? (
@@ -247,7 +297,14 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
                             {st.full_name.charAt(0)}
                           </div>
                         )}
-                        <span className="font-semibold text-[#171717]">{st.full_name}</span>
+                        <div>
+                          <div className="font-semibold text-[#171717]">{st.full_name}</div>
+                          {st.login_username ? (
+                            <div className="text-[10px] font-mono-num text-emerald-700">@{st.login_username} · Dashboard</div>
+                          ) : (
+                            <div className="text-[10px] text-amber-600">No login account</div>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-[#737373]">{st.father_name}</td>
@@ -286,6 +343,9 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
                               type="button"
                               onClick={() => {
                                 setEditingId(st.id);
+                                setEditingHasLogin(Boolean(st.has_login || st.login_username));
+                                setShowPassword(false);
+                                setErr('');
                                 setForm({
                                   full_name: st.full_name || '',
                                   father_name: st.father_name || '',
@@ -300,12 +360,15 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
                                   pin_code: st.pin_code || '',
                                   mobile: st.mobile || '',
                                   class_id: st.class_id ? String(st.class_id) : '',
+                                  admission_no: st.admission_no || '',
                                   admission_date: st.admission_date || '',
                                   photo_url: st.photo_url || '',
                                   status: st.status || 'active',
                                   previous_school: st.previous_school || '',
                                   previous_class: st.previous_class || '',
                                   remarks: st.remarks || '',
+                                  username: st.login_username || '',
+                                  password: '',
                                 });
                                 setFormOpen(true);
                               }}
@@ -361,7 +424,96 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
                     <option value="graduated">Graduated</option>
                   </select>
                 </div>
+                <div>
+                  <label className="block font-medium mb-1">Admission No <span className="text-[#737373] font-normal">(Optional · auto if blank)</span></label>
+                  <input type="text" placeholder="e.g. ADM-2026-001" value={form.admission_no} onChange={(e) => setForm({ ...form, admission_no: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num" />
+                </div>
+                <div>
+                  <label className="block font-medium mb-1">Admission Date</label>
+                  <input type="date" value={form.admission_date} onChange={(e) => setForm({ ...form, admission_date: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num" />
+                </div>
                 <div className="sm:col-span-2"><label className="block font-medium mb-1">Complete Address</label><input type="text" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200" /></div>
+
+                {/* Student Portal Login & Dashboard Section */}
+                <div className="sm:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 font-bold text-[#171717]">
+                      <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                      <span>
+                        {editingId
+                          ? editingHasLogin
+                            ? 'Student Portal Login & Dashboard (Active)'
+                            : 'Create Student Portal Login & Dashboard'
+                          : 'Student Portal Login & Dashboard *'}
+                      </span>
+                    </div>
+                    {(!editingId || !editingHasLogin) && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setForm((prev) => ({
+                            ...prev,
+                            username: suggestUsernameFromName(prev.full_name),
+                          }))
+                        }
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-emerald-200 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100"
+                      >
+                        <KeyRound className="w-3 h-3" /> Auto Username
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-[#737373]">
+                    {editingId
+                      ? editingHasLogin
+                        ? 'Leave New Password blank to keep the existing password unchanged.'
+                        : 'This student has no dashboard yet. Enter Username & Password to create their Student Dashboard immediately.'
+                      : 'Student add karte hi is Username aur Password se unka Student Dashboard aur Home Result Check account turant create ho jayega.'}
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-medium mb-1">
+                        Username {(!editingId || !editingHasLogin) && '*'}
+                      </label>
+                      <input
+                        type="text"
+                        required={!editingId}
+                        placeholder="e.g. zahid.akhtar"
+                        value={form.username}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            username: e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''),
+                          })
+                        }
+                        className="w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white font-mono-num"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium mb-1">
+                        {editingId && editingHasLogin ? 'New Password (Optional)' : 'Password *'}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          required={!editingId}
+                          minLength={6}
+                          placeholder={editingId && editingHasLogin ? 'Leave blank to keep same' : 'Min 6 characters'}
+                          value={form.password}
+                          onChange={(e) => setForm({ ...form, password: e.target.value })}
+                          className="w-full px-3 py-2 pe-9 rounded-lg border border-neutral-200 bg-white font-mono-num"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword((prev) => !prev)}
+                          className="absolute end-2.5 top-1/2 -translate-y-1/2 text-[#737373] hover:text-[#171717]"
+                        >
+                          {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="sm:col-span-2 flex items-center gap-3">
                   {form.photo_url && <img src={form.photo_url} alt="Photo" className="w-12 h-12 rounded-lg object-cover border" />}
                   <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 cursor-pointer hover:bg-neutral-100">
@@ -384,7 +536,9 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
               </div>
               <div className="flex justify-end gap-2 pt-3 border-t border-neutral-100">
                 <button type="button" onClick={() => setFormOpen(false)} className="px-4 py-2 rounded-lg bg-neutral-100 font-medium">Cancel</button>
-                <button type="submit" className="px-5 py-2 rounded-lg bg-[#DC1726] text-white font-semibold hover:bg-red-700">Save Student</button>
+                <button type="submit" disabled={saving} className="px-5 py-2 rounded-lg bg-[#DC1726] text-white font-semibold hover:bg-red-700 disabled:opacity-60">
+                  {saving ? 'Saving...' : editingId ? 'Update Student' : 'Save & Create Dashboard'}
+                </button>
               </div>
             </form>
           </div>
@@ -447,6 +601,7 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
                   <div><span className="text-[#737373]">Date of Birth:</span> <strong className="font-mono-num">{profileData.student.dob || '-'}</strong></div>
                   <div><span className="text-[#737373]">Gender / Religion:</span> <strong>{profileData.student.gender} / {profileData.student.religion}</strong></div>
                   <div><span className="text-[#737373]">Mobile:</span> <strong className="font-mono-num">{profileData.student.mobile || '-'}</strong></div>
+                  <div><span className="text-[#737373]">Portal Username:</span> <strong className="font-mono-num text-emerald-700">{profileData.student.login_username ? `@${profileData.student.login_username}` : 'Not created'}</strong></div>
                   <div><span className="text-[#737373]">Village / District:</span> <strong>{profileData.student.village}, {profileData.student.district}</strong></div>
                   <div className="sm:col-span-2"><span className="text-[#737373]">Complete Address:</span> <strong>{profileData.student.address}, {profileData.student.state} {profileData.student.pin_code}</strong></div>
                 </div>
@@ -468,8 +623,9 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
 
               {profileTab === 'academic' && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div><span className="text-[#737373]">Current Class:</span> <strong>{profileData.student.class_name}</strong></div>
+                    <div><span className="text-[#737373]">Admission No:</span> <strong className="font-mono-num">{profileData.student.admission_no || '-'}</strong></div>
                     <div><span className="text-[#737373]">Session:</span> <strong>{profileData.student.session_name}</strong></div>
                     <div><span className="text-[#737373]">Admission Date:</span> <strong className="font-mono-num">{profileData.student.admission_date}</strong></div>
                   </div>

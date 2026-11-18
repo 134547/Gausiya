@@ -23,6 +23,7 @@ interface LoginPageProps {
   onSuccess: (user: User) => void;
   onBackHome?: () => void;
   initialMode?: 'login' | 'forgot' | 'reset' | 'register';
+  initialAccountType?: 'public' | 'parent';
   initialError?: string;
 }
 
@@ -31,9 +32,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onSuccess,
   onBackHome,
   initialMode = 'login',
+  initialAccountType = 'parent',
   initialError = '',
 }) => {
   const [mode, setMode] = useState<'login' | 'forgot' | 'reset' | 'setup' | 'register'>(initialMode);
+  const [registerAccountType, setRegisterAccountType] = useState<'public' | 'parent'>(initialAccountType);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [setupForm, setSetupForm] = useState({ full_name: '', username: '', email: '', password: '' });
   const [registerForm, setRegisterForm] = useState({
@@ -41,6 +44,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     username: '',
     email: '',
     mobile: '',
+    relationship: 'Father',
+    address: '',
     father_name: '',
     village: '',
     district: 'Palamu',
@@ -88,6 +93,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   useEffect(() => {
     setMode(initialMode);
   }, [initialMode]);
+
+  useEffect(() => {
+    if (initialAccountType) {
+      setRegisterAccountType(initialAccountType);
+    }
+  }, [initialAccountType]);
 
   useEffect(() => {
     if (initialError) setError(initialError);
@@ -219,7 +230,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         user: User;
       }>('/api/auth/register', {
         method: 'POST',
-        body: JSON.stringify(registerForm),
+        body: JSON.stringify({
+          ...registerForm,
+          account_type: registerAccountType,
+        }),
       });
 
       setStoredSession(data.token, data.session?.refresh_token);
@@ -552,15 +566,52 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         {mode === 'register' && (
           <form onSubmit={handleRegister} autoComplete="off" className="space-y-3">
-            <p className="text-xs text-[#737373]">
-              Create a portal account (starts with Public access; Super Admin can upgrade your role to Teacher, Student, Parent, or Committee Member).
+            <div>
+              <label className="block text-xs font-semibold text-[#171717] mb-1.5">Select Account Type *</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRegisterAccountType('parent')}
+                  className={`p-2.5 rounded-xl border text-start transition-all ${
+                    registerAccountType === 'parent'
+                      ? 'border-[#DC1726] bg-red-50/70 ring-1 ring-[#DC1726]/30'
+                      : 'border-neutral-200 bg-white hover:bg-neutral-50'
+                  }`}
+                >
+                  <div className="text-xs font-bold text-[#171717]">Parent / Guardian</div>
+                  <div className="text-[11px] text-[#737373] mt-0.5">
+                    Parent Dashboard + Connect children via OTP
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRegisterAccountType('public')}
+                  className={`p-2.5 rounded-xl border text-start transition-all ${
+                    registerAccountType === 'public'
+                      ? 'border-[#DC1726] bg-red-50/70 ring-1 ring-[#DC1726]/30'
+                      : 'border-neutral-200 bg-white hover:bg-neutral-50'
+                  }`}
+                >
+                  <div className="text-xs font-bold text-[#171717]">Public / General</div>
+                  <div className="text-[11px] text-[#737373] mt-0.5">
+                    Notices, Programs &amp; Feed access
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-[#737373] bg-neutral-50 border border-neutral-200 rounded-lg px-2.5 py-2">
+              {registerAccountType === 'parent'
+                ? 'Your Parent Account activates immediately with your own Parent Dashboard and "My Child" section. Link your children using their Student ID + OTP.'
+                : 'Create a general public portal account (Super Admin can also upgrade your role later).'}
             </p>
+
             <div>
               <label className="block text-xs font-medium text-[#171717] mb-1">Full Name *</label>
               <input
                 type="text"
                 required
-                placeholder="Enter full name"
+                placeholder={registerAccountType === 'parent' ? 'Parent / Guardian full name' : 'Enter full name'}
                 value={registerForm.full_name}
                 onChange={(e) => setRegisterForm((p) => ({ ...p, full_name: e.target.value }))}
                 className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:border-[#DC1726]"
@@ -579,9 +630,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-[#171717] mb-1">Mobile Number</label>
+                <label className="block text-xs font-medium text-[#171717] mb-1">
+                  Mobile Number {registerAccountType === 'parent' ? '*' : ''}
+                </label>
                 <input
                   type="text"
+                  required={registerAccountType === 'parent'}
                   placeholder="e.g. 9876543210"
                   value={registerForm.mobile}
                   onChange={(e) => setRegisterForm((p) => ({ ...p, mobile: e.target.value }))}
@@ -600,27 +654,60 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:border-[#DC1726]"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-[#171717] mb-1">Father&apos;s Name</label>
-                <input
-                  type="text"
-                  placeholder="Optional"
-                  value={registerForm.father_name}
-                  onChange={(e) => setRegisterForm((p) => ({ ...p, father_name: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:border-[#DC1726]"
-                />
+
+            {registerAccountType === 'parent' ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[#171717] mb-1">Relationship *</label>
+                  <select
+                    value={registerForm.relationship}
+                    onChange={(e) => setRegisterForm((p) => ({ ...p, relationship: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 bg-white focus:outline-none focus:border-[#DC1726]"
+                  >
+                    <option value="Father">Father</option>
+                    <option value="Mother">Mother</option>
+                    <option value="Guardian">Guardian</option>
+                    <option value="Brother">Brother</option>
+                    <option value="Uncle">Uncle</option>
+                    <option value="Grandparent">Grandparent</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#171717] mb-1">Village / Address</label>
+                  <input
+                    type="text"
+                    placeholder="Optional"
+                    value={registerForm.address}
+                    onChange={(e) => setRegisterForm((p) => ({ ...p, address: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:border-[#DC1726]"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-[#171717] mb-1">District</label>
-                <input
-                  type="text"
-                  value={registerForm.district}
-                  onChange={(e) => setRegisterForm((p) => ({ ...p, district: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:border-[#DC1726]"
-                />
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[#171717] mb-1">Father&apos;s Name</label>
+                  <input
+                    type="text"
+                    placeholder="Optional"
+                    value={registerForm.father_name}
+                    onChange={(e) => setRegisterForm((p) => ({ ...p, father_name: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:border-[#DC1726]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#171717] mb-1">District</label>
+                  <input
+                    type="text"
+                    value={registerForm.district}
+                    onChange={(e) => setRegisterForm((p) => ({ ...p, district: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:border-[#DC1726]"
+                  />
+                </div>
               </div>
-            </div>
+            )}
+
             <div>
               <label className="block text-xs font-medium text-[#171717] mb-1">Password (min 6 chars) *</label>
               <input
@@ -639,7 +726,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               disabled={loading}
               className="w-full py-2.5 px-4 rounded-lg bg-[#DC1726] hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-60"
             >
-              {loading ? 'Creating Account...' : 'Create Account & Enter Portal'}
+              {loading
+                ? 'Creating Account...'
+                : registerAccountType === 'parent'
+                  ? 'Create Parent Account & Open Dashboard'
+                  : 'Create Account & Enter Portal'}
             </button>
           </form>
         )}

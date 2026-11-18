@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Router } from 'express';
 import {
   requireSupabaseAdmin,
@@ -19,10 +20,12 @@ import {
 } from '../auth.ts';
 import { getAdmissionsOpen, getChatsOpen, getResultsOpen, normalizeStorageRef, sanitizeOrTerm, setAdmissionsOpen, setChatsOpen, setResultsOpen } from './publicRoutes.ts';
 import {
+  buildStudentInternalEmail,
   ensureStudentRole,
   generateNextStudentCodes,
   safeStudentInsert,
   safeTableUpdate,
+  safeTableUpsert,
 } from '../studentProvisioning.ts';
 
 const router = Router();
@@ -1054,13 +1057,34 @@ router.get('/students', requireAuth, async (req: AuthRequest, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   const resolved = await resolveStorageUrlsInRows(data || [], ['photo_url']);
-  const students = resolved.map((st: any) => ({
-    ...st,
-    class_name: st.classes?.name || 'Unassigned',
-    class_code: st.classes?.code || '',
-    class_teacher_name: st.classes?.teachers?.full_name || '',
-    session_name: st.academic_sessions?.name || '',
-  }));
+
+  const { data: studentProfiles } = await admin
+    .from('profiles')
+    .select('id, username, status, linked_id')
+    .eq('linked_type', 'student')
+    .is('deleted_at', null);
+
+  const profileById = new Map<string, any>();
+  const profileByStudentId = new Map<string, any>();
+  for (const p of studentProfiles || []) {
+    if (p.id) profileById.set(p.id, p);
+    if (p.linked_id) profileByStudentId.set(p.linked_id, p);
+  }
+
+  const students = resolved.map((st: any) => {
+    const linkedProf = (st.user_id && profileById.get(st.user_id)) || profileByStudentId.get(st.id) || null;
+    const loginUsername = st.username || linkedProf?.username || null;
+    return {
+      ...st,
+      class_name: st.classes?.name || 'Unassigned',
+      class_code: st.classes?.code || '',
+      class_teacher_name: st.classes?.teachers?.full_name || '',
+      session_name: st.academic_sessions?.name || '',
+      login_username: loginUsername,
+      has_login: Boolean(st.user_id || linkedProf?.id),
+      account_status: linkedProf?.status || null,
+    };
+  });
   return res.json({ students });
 });
 
@@ -1081,11 +1105,24 @@ router.get('/students/:id', requireAuth, async (req: AuthRequest, res) => {
 
   if (!studentRaw) return res.status(404).json({ error: 'Student not found' });
 
+  let linkedProf: any = null;
+  if (studentRaw.user_id) {
+    const { data } = await admin.from('profiles').select('id, username, status').eq('id', studentRaw.user_id).is('deleted_at', null).maybeSingle();
+    linkedProf = data;
+  }
+  if (!linkedProf) {
+    const { data } = await admin.from('profiles').select('id, username, status').eq('linked_id', id).eq('linked_type', 'student').is('deleted_at', null).maybeSingle();
+    linkedProf = data;
+  }
+
   const student = {
     ...studentRaw,
     photo_url: await resolveStorageUrl(studentRaw.photo_url),
     class_name: (studentRaw as any).classes?.name || 'Unassigned',
     session_name: (studentRaw as any).academic_sessions?.name || '',
+    login_username: studentRaw.username || linkedProf?.username || null,
+    has_login: Boolean(studentRaw.user_id || linkedProf?.id),
+    account_status: linkedProf?.status || null,
   };
 
   let resultsQuery = admin
@@ -1164,49 +1201,149 @@ router.get('/students/:id', requireAuth, async (req: AuthRequest, res) => {
 });
 
 router.post('/students', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+
+  let createdAuthId: string | null = null;
+  let createdStudentId: string | null = null;
+
   try {
-    const admin = requireSupabaseAdmin(res);
-    if (!admin) return;
     const b = req.body;
-    if (!b.full_name || !b.father_name) {
+    if (!b.full_name?.trim() || !b.father_name?.trim()) {
       return res.status(400).json({ error: 'Student full name and father name are required.' });
     }
-    const [{ data: activeSession }, { count }] = await Promise.all([
+
+    const rawUsername = String(b.username ?? '').trim();
+    const rawPassword = String(b.password ?? '').trim();
+    const wantsPortalAccount = Boolean(rawUsername || rawPassword || b.create_account);
+
+    let cleanUsername = '';
+    if (wantsPortalAccount) {
+      cleanUsername = rawUsername.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+      if (!cleanUsername || cleanUsername.length < 3) {
+        return res.status(400).json({ error: 'Valid student username (min 3 chars: letters, numbers, ., _, -) is required.' });
+      }
+      if (!rawPassword || rawPassword.length < 6) {
+        return res.status(400).json({ error: 'Student password (min 6 characters) is required to create their dashboard.' });
+      }
+
+      const [{ data: existingProf }, { data: existingStud }] = await Promise.all([
+        admin.from('profiles').select('id').eq('username', cleanUsername).is('deleted_at', null).maybeSingle(),
+        admin.from('students').select('id').eq('username', cleanUsername).is('deleted_at', null).maybeSingle(),
+      ]);
+      if (existingProf?.id || existingStud?.id) {
+        return res.status(409).json({ error: `Username "${cleanUsername}" is already in use. Please choose another username.` });
+      }
+    }
+
+    const [{ data: activeSession }, codes] = await Promise.all([
       admin.from('academic_sessions').select('id').eq('is_active', true).limit(1).maybeSingle(),
-      admin.from('students').select('id', { count: 'exact', head: true }),
+      generateNextStudentCodes(admin),
     ]);
-    const studentCode = `MGR-${new Date().getFullYear()}-${String((count || 0) + 1).padStart(3, '0')}`;
+    const studentCode = codes.studentCode;
+    const officialAdmissionNo = String(b.admission_no || '').trim() || codes.officialAdmissionNo;
+    const desiredStatus = b.status || 'active';
+    const isActive = desiredStatus === 'active';
+    const photoRef = normalizeStorageRef(b.photo_url);
 
-    const { data: created, error } = await admin
-      .from('students')
-      .insert({
-        student_code: studentCode,
-        admission_no: b.admission_no || null,
-        full_name: b.full_name.trim(),
-        father_name: b.father_name.trim(),
-        mother_name: b.mother_name || '',
-        dob: b.dob || '',
-        gender: b.gender || 'Male',
-        religion: b.religion || 'Islam',
-        address: b.address || '',
-        village: b.village || '',
-        district: b.district || 'Palamu',
-        state: b.state || 'Jharkhand',
-        pin_code: b.pin_code || '',
-        mobile: b.mobile || '',
-        class_id: b.class_id || null,
-        academic_session_id: b.academic_session_id || activeSession?.id || null,
-        admission_date: b.admission_date || new Date().toISOString().slice(0, 10),
-        photo_url: normalizeStorageRef(b.photo_url),
-        status: b.status || 'active',
-        previous_school: b.previous_school || '',
-        previous_class: b.previous_class || '',
-        remarks: b.remarks || '',
-      })
-      .select('id')
-      .single();
+    if (wantsPortalAccount) {
+      const studentRole = await ensureStudentRole(admin);
+      const internalEmail = buildStudentInternalEmail(cleanUsername);
 
-    if (error || !created) return res.status(400).json({ error: error?.message || 'Failed to add student' });
+      const { data: authData, error: authErr } = await admin.auth.admin.createUser({
+        email: internalEmail,
+        password: rawPassword,
+        email_confirm: true,
+        user_metadata: {
+          full_name: b.full_name.trim(),
+          username: cleanUsername,
+          account_type: 'student',
+        },
+      });
+      if (authErr || !authData?.user) {
+        return res.status(400).json({ error: authErr?.message || 'Failed to create student login account.' });
+      }
+      createdAuthId = authData.user.id;
+
+      const userCode = `STU-${String(Date.now()).slice(-6)}`;
+      await safeTableUpsert(
+        admin,
+        'profiles',
+        {
+          id: createdAuthId,
+          user_code: userCode,
+          username: cleanUsername,
+          email: internalEmail,
+          mobile: b.mobile || '',
+          full_name: b.full_name.trim(),
+          father_name: b.father_name.trim(),
+          dob: b.dob || '',
+          gender: b.gender || 'Male',
+          address: b.address || '',
+          village: b.village || '',
+          district: b.district || 'Palamu',
+          state: b.state || 'Jharkhand',
+          pin_code: b.pin_code || '',
+          photo_url: photoRef,
+          role_id: studentRole.id,
+          status: isActive ? 'active' : 'disabled',
+          approval_status: isActive ? 'approved' : 'pending',
+          linked_type: 'student',
+          auth_user_id: createdAuthId,
+          approved_by: isActive ? req.user!.id : null,
+          approved_at: isActive ? new Date().toISOString() : null,
+          deleted_at: null,
+        },
+        'id'
+      );
+    }
+
+    const created = await safeStudentInsert(admin, {
+      student_code: studentCode,
+      admission_no: officialAdmissionNo,
+      admission_number: officialAdmissionNo,
+      username: cleanUsername || null,
+      full_name: b.full_name.trim(),
+      father_name: b.father_name.trim(),
+      mother_name: b.mother_name || '',
+      dob: b.dob || '',
+      gender: b.gender || 'Male',
+      religion: b.religion || 'Islam',
+      address: b.address || '',
+      village: b.village || '',
+      district: b.district || 'Palamu',
+      state: b.state || 'Jharkhand',
+      pin_code: b.pin_code || '',
+      mobile: b.mobile || '',
+      class_id: b.class_id || null,
+      academic_session_id: b.academic_session_id || activeSession?.id || null,
+      admission_date: b.admission_date || new Date().toISOString().slice(0, 10),
+      photo_url: photoRef,
+      status: desiredStatus,
+      approval_status: isActive ? 'approved' : 'pending',
+      previous_school: b.previous_school || '',
+      previous_class: b.previous_class || '',
+      remarks: b.remarks || '',
+      user_id: createdAuthId,
+      auth_user_id: createdAuthId,
+    });
+    createdStudentId = created.id;
+
+    if (createdAuthId) {
+      await safeTableUpdate(admin, 'profiles', createdAuthId, {
+        linked_id: created.id,
+        linked_type: 'student',
+      });
+
+      await admin.from('notifications').insert({
+        user_id: createdAuthId,
+        type: 'student_welcome',
+        title: 'Student Dashboard Activated',
+        message: `Assalamu Alaikum ${b.full_name.trim()}, your Student Portal & Dashboard (${officialAdmissionNo}) is active. Username: ${cleanUsername}`,
+        entity_type: 'dashboard',
+        entity_id: created.id,
+      });
+    }
 
     if (b.parent_id) {
       await admin.from('student_guardians').upsert(
@@ -1220,20 +1357,60 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
       );
     }
 
-    await notifyRoles(['super_admin'], 'student', 'New Student Enrolled', `${b.full_name} (${studentCode}) added to student directory.`, 'students', created.id);
-    await logActivity(req.user!, 'STUDENT_ADDED', 'students', created.id, `Added student ${b.full_name} (${studentCode})`, req.ip);
-    return res.status(201).json({ id: created.id, student_code: studentCode });
+    await notifyRoles(
+      ['super_admin'],
+      'student',
+      'New Student Enrolled',
+      `${b.full_name.trim()} (${studentCode}${cleanUsername ? ` · @${cleanUsername}` : ''}) added to student directory.`,
+      'students',
+      created.id
+    );
+    await logActivity(
+      req.user!,
+      'STUDENT_ADDED',
+      'students',
+      created.id,
+      `Added student ${b.full_name.trim()} (${studentCode})${cleanUsername ? ` with dashboard account @${cleanUsername}` : ''}`,
+      req.ip
+    );
+
+    return res.status(201).json({
+      id: created.id,
+      student_code: studentCode,
+      admission_no: officialAdmissionNo,
+      username: cleanUsername || null,
+      dashboard_created: Boolean(createdAuthId),
+    });
   } catch (err: any) {
+    if (createdStudentId) {
+      try { await admin.from('student_guardians').delete().eq('student_id', createdStudentId); } catch {}
+      try { await admin.from('students').delete().eq('id', createdStudentId); } catch {}
+    }
+    if (createdAuthId) {
+      try { await admin.from('profiles').delete().eq('id', createdAuthId); } catch {}
+      try { await admin.auth.admin.deleteUser(createdAuthId); } catch {}
+    }
     return res.status(400).json({ error: err?.message || 'Failed to add student' });
   }
 });
 
 router.put('/students/:id', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  let newAuthId: string | null = null;
+
   try {
-    const admin = requireSupabaseAdmin(res);
-    if (!admin) return;
     const id = req.params.id;
     const b = req.body;
+
+    const { data: existingStudent } = await admin
+      .from('students')
+      .select('*')
+      .eq('id', id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!existingStudent) return res.status(404).json({ error: 'Student not found' });
+
     const payload: Record<string, any> = {};
     const fields = [
       'full_name', 'father_name', 'mother_name', 'dob', 'gender', 'religion',
@@ -1244,13 +1421,157 @@ router.put('/students/:id', requireAuth, requireRole('super_admin'), async (req:
     if (b.class_id !== undefined) payload.class_id = b.class_id || null;
     if (b.academic_session_id !== undefined) payload.academic_session_id = b.academic_session_id || null;
     if (b.photo_url !== undefined) payload.photo_url = normalizeStorageRef(b.photo_url);
+    if (b.admission_no !== undefined && String(b.admission_no).trim()) {
+      payload.admission_no = String(b.admission_no).trim();
+      payload.admission_number = String(b.admission_no).trim();
+    }
+    if (b.status !== undefined) {
+      payload.approval_status = b.status === 'active' ? 'approved' : 'pending';
+    }
 
-    const { error } = await admin.from('students').update(payload).eq('id', id).is('deleted_at', null);
-    if (error) return res.status(400).json({ error: error.message });
+    // Find linked auth/profile if any
+    let linkedProfile: any = null;
+    if (existingStudent.user_id) {
+      const { data } = await admin.from('profiles').select('*').eq('id', existingStudent.user_id).is('deleted_at', null).maybeSingle();
+      linkedProfile = data;
+    }
+    if (!linkedProfile) {
+      const { data } = await admin.from('profiles').select('*').eq('linked_id', id).eq('linked_type', 'student').is('deleted_at', null).maybeSingle();
+      linkedProfile = data;
+    }
+
+    const rawUsername = String(b.username ?? '').trim();
+    const rawPassword = String(b.password ?? '').trim();
+    let finalUsername = linkedProfile?.username || existingStudent.username || null;
+
+    if (linkedProfile) {
+      // Existing account: optionally update password or username, and sync profile details/status
+      if (rawUsername) {
+        const cleanUsername = rawUsername.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+        if (cleanUsername.length < 3) {
+          return res.status(400).json({ error: 'Username must be at least 3 characters.' });
+        }
+        if (cleanUsername !== (linkedProfile.username || '').toLowerCase()) {
+          const [{ data: existingProf }, { data: existingStud }] = await Promise.all([
+            admin.from('profiles').select('id').eq('username', cleanUsername).neq('id', linkedProfile.id).is('deleted_at', null).maybeSingle(),
+            admin.from('students').select('id').eq('username', cleanUsername).neq('id', id).is('deleted_at', null).maybeSingle(),
+          ]);
+          if (existingProf?.id || existingStud?.id) {
+            return res.status(409).json({ error: `Username "${cleanUsername}" is already taken.` });
+          }
+          payload.username = cleanUsername;
+          finalUsername = cleanUsername;
+        }
+      }
+
+      if (rawPassword) {
+        if (rawPassword.length < 6) {
+          return res.status(400).json({ error: 'New password must be at least 6 characters.' });
+        }
+        const { error: pwdErr } = await admin.auth.admin.updateUserById(linkedProfile.id, { password: rawPassword });
+        if (pwdErr) return res.status(400).json({ error: pwdErr.message });
+      }
+
+      const profileSync: Record<string, any> = {};
+      if (finalUsername && finalUsername !== linkedProfile.username) profileSync.username = finalUsername;
+      if (b.full_name !== undefined) profileSync.full_name = String(b.full_name).trim();
+      if (b.father_name !== undefined) profileSync.father_name = String(b.father_name).trim();
+      if (b.mobile !== undefined) profileSync.mobile = b.mobile;
+      if (b.photo_url !== undefined) profileSync.photo_url = normalizeStorageRef(b.photo_url);
+      if (b.status !== undefined) {
+        profileSync.status = b.status === 'active' ? 'active' : 'disabled';
+        profileSync.approval_status = b.status === 'active' ? 'approved' : 'pending';
+      }
+      if (Object.keys(profileSync).length > 0) {
+        await safeTableUpdate(admin, 'profiles', linkedProfile.id, profileSync);
+      }
+    } else if (rawUsername || rawPassword) {
+      // Student did not have a dashboard account yet — provision one now!
+      const cleanUsername = rawUsername.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+      if (!cleanUsername || cleanUsername.length < 3) {
+        return res.status(400).json({ error: 'Valid student username (min 3 chars) is required to create dashboard access.' });
+      }
+      if (!rawPassword || rawPassword.length < 6) {
+        return res.status(400).json({ error: 'Password (min 6 characters) is required to create dashboard access.' });
+      }
+
+      const [{ data: existingProf }, { data: existingStud }] = await Promise.all([
+        admin.from('profiles').select('id').eq('username', cleanUsername).is('deleted_at', null).maybeSingle(),
+        admin.from('students').select('id').eq('username', cleanUsername).is('deleted_at', null).maybeSingle(),
+      ]);
+      if (existingProf?.id || existingStud?.id) {
+        return res.status(409).json({ error: `Username "${cleanUsername}" is already taken.` });
+      }
+
+      const studentRole = await ensureStudentRole(admin);
+      const internalEmail = buildStudentInternalEmail(cleanUsername);
+      const nextStatus = b.status ?? existingStudent.status ?? 'active';
+      const isActive = nextStatus === 'active';
+
+      const { data: authData, error: authErr } = await admin.auth.admin.createUser({
+        email: internalEmail,
+        password: rawPassword,
+        email_confirm: true,
+        user_metadata: {
+          full_name: (b.full_name || existingStudent.full_name).trim(),
+          username: cleanUsername,
+          account_type: 'student',
+        },
+      });
+      if (authErr || !authData?.user) {
+        return res.status(400).json({ error: authErr?.message || 'Failed to create student login account.' });
+      }
+      newAuthId = authData.user.id;
+
+      await safeTableUpsert(
+        admin,
+        'profiles',
+        {
+          id: newAuthId,
+          user_code: `STU-${String(Date.now()).slice(-6)}`,
+          username: cleanUsername,
+          email: internalEmail,
+          mobile: b.mobile ?? existingStudent.mobile ?? '',
+          full_name: (b.full_name || existingStudent.full_name).trim(),
+          father_name: (b.father_name || existingStudent.father_name).trim(),
+          photo_url: b.photo_url !== undefined ? normalizeStorageRef(b.photo_url) : existingStudent.photo_url || '',
+          role_id: studentRole.id,
+          status: isActive ? 'active' : 'disabled',
+          approval_status: isActive ? 'approved' : 'pending',
+          linked_type: 'student',
+          linked_id: id,
+          auth_user_id: newAuthId,
+          approved_by: isActive ? req.user!.id : null,
+          approved_at: isActive ? new Date().toISOString() : null,
+          deleted_at: null,
+        },
+        'id'
+      );
+
+      payload.username = cleanUsername;
+      payload.user_id = newAuthId;
+      payload.auth_user_id = newAuthId;
+      finalUsername = cleanUsername;
+
+      await admin.from('notifications').insert({
+        user_id: newAuthId,
+        type: 'student_welcome',
+        title: 'Student Dashboard Activated',
+        message: `Assalamu Alaikum ${(b.full_name || existingStudent.full_name).trim()}, your Student Portal & Dashboard is now active. Username: ${cleanUsername}`,
+        entity_type: 'dashboard',
+        entity_id: id,
+      });
+    }
+
+    await safeTableUpdate(admin, 'students', id, payload);
     await logActivity(req.user!, 'STUDENT_UPDATED', 'students', id, `Updated student ${id}`, req.ip);
-    return res.json({ success: true });
-  } catch {
-    return res.status(500).json({ error: 'Failed to update student' });
+    return res.json({ success: true, username: finalUsername, dashboard_created: Boolean(newAuthId || linkedProfile) });
+  } catch (err: any) {
+    if (newAuthId) {
+      try { await admin.from('profiles').delete().eq('id', newAuthId); } catch {}
+      try { await admin.auth.admin.deleteUser(newAuthId); } catch {}
+    }
+    return res.status(400).json({ error: err?.message || 'Failed to update student' });
   }
 });
 
@@ -1752,6 +2073,754 @@ router.delete('/parents/:id', requireAuth, requireRole('super_admin'), async (re
   const { error } = await admin.from('parents').update({ deleted_at: new Date().toISOString(), status: 'inactive' }).eq('id', id);
   if (error) return res.status(400).json({ error: error.message });
   await logActivity(req.user!, 'PARENT_DELETED', 'parents', id, `Deleted parent ${id}`, req.ip);
+  return res.json({ success: true });
+});
+
+// ==================== PARENT SELF-SERVICE: MY CHILD & OTP LINKING ====================
+async function getOrCreateParentRecord(
+  admin: NonNullable<ReturnType<typeof requireSupabaseAdmin>>,
+  user: NonNullable<AuthRequest['user']>
+) {
+  let parentRow: any = null;
+  if (user.linked_type === 'parent' && user.linked_id) {
+    const { data } = await admin
+      .from('parents')
+      .select('*')
+      .eq('id', user.linked_id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    parentRow = data;
+  }
+  if (!parentRow) {
+    const { data } = await admin
+      .from('parents')
+      .select('*')
+      .eq('user_id', user.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    parentRow = data;
+  }
+  if (parentRow) return parentRow;
+
+  const { count } = await admin.from('parents').select('id', { count: 'exact', head: true });
+  const parentCode = `PAR-${200 + (count || 0) + 1}`;
+  const { data: created, error } = await admin
+    .from('parents')
+    .insert({
+      parent_code: parentCode,
+      user_id: user.id,
+      full_name: user.full_name,
+      mobile: user.mobile || '',
+      email: user.email || '',
+      relationship: 'Father',
+      status: 'active',
+    })
+    .select('*')
+    .single();
+  if (error || !created) {
+    throw new Error(error?.message || 'Unable to initialize parent profile');
+  }
+  await admin.from('profiles').update({ linked_id: created.id, linked_type: 'parent' }).eq('id', user.id);
+  return created;
+}
+
+async function findStudentNotificationUserId(
+  admin: NonNullable<ReturnType<typeof requireSupabaseAdmin>>,
+  student: any
+): Promise<string | null> {
+  const candidates = [student.user_id, student.auth_user_id].filter(Boolean);
+  for (const uid of candidates) {
+    const { data } = await admin.from('profiles').select('id').eq('id', uid).is('deleted_at', null).maybeSingle();
+    if (data?.id) return data.id;
+  }
+  const { data: byLinked } = await admin
+    .from('profiles')
+    .select('id')
+    .eq('linked_type', 'student')
+    .eq('linked_id', student.id)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (byLinked?.id) return byLinked.id;
+
+  if (student.username) {
+    const { data: byUsername } = await admin
+      .from('profiles')
+      .select('id')
+      .eq('username', student.username)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (byUsername?.id) return byUsername.id;
+  }
+  return null;
+}
+
+router.get('/parent/children', requireAuth, requireRole('parent'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const parentRecord = await getOrCreateParentRecord(admin, req.user!);
+
+    const [{ data: guardianLinks }, { data: pendingOtpDocs }] = await Promise.all([
+      admin
+        .from('student_guardians')
+        .select('student_id, relationship, is_primary, students!inner(*, classes(name, code, teachers(full_name, mobile)), academic_sessions(name))')
+        .eq('parent_id', parentRecord.id)
+        .is('students.deleted_at', null),
+      admin
+        .from('documents')
+        .select('id, entity_id, file_url, file_type, created_at')
+        .eq('entity_type', 'student')
+        .eq('title', 'PARENT_LINK_OTP')
+        .eq('file_type', 'pending')
+        .eq('uploaded_by', req.user!.id)
+        .order('created_at', { ascending: false }),
+    ]);
+
+    const rawStudents = (guardianLinks || [])
+      .map((l: any) =>
+        l.students
+          ? {
+              ...l.students,
+              guardian_relationship: l.relationship,
+              is_primary: l.is_primary,
+            }
+          : null
+      )
+      .filter(Boolean);
+
+    const resolvedStudents = await resolveStorageUrlsInRows(rawStudents, ['photo_url']);
+    const children = resolvedStudents.map((st: any) => ({
+      id: st.id,
+      student_code: st.student_code,
+      admission_no: st.admission_no || '',
+      full_name: st.full_name,
+      father_name: st.father_name || '',
+      mother_name: st.mother_name || '',
+      dob: st.dob || '',
+      gender: st.gender || '',
+      mobile: st.mobile || '',
+      village: st.village || '',
+      district: st.district || '',
+      address: st.address || '',
+      photo_url: st.photo_url || '',
+      status: st.status || 'active',
+      class_id: st.class_id,
+      class_name: st.classes?.name || 'Unassigned',
+      class_code: st.classes?.code || '',
+      class_teacher_name: st.classes?.teachers?.full_name || '',
+      class_teacher_mobile: st.classes?.teachers?.mobile || '',
+      session_name: st.academic_sessions?.name || '',
+      admission_date: st.admission_date || '',
+      relationship: st.guardian_relationship || parentRecord.relationship || 'Parent',
+    }));
+
+    const nowMs = Date.now();
+    const pendingRequests: any[] = [];
+    for (const doc of pendingOtpDocs || []) {
+      try {
+        const parsed = JSON.parse(doc.file_url || '{}');
+        if (!parsed.expires_at || new Date(parsed.expires_at).getTime() <= nowMs) continue;
+        pendingRequests.push({
+          id: doc.id,
+          student_id: parsed.student_id || doc.entity_id,
+          student_code: parsed.student_code || '',
+          student_name: parsed.student_name || '',
+          class_name: parsed.class_name || '',
+          relationship: parsed.relationship || 'Parent',
+          expires_at: parsed.expires_at,
+          created_at: doc.created_at,
+        });
+      } catch {
+        // ignore invalid doc
+      }
+    }
+
+    return res.json({ parent: parentRecord, children, pendingRequests });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to load children' });
+  }
+});
+
+router.get('/parent/children/:studentId/overview', requireAuth, requireRole('parent'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const studentId = req.params.studentId;
+    if (!(await canAccessStudent(req.user!, studentId))) {
+      return res.status(403).json({ error: 'Access denied: this child is not linked to your parent account.' });
+    }
+
+    const { data: studentRaw } = await admin
+      .from('students')
+      .select('*, classes(name, code, room_no, teachers(full_name, mobile)), academic_sessions(name)')
+      .eq('id', studentId)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (!studentRaw) return res.status(404).json({ error: 'Student not found' });
+
+    const resolvedStudent = (await resolveStorageUrlsInRows([studentRaw], ['photo_url']))[0];
+    const student = {
+      ...resolvedStudent,
+      class_name: (studentRaw as any).classes?.name || 'Unassigned',
+      class_code: (studentRaw as any).classes?.code || '',
+      room_no: (studentRaw as any).classes?.room_no || '',
+      class_teacher_name: (studentRaw as any).classes?.teachers?.full_name || '',
+      class_teacher_mobile: (studentRaw as any).classes?.teachers?.mobile || '',
+      session_name: (studentRaw as any).academic_sessions?.name || '',
+    };
+
+    const [
+      attRes,
+      hwRes,
+      hwSubsRes,
+      resultsRes,
+      examsRes,
+      subjectsRes,
+      syllabusDocsRes,
+      onlineClassesRes,
+      noticesRes,
+    ] = await Promise.all([
+      admin
+        .from('attendance')
+        .select('id, attendance_date, status, remark, classes(name)')
+        .eq('student_id', studentId)
+        .order('attendance_date', { ascending: false })
+        .limit(90),
+      student.class_id
+        ? admin
+            .from('homework')
+            .select('*, subjects(name), teachers(full_name)')
+            .eq('class_id', student.class_id)
+            .is('deleted_at', null)
+            .order('created_at', { ascending: false })
+            .limit(30)
+        : Promise.resolve({ data: [] as any[] }),
+      admin.from('homework_submissions').select('*').eq('student_id', studentId),
+      admin
+        .from('results')
+        .select('*, classes(name), examinations!inner(name, start_date, results_published, deleted_at, academic_sessions(name))')
+        .eq('student_id', studentId)
+        .eq('is_published', true)
+        .is('examinations.deleted_at', null)
+        .order('created_at', { ascending: false }),
+      student.class_id
+        ? admin
+            .from('examinations')
+            .select('id, name, exam_type, start_date, end_date, status, examination_subjects(exam_date, start_time, end_time, total_marks, passing_marks, subjects(name))')
+            .eq('class_id', student.class_id)
+            .is('deleted_at', null)
+            .order('start_date', { ascending: false })
+            .limit(10)
+        : Promise.resolve({ data: [] as any[] }),
+      student.class_id
+        ? admin
+            .from('class_subjects')
+            .select('id, total_marks, passing_marks, subjects!inner(name, code, deleted_at), teachers(full_name)')
+            .eq('class_id', student.class_id)
+            .is('subjects.deleted_at', null)
+        : Promise.resolve({ data: [] as any[] }),
+      admin
+        .from('documents')
+        .select('id, entity_id, file_url, created_at')
+        .eq('entity_type', 'general')
+        .eq('title', 'SYLLABUS_ITEM')
+        .order('created_at', { ascending: false })
+        .limit(30),
+      student.class_id
+        ? admin
+            .from('online_classes')
+            .select('*, subjects(name), teachers(full_name)')
+            .eq('class_id', student.class_id)
+            .is('deleted_at', null)
+            .order('meeting_date', { ascending: false })
+            .limit(15)
+        : Promise.resolve({ data: [] as any[] }),
+      admin
+        .from('notices')
+        .select('id, title, description, category, publish_date, target_audience, target_class_id')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(25),
+    ]);
+
+    const attendance = (attRes.data || []).map((a: any) => ({
+      ...a,
+      class_name: a.classes?.name || student.class_name,
+    }));
+    const attStats = {
+      total: attendance.length,
+      present: attendance.filter((a: any) => a.status === 'present').length,
+      absent: attendance.filter((a: any) => a.status === 'absent').length,
+      late: attendance.filter((a: any) => a.status === 'late').length,
+      on_leave: attendance.filter((a: any) => a.status === 'leave').length,
+      percentage:
+        attendance.length > 0
+          ? Math.round(
+              ((attendance.filter((a: any) => a.status === 'present' || a.status === 'late').length) / attendance.length) *
+                100
+            )
+          : 0,
+    };
+
+    const resolvedHw = await resolveStorageUrlsInRows(hwRes.data || [], ['attachment_url']);
+    const resolvedSubs = await resolveStorageUrlsInRows(hwSubsRes.data || [], ['attachment_url']);
+    const subMap = new Map(resolvedSubs.map((s: any) => [s.homework_id, s]));
+    const homework = resolvedHw.map((h: any) => {
+      const sub: any = subMap.get(h.id);
+      return {
+        ...h,
+        subject_name: h.subjects?.name || '',
+        teacher_name: h.teachers?.full_name || '',
+        submission_status: sub?.status || 'pending',
+        submission_text: sub?.submission_text || '',
+        submission_attachment_url: sub?.attachment_url || '',
+        feedback: sub?.feedback || '',
+        grade: sub?.grade || '',
+        submitted_at: sub?.submitted_at || null,
+      };
+    });
+
+    // Enrich published results with subject marks & card_meta so parent can view full Grade Card
+    const rawResults = resultsRes.data || [];
+    const examIds = Array.from(new Set(rawResults.map((r: any) => r.examination_id).filter(Boolean)));
+    const resultIds = rawResults.map((r: any) => r.id).filter(Boolean);
+    const [{ data: marksRaw }, { data: esRaw }, { data: metaDocs }, { data: examCountsRaw }] = await Promise.all([
+      examIds.length
+        ? admin.from('marks').select('*, subjects(name, code, passing_marks)').in('examination_id', examIds).eq('student_id', studentId)
+        : Promise.resolve({ data: [] as any[] }),
+      examIds.length
+        ? admin.from('examination_subjects').select('examination_id, subject_id, passing_marks').in('examination_id', examIds)
+        : Promise.resolve({ data: [] as any[] }),
+      resultIds.length
+        ? admin
+            .from('documents')
+            .select('entity_id, file_url, created_at')
+            .eq('entity_type', 'general')
+            .eq('title', 'RESULT_CARD_META')
+            .in('entity_id', resultIds)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [] as any[] }),
+      examIds.length
+        ? admin.from('results').select('examination_id').in('examination_id', examIds)
+        : Promise.resolve({ data: [] as any[] }),
+    ]);
+
+    const totalByExam = new Map<string, number>();
+    for (const row of examCountsRaw || []) {
+      const k = String(row.examination_id);
+      totalByExam.set(k, (totalByExam.get(k) || 0) + 1);
+    }
+    const metaMap = new Map<string, any>();
+    for (const doc of metaDocs || []) {
+      if (metaMap.has(doc.entity_id)) continue;
+      try {
+        const parsed = JSON.parse(doc.file_url || '{}');
+        if (parsed?.photo) parsed.photo = await resolveStorageUrl(parsed.photo);
+        metaMap.set(doc.entity_id, parsed);
+      } catch {}
+    }
+    const esPassMap = new Map((esRaw || []).map((es: any) => [`${es.examination_id}_${es.subject_id}`, es.passing_marks]));
+    const marks = (marksRaw || []).map((m: any) => ({
+      ...m,
+      subject_name: m.subjects?.name || '',
+      subject_code: m.subjects?.code || '',
+      passing_marks: esPassMap.get(`${m.examination_id}_${m.subject_id}`) ?? m.subjects?.passing_marks ?? 33,
+    }));
+
+    const results = rawResults.map((r: any) => ({
+      ...r,
+      student_name: student.full_name,
+      student_code: student.student_code,
+      admission_no: student.admission_no,
+      father_name: student.father_name,
+      photo_url: student.photo_url,
+      class_name: r.classes?.name || student.class_name,
+      exam_name: r.examinations?.name || '',
+      exam_date: r.examinations?.start_date || '',
+      session_name: r.examinations?.academic_sessions?.name || student.session_name || '',
+      total_students: totalByExam.get(String(r.examination_id)) || undefined,
+      subjects: marks.filter((m) => m.examination_id === r.examination_id),
+      card_meta: metaMap.get(r.id) || null,
+    }));
+
+    const subjects = (subjectsRes.data || []).map((cs: any) => ({
+      id: cs.id,
+      name: cs.subjects?.name || '',
+      code: cs.subjects?.code || '',
+      teacher_name: cs.teachers?.full_name || 'Unassigned',
+      total_marks: cs.total_marks,
+      passing_marks: cs.passing_marks,
+    }));
+
+    const examinations = (examsRes.data || []).map((ex: any) => ({
+      id: ex.id,
+      name: ex.name,
+      exam_type: ex.exam_type || '',
+      start_date: ex.start_date,
+      end_date: ex.end_date || '',
+      status: ex.status,
+      subjects: (ex.examination_subjects || []).map((es: any) => ({
+        subject_name: es.subjects?.name || '',
+        exam_date: es.exam_date,
+        start_time: es.start_time,
+        end_time: es.end_time,
+        total_marks: es.total_marks,
+        passing_marks: es.passing_marks,
+      })),
+    }));
+
+    const rawSyllabusDocs = (syllabusDocsRes.data || [])
+      .map((doc: any) => {
+        let parsed: Record<string, any> = {};
+        try {
+          parsed = JSON.parse(doc.file_url || '{}');
+        } catch {}
+        const clsId = String(parsed.class_id || (doc.entity_id !== '00000000-0000-0000-0000-000000000001' ? doc.entity_id : '') || '');
+        return { doc, parsed, clsId };
+      })
+      .filter(({ clsId }) => !clsId || !student.class_id || clsId === student.class_id)
+      .slice(0, 12);
+
+    const syllabusItems = await Promise.all(
+      rawSyllabusDocs.map(async ({ doc, parsed, clsId }) => {
+        const [coverPageUrl, bookPdfUrl, syllabusPdfUrl] = await Promise.all([
+          resolveStorageUrl(parsed.cover_page_url),
+          resolveStorageUrl(parsed.book_pdf_url),
+          resolveStorageUrl(parsed.syllabus_pdf_url),
+        ]);
+        return {
+          id: doc.id,
+          class_id: clsId,
+          class_name: parsed.class_name || student.class_name,
+          subject_name: String(parsed.subject_name || ''),
+          book_name: String(parsed.book_name || ''),
+          author_name: String(parsed.author_name || ''),
+          cover_page_url: coverPageUrl,
+          book_pdf_url: bookPdfUrl,
+          syllabus_pdf_url: syllabusPdfUrl,
+          weekly_plan: String(parsed.weekly_plan || ''),
+        };
+      })
+    );
+
+    const onlineClasses = (onlineClassesRes.data || []).map((oc: any) => ({
+      ...oc,
+      subject_name: oc.subjects?.name || '',
+      teacher_name: oc.teachers?.full_name || '',
+    }));
+
+    const notices = (noticesRes.data || [])
+      .filter(
+        (n: any) =>
+          n.target_audience === 'all' ||
+          n.target_audience === 'parents' ||
+          n.target_audience === 'students' ||
+          (n.target_audience === 'class' && n.target_class_id === student.class_id)
+      )
+      .slice(0, 10);
+
+    return res.json({
+      student,
+      attendanceSummary: attStats,
+      attendance,
+      homework,
+      results,
+      examinations,
+      subjects,
+      syllabusItems,
+      onlineClasses,
+      notices,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to load child overview' });
+  }
+});
+
+router.post('/parent/link-request', requireAuth, requireRole('parent'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const { student_code, relationship } = req.body as { student_code?: string; relationship?: string };
+    const cleanCode = sanitizeOrTerm(String(student_code || '').trim());
+    if (!cleanCode) {
+      return res.status(400).json({ error: 'Please enter a valid Student ID (e.g. MGR-2026-001).' });
+    }
+
+    const parentRecord = await getOrCreateParentRecord(admin, req.user!);
+
+    const { data: student } = await admin
+      .from('students')
+      .select('*, classes(name)')
+      .or(`student_code.ilike.${cleanCode},admission_no.ilike.${cleanCode},admission_number.ilike.${cleanCode}`)
+      .is('deleted_at', null)
+      .limit(1)
+      .maybeSingle();
+
+    if (!student) {
+      return res.status(404).json({ error: `No active student found with Student ID "${cleanCode}".` });
+    }
+
+    const { data: existingLink } = await admin
+      .from('student_guardians')
+      .select('id')
+      .eq('student_id', student.id)
+      .eq('parent_id', parentRecord.id)
+      .maybeSingle();
+    if (existingLink) {
+      return res.status(409).json({ error: `${student.full_name} (${student.student_code}) is already connected to your My Child list.` });
+    }
+
+    const studentUserId = await findStudentNotificationUserId(admin, student);
+    if (!studentUserId) {
+      return res.status(400).json({
+        error: `Student ${student.full_name} (${student.student_code}) does not have a Student Portal login account yet, so an OTP notification cannot be delivered. Please ask Madrasa Admin to create their student login first.`,
+      });
+    }
+
+    const otpCode = String(crypto.randomInt(100000, 999999));
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const cleanRel = (relationship || parentRecord.relationship || 'Parent').trim();
+    const className = (student as any).classes?.name || 'Unassigned';
+
+    // Remove any previous pending OTP request from this parent for this student
+    await admin
+      .from('documents')
+      .delete()
+      .eq('entity_type', 'student')
+      .eq('entity_id', student.id)
+      .eq('title', 'PARENT_LINK_OTP')
+      .eq('file_type', 'pending')
+      .eq('uploaded_by', req.user!.id);
+
+    const payload = {
+      otp: otpCode,
+      parent_id: parentRecord.id,
+      parent_user_id: req.user!.id,
+      parent_name: req.user!.full_name,
+      parent_username: req.user!.username,
+      parent_mobile: parentRecord.mobile || req.user!.mobile || '',
+      relationship: cleanRel,
+      student_id: student.id,
+      student_code: student.student_code,
+      student_name: student.full_name,
+      class_name: className,
+      student_user_id: studentUserId,
+      expires_at: expiresAt,
+      attempts: 0,
+    };
+
+    const { data: otpDoc, error: docErr } = await admin
+      .from('documents')
+      .insert({
+        entity_type: 'student',
+        entity_id: student.id,
+        title: 'PARENT_LINK_OTP',
+        file_url: JSON.stringify(payload),
+        file_type: 'pending',
+        uploaded_by: req.user!.id,
+      })
+      .select('id')
+      .single();
+
+    if (docErr || !otpDoc) {
+      return res.status(400).json({ error: docErr?.message || 'Failed to create OTP verification request.' });
+    }
+
+    const { error: notifErr } = await admin.from('notifications').insert({
+      user_id: studentUserId,
+      type: 'parent_link_otp',
+      title: `Parent Connection OTP: ${otpCode}`,
+      message: `${req.user!.full_name} (@${req.user!.username}) wants to connect to your account as ${cleanRel}. Verification OTP Code: ${otpCode} (Valid 15 mins). Share this OTP with your parent to approve.`,
+      link_module: 'dashboard',
+      reference_id: otpDoc.id,
+    });
+    if (notifErr) {
+      await admin.from('documents').delete().eq('id', otpDoc.id);
+      return res.status(400).json({ error: 'Failed to send OTP notification to student profile.' });
+    }
+
+    await logActivity(
+      req.user!,
+      'PARENT_CHILD_OTP_SENT',
+      'parents',
+      student.id,
+      `Parent @${req.user!.username} requested OTP to link child ${student.full_name} (${student.student_code})`,
+      req.ip
+    );
+
+    return res.status(201).json({
+      requestId: otpDoc.id,
+      student: {
+        id: student.id,
+        full_name: student.full_name,
+        student_code: student.student_code,
+        class_name: className,
+      },
+      relationship: cleanRel,
+      expires_at: expiresAt,
+      message: `6-digit OTP sent to ${student.full_name}'s Student Notification & Dashboard.`,
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to send OTP request' });
+  }
+});
+
+router.post('/parent/link-verify', requireAuth, requireRole('parent'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const { requestId, student_code, otp, relationship } = req.body as {
+      requestId?: string;
+      student_code?: string;
+      otp?: string;
+      relationship?: string;
+    };
+
+    const cleanOtp = String(otp || '').trim();
+    if (!/^\d{6}$/.test(cleanOtp)) {
+      return res.status(400).json({ error: 'Please enter the 6-digit OTP code from the student notification.' });
+    }
+
+    const parentRecord = await getOrCreateParentRecord(admin, req.user!);
+
+    let docQuery = admin
+      .from('documents')
+      .select('*')
+      .eq('entity_type', 'student')
+      .eq('title', 'PARENT_LINK_OTP')
+      .eq('file_type', 'pending')
+      .eq('uploaded_by', req.user!.id)
+      .order('created_at', { ascending: false });
+
+    if (requestId) {
+      docQuery = docQuery.eq('id', requestId);
+    }
+    const { data: docs } = await docQuery;
+
+    let targetDoc: any = null;
+    let parsed: any = null;
+    for (const d of docs || []) {
+      try {
+        const p = JSON.parse(d.file_url || '{}');
+        if (requestId && d.id === requestId) {
+          targetDoc = d;
+          parsed = p;
+          break;
+        }
+        if (
+          student_code &&
+          String(p.student_code || '').toLowerCase() === String(student_code).trim().toLowerCase()
+        ) {
+          targetDoc = d;
+          parsed = p;
+          break;
+        }
+        if (!requestId && !student_code) {
+          targetDoc = d;
+          parsed = p;
+          break;
+        }
+      } catch {}
+    }
+
+    if (!targetDoc || !parsed) {
+      return res.status(404).json({ error: 'No pending OTP request found. Please send a new OTP request using the Student ID.' });
+    }
+
+    if (!parsed.expires_at || new Date(parsed.expires_at).getTime() < Date.now()) {
+      await admin.from('documents').update({ file_type: 'expired' }).eq('id', targetDoc.id);
+      return res.status(400).json({ error: 'This OTP code has expired. Please request a fresh OTP.' });
+    }
+
+    const attempts = Number(parsed.attempts || 0);
+    if (attempts >= 5) {
+      await admin.from('documents').update({ file_type: 'locked' }).eq('id', targetDoc.id);
+      return res.status(429).json({ error: 'Too many incorrect OTP attempts. Please request a new OTP.' });
+    }
+
+    if (String(parsed.otp) !== cleanOtp) {
+      await admin
+        .from('documents')
+        .update({ file_url: JSON.stringify({ ...parsed, attempts: attempts + 1 }) })
+        .eq('id', targetDoc.id);
+      return res.status(400).json({
+        error: `Invalid OTP code (${4 - attempts} attempt(s) remaining). Ask the student to check their Notification Bell or Dashboard.`,
+      });
+    }
+
+    const finalRelationship = (relationship || parsed.relationship || parentRecord.relationship || 'Parent').trim();
+    const { error: linkErr } = await admin.from('student_guardians').upsert(
+      {
+        student_id: parsed.student_id,
+        parent_id: parentRecord.id,
+        relationship: finalRelationship,
+        is_primary: false,
+      },
+      { onConflict: 'student_id,parent_id' }
+    );
+    if (linkErr) {
+      return res.status(400).json({ error: linkErr.message });
+    }
+
+    await admin
+      .from('documents')
+      .update({
+        file_type: 'verified',
+        file_url: JSON.stringify({ ...parsed, verified_at: new Date().toISOString() }),
+      })
+      .eq('id', targetDoc.id);
+
+    if (parsed.student_user_id) {
+      await admin.from('notifications').insert({
+        user_id: parsed.student_user_id,
+        type: 'parent_linked',
+        title: 'Parent Connected Successfully',
+        message: `${req.user!.full_name} (${finalRelationship}) has been verified and connected to your Student Profile.`,
+        link_module: 'dashboard',
+        reference_id: parentRecord.id,
+      });
+    }
+
+    await admin.from('notifications').insert({
+      user_id: req.user!.id,
+      type: 'child_linked',
+      title: 'Child Connected to My Child',
+      message: `${parsed.student_name} (${parsed.student_code}) is now linked to your Parent Dashboard.`,
+      link_module: 'my_child',
+      reference_id: parsed.student_id,
+    });
+
+    await logActivity(
+      req.user!,
+      'PARENT_CHILD_LINKED',
+      'parents',
+      parsed.student_id,
+      `Parent @${req.user!.username} verified OTP and linked child ${parsed.student_name} (${parsed.student_code})`,
+      req.ip
+    );
+
+    return res.json({
+      success: true,
+      student_id: parsed.student_id,
+      student_name: parsed.student_name,
+      student_code: parsed.student_code,
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'OTP verification failed' });
+  }
+});
+
+router.delete('/parent/link-request/:requestId', requireAuth, requireRole('parent'), async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  await admin
+    .from('documents')
+    .delete()
+    .eq('id', req.params.requestId)
+    .eq('entity_type', 'student')
+    .eq('title', 'PARENT_LINK_OTP')
+    .eq('uploaded_by', req.user!.id);
   return res.json({ success: true });
 });
 

@@ -676,25 +676,29 @@ router.post('/check-result', async (req, res) => {
         const { data } = await admin
           .from('profiles')
           .select('id, email, status, linked_type, linked_id')
-          .or(`username.eq.${safeClean},username.eq.${safeClean.toLowerCase()},user_code.eq.${safeClean.toUpperCase()}`)
+          .or(`username.ilike.${safeClean},user_code.ilike.${safeClean}`)
           .is('deleted_at', null)
+          .limit(1)
           .maybeSingle();
         profileRow = data;
       }
 
-      if (!profileRow) {
+      if (!profileRow && safeClean) {
         const { data: stByCode } = await admin
           .from('students')
-          .select('id, user_id')
-          .or(`student_code.eq.${safeClean || clean},admission_no.eq.${safeClean || clean}`)
+          .select('id, user_id, auth_user_id')
+          .or(
+            `student_code.ilike.${safeClean},admission_no.ilike.${safeClean},admission_number.ilike.${safeClean},username.ilike.${safeClean}`
+          )
           .is('deleted_at', null)
           .limit(1)
           .maybeSingle();
-        if (stByCode?.user_id) {
+        const linkedUid = stByCode?.user_id || stByCode?.auth_user_id;
+        if (linkedUid) {
           const { data: p } = await admin
             .from('profiles')
             .select('id, email, status, linked_type, linked_id')
-            .eq('id', stByCode.user_id)
+            .eq('id', linkedUid)
             .is('deleted_at', null)
             .maybeSingle();
           profileRow = p;
@@ -730,8 +734,9 @@ router.post('/check-result', async (req, res) => {
       const { data: st } = await admin
         .from('students')
         .select('id')
-        .eq('user_id', profileRow.id)
+        .or(`user_id.eq.${profileRow.id},auth_user_id.eq.${profileRow.id}`)
         .is('deleted_at', null)
+        .limit(1)
         .maybeSingle();
       studentId = st?.id || null;
     }
@@ -740,12 +745,20 @@ router.post('/check-result', async (req, res) => {
       return res.status(404).json({ error: 'No student academic record linked to this account.' });
     }
 
-    const { data: studentRaw } = await admin
-      .from('students')
-      .select('*, classes(name)')
-      .eq('id', studentId)
-      .is('deleted_at', null)
-      .maybeSingle();
+    const [{ data: studentRaw }, { data: activeSess }] = await Promise.all([
+      admin
+        .from('students')
+        .select('*, classes(name, teachers(full_name))')
+        .eq('id', studentId)
+        .is('deleted_at', null)
+        .maybeSingle(),
+      admin
+        .from('academic_sessions')
+        .select('name')
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle(),
+    ]);
 
     if (!studentRaw) {
       return res.status(404).json({ error: 'Student record not found.' });
@@ -755,18 +768,22 @@ router.post('/check-result', async (req, res) => {
       ...studentRaw,
       photo_url: await resolveStorageUrl(studentRaw.photo_url),
       class_name: (studentRaw as any).classes?.name || 'Unassigned',
+      class_teacher_name: (studentRaw as any).classes?.teachers?.full_name || '',
     };
 
-    const { data: resultsRaw } = await admin
+    const { data: allStudentResults } = await admin
       .from('results')
-      .select('*, classes(name), examinations!inner(name, exam_type, start_date, deleted_at, academic_sessions(name))')
+      .select('*, classes(name, teachers(full_name)), examinations!inner(name, exam_type, start_date, results_published, deleted_at, academic_sessions(name))')
       .eq('student_id', studentId)
-      .eq('is_published', true)
       .is('examinations.deleted_at', null)
       .order('created_at', { ascending: false });
 
-    const resultIds = (resultsRaw || []).map((r: any) => r.id).filter(Boolean);
-    const examIds = Array.from(new Set((resultsRaw || []).map((r: any) => r.examination_id).filter(Boolean)));
+    const resultsRaw = (allStudentResults || []).filter(
+      (r: any) => Boolean(r.is_published) || Boolean(r.examinations?.results_published)
+    );
+
+    const resultIds = resultsRaw.map((r: any) => r.id).filter(Boolean);
+    const examIds = Array.from(new Set(resultsRaw.map((r: any) => r.examination_id).filter(Boolean)));
 
     const [{ data: marksRaw }, { data: esRaw }, { data: metaDocs }, { data: peerCountsRaw }] = await Promise.all([
       examIds.length
@@ -827,29 +844,34 @@ router.post('/check-result', async (req, res) => {
       passing_marks: esPassMap.get(`${m.examination_id}_${m.subject_id}`) ?? m.subjects?.passing_marks ?? 33,
     }));
 
-    const results = (resultsRaw || []).map((r: any) => {
+    const results = resultsRaw.map((r: any) => {
       const examSubjects = formattedMarks
         .filter((m: any) => m.examination_id === r.examination_id)
         .sort((a: any, b: any) => a.subject_name.localeCompare(b.subject_name));
       const cardMeta = metaMap.get(r.id) || null;
       const totalStudents = totalByExam.get(String(r.examination_id)) || undefined;
+      const sessionName = r.examinations?.academic_sessions?.name || activeSess?.name || '';
+      const classTeacher = r.classes?.teachers?.full_name || student.class_teacher_name || 'Class Teacher';
       return {
         ...r,
         student_name: student.full_name || '',
         student_code: student.student_code || '',
-        admission_no: student.admission_no || '',
+        admission_no: student.admission_no || student.admission_number || '',
         father_name: student.father_name || '',
         photo_url: student.photo_url || '',
         class_name: r.classes?.name || student.class_name || '',
+        class_teacher_name: classTeacher,
         exam_name: r.examinations?.name || '',
         exam_type: r.examinations?.exam_type || '',
         start_date: r.examinations?.start_date || '',
         exam_date: r.examinations?.start_date || '',
-        session_name: r.examinations?.academic_sessions?.name || '',
+        session_name: sessionName,
         total_students: totalStudents,
         subjects: examSubjects,
         subject_marks: examSubjects,
-        card_meta: cardMeta ? { ...cardMeta, totalStudents } : totalStudents ? { totalStudents } : null,
+        card_meta: cardMeta
+          ? { ...cardMeta, totalStudents, teacher: cardMeta.teacher || classTeacher }
+          : { totalStudents, teacher: classTeacher },
       };
     });
 
