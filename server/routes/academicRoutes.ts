@@ -868,6 +868,144 @@ router.post('/results/publish/:examId', requireAuth, requireRole('super_admin', 
   return res.json({ success: true, published: flag });
 });
 
+router.post('/results/publish-bulk', requireAuth, requireRole('super_admin', 'teacher'), async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  const user = req.user!;
+  const { examIds, publish } = req.body as { examIds?: string[]; publish?: boolean };
+  const flag = publish === undefined ? true : Boolean(publish);
+
+  const uniqueIds = Array.from(
+    new Set((Array.isArray(examIds) ? examIds : []).map((id) => String(id || '').trim()).filter(Boolean))
+  );
+  if (uniqueIds.length === 0) {
+    return res.status(400).json({ error: 'Please select at least one examination to update.' });
+  }
+
+  if (user.role_slug === 'teacher' && !flag) {
+    return res.status(403).json({ error: 'Only Super Admin can unpublish results.' });
+  }
+
+  let allowedClassIds: string[] | null = null;
+  if (user.role_slug === 'teacher') {
+    const tid = await getTeacherIdForUser(user);
+    allowedClassIds = tid ? await getTeacherAssignedClassIds(tid) : [];
+  }
+
+  const { data: examsData, error: fetchErr } = await admin
+    .from('examinations')
+    .select('id, name, class_id, results_published, classes(name)')
+    .in('id', uniqueIds)
+    .is('deleted_at', null);
+
+  if (fetchErr) return res.status(400).json({ error: fetchErr.message });
+
+  const targetExams = (examsData || []).filter((ex: any) =>
+    allowedClassIds ? allowedClassIds.includes(ex.class_id) : true
+  );
+  if (targetExams.length === 0) {
+    return res.status(404).json({ error: 'No matching examinations found for your permissions.' });
+  }
+
+  const updatedExamIds: string[] = [];
+  const updatedLabels: string[] = [];
+  const skipped: Array<{ examId: string; examName: string; className: string; reason: string }> = [];
+  const now = flag ? new Date().toISOString() : null;
+
+  for (const exam of targetExams as any[]) {
+    const className = exam.classes?.name || 'Class';
+    if (flag) {
+      const [{ data: activeStudents }, { data: examResults }] = await Promise.all([
+        admin.from('students').select('id, full_name').eq('class_id', exam.class_id).is('deleted_at', null).eq('status', 'active'),
+        admin.from('results').select('id, student_id').eq('examination_id', exam.id),
+      ]);
+
+      const savedRows = examResults || [];
+      if (savedRows.length === 0) {
+        skipped.push({
+          examId: exam.id,
+          examName: exam.name,
+          className,
+          reason: 'No student results created yet',
+        });
+        continue;
+      }
+
+      const savedSet = new Set(savedRows.map((r: any) => String(r.student_id)));
+      const pendingStudents = (activeStudents || []).filter((s: any) => !savedSet.has(String(s.id)));
+      if (pendingStudents.length > 0) {
+        skipped.push({
+          examId: exam.id,
+          examName: exam.name,
+          className,
+          reason: `${pendingStudents.length} of ${activeStudents?.length || 0} student(s) pending`,
+        });
+        continue;
+      }
+
+      await recalculateExamPositions(admin, exam.id);
+    }
+
+    const [examRes, resRes] = await Promise.all([
+      admin.from('examinations').update({ results_published: flag, published_by: flag ? user.id : null, published_at: now }).eq('id', exam.id),
+      admin.from('results').update({ is_published: flag, approved_by: flag ? user.id : null, approved_at: now }).eq('examination_id', exam.id),
+    ]);
+
+    if (examRes.error || resRes.error) {
+      skipped.push({
+        examId: exam.id,
+        examName: exam.name,
+        className,
+        reason: examRes.error?.message || resRes.error?.message || 'Update failed',
+      });
+      continue;
+    }
+
+    updatedExamIds.push(exam.id);
+    updatedLabels.push(`${exam.name} (${className})`);
+  }
+
+  if (updatedExamIds.length === 0 && skipped.length > 0) {
+    const summary = skipped
+      .slice(0, 3)
+      .map((s) => `${s.className}: ${s.reason}`)
+      .join('; ');
+    return res.status(400).json({
+      error: `Could not ${flag ? 'publish' : 'unpublish'} selected exams — ${summary}${skipped.length > 3 ? ` (+${skipped.length - 3} more)` : ''}.`,
+      skipped,
+    });
+  }
+
+  if (flag && updatedExamIds.length > 0) {
+    const title =
+      updatedExamIds.length === 1
+        ? 'Examination Results Published'
+        : `${updatedExamIds.length} Class Examination Results Published`;
+    const body =
+      updatedExamIds.length === 1
+        ? `${updatedLabels[0]} results have been finalized and published with class ranks.`
+        : `Results have been finalized and published for: ${updatedLabels.slice(0, 4).join(', ')}${updatedLabels.length > 4 ? ` +${updatedLabels.length - 4} more` : ''}.`;
+    await notifyRoles(['student', 'parent', 'teacher'], 'result', title, body, 'results', updatedExamIds[0]);
+  }
+
+  await logActivity(
+    user,
+    flag ? 'RESULTS_PUBLISHED' : 'RESULTS_UNPUBLISHED',
+    'results',
+    updatedExamIds[0] || uniqueIds[0],
+    `${flag ? 'Published' : 'Unpublished'} ${updatedExamIds.length} exam(s): ${updatedLabels.slice(0, 5).join(', ')}`,
+    req.ip
+  );
+
+  return res.json({
+    success: true,
+    published: flag,
+    updatedCount: updatedExamIds.length,
+    updatedExamIds,
+    skipped,
+  });
+});
+
 function percentageToCardGrade(p: number): string {
   if (p >= 90) return 'A+';
   if (p >= 80) return 'A';

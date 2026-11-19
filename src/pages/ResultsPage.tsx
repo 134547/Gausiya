@@ -1,11 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BookOpen,
   CheckCircle2,
   Download,
   Edit3,
   Eye,
   EyeOff,
   FileText,
+  GraduationCap,
+  Layers,
   PlusCircle,
   Power,
   Printer,
@@ -39,8 +42,11 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
   const [resultsOpen, setResultsOpen] = useState<boolean>(settings?.results_open !== false);
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [tab, setTab] = useState<'results' | 'create' | 'marks'>('results');
+  const [classes, setClasses] = useState<Array<{ id: string; name: string }>>([]);
   const [exams, setExams] = useState<any[]>([]);
-  const [selectedExamId, setSelectedExamId] = useState('');
+  const [selectedClassId, setSelectedClassId] = useState<string>('all');
+  const [selectedExamKey, setSelectedExamKey] = useState<string>('all');
+  const [marksExamId, setMarksExamId] = useState<string>('');
   const [results, setResults] = useState<any[]>([]);
 
   // Marks sheet state
@@ -56,6 +62,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
   const [uploadingExamId, setUploadingExamId] = useState<string | null>(null);
+  const [bulkProcessing, setBulkProcessing] = useState<'publish' | 'unpublish' | null>(null);
   const [downloadingViewPng, setDownloadingViewPng] = useState(false);
   const [downloadingViewPdf, setDownloadingViewPdf] = useState(false);
   const viewCardRef = useRef<HTMLDivElement>(null);
@@ -77,10 +84,18 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
     }
   };
 
-  const loadResults = async (eid?: string) => {
+  const loadClasses = async () => {
     try {
-      const qs = eid ? `?examId=${eid}` : '';
-      const res = await apiRequest<{ results: any[] }>(`/api/results${qs}`);
+      const res = await apiRequest<{ classes: any[] }>('/api/classes');
+      setClasses((res.classes || []).map((c: any) => ({ id: String(c.id), name: String(c.name) })));
+    } catch {
+      // fall back to classes derived from examinations
+    }
+  };
+
+  const loadResults = async () => {
+    try {
+      const res = await apiRequest<{ results: any[] }>('/api/results');
       setResults(res.results || []);
     } catch (e: any) {
       setErr(e.message);
@@ -94,9 +109,10 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
   }, [settings?.results_open]);
 
   useEffect(() => {
+    loadClasses();
     loadExaminations().then((list) => {
       if (list[0]) {
-        setSelectedExamId(String(list[0].id));
+        setMarksExamId(String(list[0].id));
       }
     });
     apiRequest<{ resultsOpen: boolean }>('/api/results/portal-status')
@@ -156,12 +172,12 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
   };
 
   useEffect(() => {
-    if (tab === 'marks' && selectedExamId) loadMarksSheet(selectedExamId);
-    if (tab === 'results') loadResults(selectedExamId || undefined);
-  }, [tab, selectedExamId]);
+    if (tab === 'marks' && marksExamId) loadMarksSheet(marksExamId);
+    if (tab === 'results') loadResults();
+  }, [tab, marksExamId]);
 
   const handleSaveMarks = async () => {
-    if (!sheet) return;
+    if (!sheet || !marksExamId) return;
     setErr('');
     setMsg('');
     const entries: any[] = [];
@@ -178,11 +194,11 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
     try {
       await apiRequest('/api/results/marks', {
         method: 'POST',
-        body: JSON.stringify({ examId: selectedExamId, entries, teacherRemarks: remarksMap }),
+        body: JSON.stringify({ examId: marksExamId, entries, teacherRemarks: remarksMap }),
       });
       setMsg('Marks saved and totals, percentages, grades, and class ranks calculated automatically.');
       await loadExaminations();
-      loadResults(selectedExamId);
+      await loadResults();
     } catch (e: any) {
       setErr(e.message);
     }
@@ -203,11 +219,42 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
           : 'Results unpublished successfully. Hidden from students & parents.'
       );
       await loadExaminations();
-      await loadResults(selectedExamId || undefined);
+      await loadResults();
     } catch (e: any) {
       setErr(e.message);
     } finally {
       setUploadingExamId(null);
+    }
+  };
+
+  const handleBulkPublish = async (examIds: string[], publish: boolean) => {
+    if (!examIds.length || bulkProcessing) return;
+    setErr('');
+    setMsg('');
+    setBulkProcessing(publish ? 'publish' : 'unpublish');
+    try {
+      const res = await apiRequest<{
+        updatedCount: number;
+        skipped?: Array<{ className: string; reason: string }>;
+      }>('/api/results/publish-bulk', {
+        method: 'POST',
+        body: JSON.stringify({ examIds, publish }),
+      });
+      const skippedCount = res.skipped?.length || 0;
+      const baseText = publish
+        ? `Published results for ${res.updatedCount} class exam${res.updatedCount === 1 ? '' : 's'}. Class ranks finalized and now visible to students & parents.`
+        : `Unpublished results for ${res.updatedCount} class exam${res.updatedCount === 1 ? '' : 's'}. Now hidden from students & parents.`;
+      setMsg(
+        skippedCount > 0
+          ? `${baseText} (${skippedCount} skipped because student results are still pending.)`
+          : baseText
+      );
+      await loadExaminations();
+      await loadResults();
+    } catch (e: any) {
+      setErr(e.message || `Failed to ${publish ? 'publish' : 'unpublish'} selected examinations.`);
+    } finally {
+      setBulkProcessing(null);
     }
   };
 
@@ -216,9 +263,14 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
     setEditingResult(null);
     setPreselectStudentId('');
     setPreselectExamId('');
-    await loadExaminations();
-    setSelectedExamId(savedExamId || '');
-    await loadResults(savedExamId || undefined);
+    const updatedExams = await loadExaminations();
+    const savedExam = updatedExams.find((e: any) => String(e.id) === String(savedExamId));
+    if (savedExam) {
+      setSelectedClassId(String(savedExam.class_id));
+      setSelectedExamKey(String(savedExam.id));
+      setMarksExamId(String(savedExam.id));
+    }
+    await loadResults();
     setTab('results');
     setMsg(
       wasEditing
@@ -256,7 +308,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
       setMsg(`Result for ${deleteTarget.student_name} deleted and class ranks recalculated.`);
       setDeleteTarget(null);
       await loadExaminations();
-      await loadResults(selectedExamId || undefined);
+      await loadResults();
     } catch (e: any) {
       setErr(e.message || 'Failed to delete result.');
     } finally {
@@ -314,7 +366,115 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
     }
   };
 
-  const selectedExam = exams.find((e) => String(e.id) === selectedExamId);
+  // Combine classes from /api/classes + any class referenced in exams
+  const classOptions = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; examCount: number }>();
+    for (const c of classes) {
+      map.set(String(c.id), { id: String(c.id), name: c.name, examCount: 0 });
+    }
+    for (const ex of exams) {
+      const cid = String(ex.class_id || '');
+      if (!cid) continue;
+      const existing = map.get(cid);
+      if (existing) {
+        existing.examCount += 1;
+      } else {
+        map.set(cid, { id: cid, name: ex.class_name || 'Class', examCount: 1 });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [classes, exams]);
+
+  // Unique exam names across all classes (when "All Classes" is selected)
+  const uniqueExamNames = useMemo(() => {
+    const counts = new Map<string, { name: string; count: number; publishedCount: number }>();
+    for (const ex of exams) {
+      const cleanName = String(ex.name || '').trim();
+      if (!cleanName) continue;
+      const key = cleanName.toLowerCase();
+      const prev = counts.get(key);
+      if (prev) {
+        prev.count += 1;
+        if (ex.results_published) prev.publishedCount += 1;
+      } else {
+        counts.set(key, {
+          name: cleanName,
+          count: 1,
+          publishedCount: ex.results_published ? 1 : 0,
+        });
+      }
+    }
+    return Array.from(counts.values());
+  }, [exams]);
+
+  // Exams belonging to the selected class (when a specific class is selected)
+  const examsForSelectedClass = useMemo(() => {
+    if (selectedClassId === 'all') return exams;
+    return exams.filter((ex) => String(ex.class_id) === selectedClassId);
+  }, [exams, selectedClassId]);
+
+  // All examinations matching BOTH the Class and Exam selectors
+  const matchedExams = useMemo(() => {
+    if (selectedClassId === 'all') {
+      if (selectedExamKey === 'all') return exams;
+      const needle = selectedExamKey.trim().toLowerCase();
+      return exams.filter((ex) => String(ex.name || '').trim().toLowerCase() === needle);
+    }
+    if (selectedExamKey === 'all') return examsForSelectedClass;
+    return examsForSelectedClass.filter((ex) => String(ex.id) === selectedExamKey);
+  }, [exams, examsForSelectedClass, selectedClassId, selectedExamKey]);
+
+  const publishedMatchedExams = useMemo(
+    () => matchedExams.filter((ex) => Boolean(ex.results_published)),
+    [matchedExams]
+  );
+  const readyToPublishExams = useMemo(
+    () => matchedExams.filter((ex) => !ex.results_published && Boolean(ex.all_results_created)),
+    [matchedExams]
+  );
+  const pendingMatchedExams = useMemo(
+    () => matchedExams.filter((ex) => !ex.results_published && !ex.all_results_created),
+    [matchedExams]
+  );
+
+  const selectedExam = matchedExams.length === 1 ? matchedExams[0] : null;
+
+  // Keep Marks Entry tab exam synced when user narrows to a single exam
+  useEffect(() => {
+    if (selectedExam) {
+      setMarksExamId(String(selectedExam.id));
+    } else if (!marksExamId && matchedExams[0]) {
+      setMarksExamId(String(matchedExams[0].id));
+    }
+  }, [selectedExam, matchedExams, marksExamId]);
+
+  // Results filtered cleanly by selected Class + Exam
+  const visibleResults = useMemo(() => {
+    if (selectedClassId === 'all' && selectedExamKey === 'all') {
+      return results;
+    }
+    const allowedExamIds = new Set(matchedExams.map((ex) => String(ex.id)));
+    return results.filter((r) => {
+      if (allowedExamIds.size > 0) {
+        return allowedExamIds.has(String(r.examination_id));
+      }
+      if (selectedClassId !== 'all' && String(r.class_id) !== selectedClassId) {
+        return false;
+      }
+      return false;
+    });
+  }, [results, matchedExams, selectedClassId, selectedExamKey]);
+
+  const activeSelectionSubtitle = useMemo(() => {
+    const classLabel =
+      selectedClassId === 'all'
+        ? 'All Classes'
+        : classOptions.find((c) => c.id === selectedClassId)?.name || 'Selected Class';
+    if (selectedExamKey === 'all') return `${classLabel} — All Examinations`;
+    if (selectedClassId === 'all') return `${classLabel} — ${selectedExamKey}`;
+    const ex = exams.find((e) => String(e.id) === selectedExamKey);
+    return `${classLabel} — ${ex?.name || 'Examination'}`;
+  }, [selectedClassId, selectedExamKey, classOptions, exams]);
 
   const viewCardData = viewResult
     ? {
@@ -432,16 +592,56 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
             </div>
           )}
 
-          {tab !== 'create' && (
+          {!canEnterMarks && tab === 'results' && exams.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              {classOptions.length > 1 && (
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => {
+                    setSelectedClassId(e.target.value);
+                    setSelectedExamKey('all');
+                  }}
+                  className="px-3 py-2 text-xs rounded-lg border border-neutral-200 bg-white font-medium"
+                >
+                  <option value="all">All Classes</option>
+                  {classOptions.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <select
+                value={selectedExamKey}
+                onChange={(e) => setSelectedExamKey(e.target.value)}
+                className="px-3 py-2 text-xs rounded-lg border border-neutral-200 bg-white font-medium"
+              >
+                <option value="all">All Examinations</option>
+                {selectedClassId === 'all'
+                  ? uniqueExamNames.map((ex) => (
+                      <option key={ex.name} value={ex.name}>
+                        {ex.name}
+                      </option>
+                    ))
+                  : examsForSelectedClass.map((ex) => (
+                      <option key={ex.id} value={ex.id}>
+                        {ex.name}
+                      </option>
+                    ))}
+              </select>
+            </div>
+          )}
+
+          {canEnterMarks && tab === 'marks' && (
             <select
-              value={selectedExamId}
-              onChange={(e) => setSelectedExamId(e.target.value)}
-              className="px-3 py-2 text-xs rounded-lg border border-neutral-200 bg-white"
+              value={marksExamId}
+              onChange={(e) => setMarksExamId(e.target.value)}
+              className="px-3 py-2 text-xs rounded-lg border border-neutral-200 bg-white font-medium"
             >
-              <option value="">All Examinations</option>
+              {exams.length === 0 && <option value="">No Examinations</option>}
               {exams.map((ex) => (
                 <option key={ex.id} value={ex.id}>
-                  {ex.name} — {ex.class_name} ({ex.results_published ? 'Published' : `${ex.created_results_count ?? 0}/${ex.total_students ?? 0} Unpublished`})
+                  {ex.class_name} — {ex.name} ({ex.results_published ? 'Published' : 'Unpublished'})
                 </option>
               ))}
             </select>
@@ -458,102 +658,13 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
                 setPreselectExamId('');
                 setTab('create');
               }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#16a34a] hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#16a34a] hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer shadow-xs"
             >
               <PlusCircle className="w-4 h-4" />
               <span>Create Result</span>
             </button>
           )}
-          {canEnterMarks && selectedExam && tab !== 'create' && (
-            isAdmin ? (
-              <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-neutral-100 border border-neutral-200">
-                <button
-                  type="button"
-                  disabled={
-                    selectedExam.results_published ||
-                    !selectedExam.all_results_created ||
-                    uploadingExamId === String(selectedExam.id)
-                  }
-                  onClick={() => handlePublish(selectedExam.id, true)}
-                  title={
-                    selectedExam.results_published
-                      ? 'Results are already published'
-                      : selectedExam.all_results_created
-                        ? 'Publish results for students & parents'
-                        : `Create remaining ${selectedExam.pending_students?.length || 0} student results first`
-                  }
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-                    selectedExam.results_published
-                      ? 'bg-[#10B981] text-white shadow-xs cursor-default'
-                      : selectedExam.all_results_created
-                        ? 'text-[#10B981] hover:bg-emerald-50 cursor-pointer'
-                        : 'text-neutral-400 cursor-not-allowed'
-                  }`}
-                >
-                  <UploadCloud className="w-3.5 h-3.5" />
-                  <span>
-                    {uploadingExamId === String(selectedExam.id) && !selectedExam.results_published
-                      ? 'Publishing...'
-                      : selectedExam.results_published
-                        ? 'Published'
-                        : selectedExam.all_results_created
-                          ? 'Publish'
-                          : `Publish (${selectedExam.created_results_count ?? 0}/${selectedExam.total_students ?? 0})`}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!selectedExam.results_published || uploadingExamId === String(selectedExam.id)}
-                  onClick={() => handlePublish(selectedExam.id, false)}
-                  title={
-                    selectedExam.results_published
-                      ? 'Unpublish results and hide from students & parents'
-                      : 'Results are currently unpublished'
-                  }
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-                    !selectedExam.results_published
-                      ? 'bg-[#DC1726] text-white shadow-xs cursor-default'
-                      : 'text-[#DC1726] hover:bg-red-50 cursor-pointer'
-                  }`}
-                >
-                  <EyeOff className="w-3.5 h-3.5" />
-                  <span>
-                    {uploadingExamId === String(selectedExam.id) && selectedExam.results_published
-                      ? 'Unpublishing...'
-                      : !selectedExam.results_published
-                        ? 'Unpublished'
-                        : 'Unpublish'}
-                  </span>
-                </button>
-              </div>
-            ) : !selectedExam.results_published ? (
-              <button
-                type="button"
-                disabled={!selectedExam.all_results_created || uploadingExamId === String(selectedExam.id)}
-                onClick={() => handlePublish(selectedExam.id, true)}
-                title={
-                  selectedExam.all_results_created
-                    ? 'All students created — Publish Results now'
-                    : `Create remaining ${selectedExam.pending_students?.length || 0} student results first`
-                }
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-white transition-colors ${
-                  selectedExam.all_results_created
-                    ? 'bg-[#10B981] hover:bg-emerald-600 cursor-pointer shadow-xs'
-                    : 'bg-neutral-300 text-neutral-600 cursor-not-allowed'
-                }`}
-              >
-                <UploadCloud className="w-4 h-4" />
-                <span>
-                  {uploadingExamId === String(selectedExam.id)
-                    ? 'Publishing...'
-                    : selectedExam.all_results_created
-                      ? 'Publish Result'
-                      : `Publish Result (${selectedExam.created_results_count ?? 0}/${selectedExam.total_students ?? 0})`}
-                </span>
-              </button>
-            ) : null
-          )}
-          {results.length > 0 && tab === 'results' && (
+          {visibleResults.length > 0 && tab === 'results' && (
             <button
               type="button"
               onClick={() => setPrintClassSheet(true)}
@@ -565,147 +676,456 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
         </div>
       </div>
 
-      {canEnterMarks && tab === 'results' && selectedExam && (
-        <div
-          className={`rounded-xl border p-4 shadow-xs space-y-3 ${
-            selectedExam.results_published
-              ? 'bg-emerald-50/70 border-emerald-200'
-              : selectedExam.all_results_created
-                ? 'bg-emerald-50/50 border-emerald-200'
-                : 'bg-amber-50/70 border-amber-200'
-          }`}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* Result Publish & Class/Exam Selector Control Center */}
+      {canEnterMarks && tab === 'results' && (
+        <div className="bg-white rounded-2xl border border-neutral-200 shadow-xs overflow-hidden">
+          {/* Header Strip */}
+          <div className="px-5 py-3.5 bg-gradient-to-r from-[#064E3B] via-[#065F46] to-[#047857] text-white flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div
-                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
-                  selectedExam.results_published || selectedExam.all_results_created
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : 'bg-amber-100 text-amber-700'
-                }`}
-              >
-                {selectedExam.results_published ? (
-                  <CheckCircle2 className="w-5 h-5" />
-                ) : selectedExam.all_results_created ? (
-                  <UploadCloud className="w-5 h-5" />
-                ) : (
-                  <Users className="w-5 h-5" />
-                )}
+              <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+                <Layers className="w-5 h-5 text-emerald-100" />
               </div>
               <div>
-                <div className="text-xs font-bold text-[#171717] flex flex-wrap items-center gap-2">
-                  <span>
-                    {selectedExam.name} — {selectedExam.class_name}
-                  </span>
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                      selectedExam.results_published
-                        ? 'bg-emerald-600 text-white'
-                        : selectedExam.all_results_created
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-amber-100 text-amber-800'
-                    }`}
-                  >
-                    {selectedExam.results_published
-                      ? 'Published'
-                      : selectedExam.all_results_created
-                        ? 'Ready to Publish'
-                        : 'Unpublished (Pending All Students)'}
-                  </span>
-                </div>
-                <p className="text-[11px] text-[#525252] mt-0.5">
-                  {selectedExam.results_published
-                    ? `All ${selectedExam.created_results_count ?? selectedExam.total_saved_results ?? 0} students' results are published. Ranks are ordered by highest marks & percentage.`
-                    : selectedExam.all_results_created
-                      ? `All ${selectedExam.total_students || selectedExam.created_results_count} students' results are created! Click "Publish" to finalize ranks by highest marks and make them visible.`
-                      : `${selectedExam.created_results_count ?? 0} of ${selectedExam.total_students ?? 0} active students created. Complete the remaining ${selectedExam.pending_students?.length ?? 0} student(s) before publishing results.`}
+                <h3 className="text-sm font-extrabold tracking-tight">
+                  Result Publish Control
+                </h3>
+                <p className="text-[11px] text-emerald-100/90">
+                  Select All Classes or a specific Class &amp; Exam to Publish or Unpublish results
                 </p>
               </div>
             </div>
 
-            {selectedExam.results_published ? (
-              isAdmin && (
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
+              <span className="px-2.5 py-1 rounded-lg bg-white/15 text-white">
+                {matchedExams.length} {matchedExams.length === 1 ? 'Exam' : 'Class Exams'}
+              </span>
+              <span className="px-2.5 py-1 rounded-lg bg-emerald-400/25 text-emerald-100 border border-emerald-300/30">
+                {publishedMatchedExams.length} Published
+              </span>
+              {readyToPublishExams.length > 0 && (
+                <span className="px-2.5 py-1 rounded-lg bg-sky-400/25 text-sky-100 border border-sky-300/30">
+                  {readyToPublishExams.length} Ready
+                </span>
+              )}
+              {pendingMatchedExams.length > 0 && (
+                <span className="px-2.5 py-1 rounded-lg bg-amber-400/25 text-amber-100 border border-amber-300/30">
+                  {pendingMatchedExams.length} Pending
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Class Selector + Exam Selector + Publish / Unpublish Action Bar */}
+          <div className="p-4 sm:p-5 bg-neutral-50/70 border-b border-neutral-200 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+            {/* 1. Class Selector */}
+            <div className="md:col-span-4 space-y-1">
+              <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#525252]">
+                <GraduationCap className="w-3.5 h-3.5 text-[#065F46]" />
+                Select Class
+              </label>
+              <select
+                value={selectedClassId}
+                onChange={(e) => {
+                  setSelectedClassId(e.target.value);
+                  setSelectedExamKey('all');
+                }}
+                className="w-full px-3 py-2.5 text-xs font-semibold rounded-xl border border-neutral-300 bg-white text-[#171717] focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600"
+              >
+                <option value="all">
+                  All Classes ({classOptions.length})
+                </option>
+                {classOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.examCount} {c.examCount === 1 ? 'Exam' : 'Exams'})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 2. Exam Selector */}
+            <div className="md:col-span-4 space-y-1">
+              <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#525252]">
+                <BookOpen className="w-3.5 h-3.5 text-[#065F46]" />
+                Select Examination
+              </label>
+              <select
+                value={selectedExamKey}
+                onChange={(e) => setSelectedExamKey(e.target.value)}
+                className="w-full px-3 py-2.5 text-xs font-semibold rounded-xl border border-neutral-300 bg-white text-[#171717] focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600"
+              >
+                <option value="all">
+                  {selectedClassId === 'all'
+                    ? `All Examinations (${exams.length})`
+                    : `All Exams in Class (${examsForSelectedClass.length})`}
+                </option>
+                {selectedClassId === 'all'
+                  ? uniqueExamNames.map((ex) => (
+                      <option key={ex.name} value={ex.name}>
+                        {ex.name} — {ex.count} {ex.count === 1 ? 'Class' : 'Classes'} ({ex.publishedCount}/{ex.count} Published)
+                      </option>
+                    ))
+                  : examsForSelectedClass.map((ex) => (
+                      <option key={ex.id} value={ex.id}>
+                        {ex.name} — {ex.results_published ? 'Published' : ex.all_results_created ? 'Ready to Publish' : `${ex.created_results_count ?? 0}/${ex.total_students ?? 0} Pending`}
+                      </option>
+                    ))}
+              </select>
+            </div>
+
+            {/* 3. Direct Publish & Unpublish Action Buttons */}
+            <div className="md:col-span-4 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={
+                  readyToPublishExams.length === 0 ||
+                  bulkProcessing !== null ||
+                  uploadingExamId !== null
+                }
+                onClick={() => {
+                  if (readyToPublishExams.length === 1) {
+                    handlePublish(String(readyToPublishExams[0].id), true);
+                  } else {
+                    handleBulkPublish(
+                      readyToPublishExams.map((e) => String(e.id)),
+                      true
+                    );
+                  }
+                }}
+                title={
+                  readyToPublishExams.length > 0
+                    ? `Publish results for ${readyToPublishExams.length} ready class exam(s)`
+                    : publishedMatchedExams.length === matchedExams.length && matchedExams.length > 0
+                      ? 'All selected exams are already published'
+                      : 'Complete all students’ results in a class first to publish'
+                }
+                className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
+                  readyToPublishExams.length > 0
+                    ? 'bg-[#10B981] hover:bg-emerald-600 text-white shadow-xs cursor-pointer'
+                    : 'bg-neutral-200 text-neutral-500 cursor-not-allowed'
+                }`}
+              >
+                <UploadCloud className="w-4 h-4 shrink-0" />
+                <span>
+                  {bulkProcessing === 'publish'
+                    ? 'Publishing...'
+                    : matchedExams.length > 1
+                      ? `Publish Ready (${readyToPublishExams.length})`
+                      : publishedMatchedExams.length === 1
+                        ? 'Published'
+                        : 'Publish'}
+                </span>
+              </button>
+
+              {isAdmin && (
                 <button
                   type="button"
-                  disabled={uploadingExamId === String(selectedExam.id)}
-                  onClick={() => handlePublish(selectedExam.id, false)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold text-white bg-[#DC1726] hover:bg-red-700 cursor-pointer shadow-xs disabled:opacity-60"
-                >
-                  <EyeOff className="w-4 h-4" />
-                  <span>{uploadingExamId === String(selectedExam.id) ? 'Unpublishing...' : 'Unpublish'}</span>
-                </button>
-              )
-            ) : (
-              <div className="flex items-center gap-2">
-                {selectedExam.pending_students?.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => handleCreateForStudent(selectedExam.pending_students[0].id, String(selectedExam.id))}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#16a34a] text-white text-xs font-semibold hover:bg-emerald-700 cursor-pointer"
-                  >
-                    <PlusCircle className="w-3.5 h-3.5" />
-                    <span>Create Next ({selectedExam.pending_students[0].full_name})</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  disabled={!selectedExam.all_results_created || uploadingExamId === String(selectedExam.id)}
-                  onClick={() => handlePublish(selectedExam.id, true)}
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold text-white transition-colors ${
-                    selectedExam.all_results_created
-                      ? 'bg-[#10B981] hover:bg-emerald-600 cursor-pointer shadow-xs'
-                      : 'bg-neutral-300 text-neutral-600 cursor-not-allowed'
+                  disabled={
+                    publishedMatchedExams.length === 0 ||
+                    bulkProcessing !== null ||
+                    uploadingExamId !== null
+                  }
+                  onClick={() => {
+                    if (publishedMatchedExams.length === 1) {
+                      handlePublish(String(publishedMatchedExams[0].id), false);
+                    } else {
+                      handleBulkPublish(
+                        publishedMatchedExams.map((e) => String(e.id)),
+                        false
+                      );
+                    }
+                  }}
+                  title={
+                    publishedMatchedExams.length > 0
+                      ? `Unpublish results for ${publishedMatchedExams.length} published class exam(s)`
+                      : 'No published exams in current selection'
+                  }
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
+                    publishedMatchedExams.length > 0
+                      ? 'bg-[#DC1726] hover:bg-red-700 text-white shadow-xs cursor-pointer'
+                      : 'bg-neutral-200 text-neutral-500 cursor-not-allowed'
                   }`}
                 >
-                  <UploadCloud className="w-4 h-4" />
-                  <span>{uploadingExamId === String(selectedExam.id) ? 'Publishing...' : 'Publish'}</span>
+                  <EyeOff className="w-4 h-4 shrink-0" />
+                  <span>
+                    {bulkProcessing === 'unpublish'
+                      ? 'Unpublishing...'
+                      : matchedExams.length > 1
+                        ? `Unpublish (${publishedMatchedExams.length})`
+                        : 'Unpublish'}
+                  </span>
                 </button>
+              )}
+            </div>
+          </div>
+
+          {/* Interactive Class-Wise Status Area */}
+          <div className="p-4 sm:p-5">
+            {matchedExams.length === 0 ? (
+              <div className="text-center py-6 text-xs text-[#737373]">
+                No examinations found for this Class &amp; Exam selection.
+              </div>
+            ) : selectedExam ? (
+              /* Single Class + Exam Detailed Progress Panel */
+              <div
+                className={`rounded-xl border p-4 space-y-3 ${
+                  selectedExam.results_published
+                    ? 'bg-emerald-50/70 border-emerald-200'
+                    : selectedExam.all_results_created
+                      ? 'bg-emerald-50/40 border-emerald-200'
+                      : 'bg-amber-50/60 border-amber-200'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                        selectedExam.results_published || selectedExam.all_results_created
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}
+                    >
+                      {selectedExam.results_published ? (
+                        <CheckCircle2 className="w-5 h-5" />
+                      ) : selectedExam.all_results_created ? (
+                        <UploadCloud className="w-5 h-5" />
+                      ) : (
+                        <Users className="w-5 h-5" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-[#171717] flex flex-wrap items-center gap-2">
+                        <span>
+                          {selectedExam.class_name} — {selectedExam.name}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            selectedExam.results_published
+                              ? 'bg-emerald-600 text-white'
+                              : selectedExam.all_results_created
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {selectedExam.results_published
+                            ? 'Published'
+                            : selectedExam.all_results_created
+                              ? 'Ready to Publish'
+                              : 'Unpublished (Pending Students)'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#525252] mt-0.5">
+                        {selectedExam.results_published
+                          ? `All ${selectedExam.created_results_count ?? selectedExam.total_saved_results ?? 0} students' results are published. Ranks are ordered by highest marks & percentage.`
+                          : selectedExam.all_results_created
+                            ? `All ${selectedExam.total_students || selectedExam.created_results_count} students' results are ready! Click "Publish" to make them visible to students & parents.`
+                            : `${selectedExam.created_results_count ?? 0} of ${selectedExam.total_students ?? 0} active students created. Complete the remaining ${selectedExam.pending_students?.length ?? 0} student(s) before publishing.`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {!selectedExam.results_published && selectedExam.pending_students?.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleCreateForStudent(
+                          selectedExam.pending_students[0].id,
+                          String(selectedExam.id)
+                        )
+                      }
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#16a34a] text-white text-xs font-semibold hover:bg-emerald-700 cursor-pointer"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      <span>Create Next ({selectedExam.pending_students[0].full_name})</span>
+                    </button>
+                  )}
+                </div>
+
+                {(selectedExam.total_students ?? 0) > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="w-full h-2 rounded-full bg-white/80 overflow-hidden border border-black/5">
+                      <div
+                        className={`h-full transition-all duration-300 ${
+                          selectedExam.all_results_created ? 'bg-emerald-500' : 'bg-amber-500'
+                        }`}
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            Math.round(
+                              ((selectedExam.created_results_count || 0) /
+                                Math.max(1, selectedExam.total_students)) *
+                                100
+                            )
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    {selectedExam.pending_students?.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[11px] font-semibold text-amber-800">
+                          Remaining students:
+                        </span>
+                        {selectedExam.pending_students.slice(0, 8).map((st: any) => (
+                          <button
+                            key={st.id}
+                            type="button"
+                            onClick={() => handleCreateForStudent(st.id, String(selectedExam.id))}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-amber-300 text-[11px] font-medium text-amber-900 hover:bg-amber-100 cursor-pointer"
+                          >
+                            + {st.full_name}
+                          </button>
+                        ))}
+                        {selectedExam.pending_students.length > 8 && (
+                          <span className="text-[11px] text-amber-800 font-medium">
+                            +{selectedExam.pending_students.length - 8} more
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Multi-Class / All Classes Status Cards Grid */
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {matchedExams.map((ex) => {
+                  const total = Number(ex.total_students || 0);
+                  const created = Number(ex.created_results_count || 0);
+                  const pct = total > 0 ? Math.min(100, Math.round((created / total) * 100)) : created > 0 ? 100 : 0;
+                  const isBusy = uploadingExamId === String(ex.id) || bulkProcessing !== null;
+                  return (
+                    <div
+                      key={ex.id}
+                      className={`rounded-xl border p-3.5 transition-all flex flex-col justify-between gap-3 ${
+                        ex.results_published
+                          ? 'bg-emerald-50/50 border-emerald-200'
+                          : ex.all_results_created
+                            ? 'bg-white border-emerald-200/80 shadow-[0_1px_2px_rgba(16,185,129,0.08)]'
+                            : 'bg-white border-neutral-200'
+                      }`}
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedClassId(String(ex.class_id));
+                              setSelectedExamKey(String(ex.id));
+                            }}
+                            className="text-start min-w-0 group cursor-pointer"
+                            title="Filter to this class & exam"
+                          >
+                            <div className="text-xs font-extrabold text-[#171717] group-hover:text-[#065F46] truncate">
+                              {ex.class_name}
+                            </div>
+                            <div className="text-[11px] text-[#525252] truncate">{ex.name}</div>
+                          </button>
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase shrink-0 ${
+                              ex.results_published
+                                ? 'bg-emerald-600 text-white'
+                                : ex.all_results_created
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {ex.results_published
+                              ? 'Published'
+                              : ex.all_results_created
+                                ? 'Ready'
+                                : 'Pending'}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px] text-[#737373]">
+                            <span>Students Result</span>
+                            <span className="font-mono-num font-bold text-[#171717]">
+                              {created}/{total || created} ({pct}%)
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 rounded-full bg-neutral-200/80 overflow-hidden">
+                            <div
+                              className={`h-full transition-all ${
+                                ex.results_published || ex.all_results_created
+                                  ? 'bg-emerald-500'
+                                  : 'bg-amber-500'
+                              }`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-neutral-100">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedClassId(String(ex.class_id));
+                            setSelectedExamKey(String(ex.id));
+                          }}
+                          className="text-[11px] font-semibold text-[#525252] hover:text-[#171717] cursor-pointer"
+                        >
+                          View Class →
+                        </button>
+
+                        {ex.results_published ? (
+                          isAdmin ? (
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => handlePublish(String(ex.id), false)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-50 hover:bg-[#DC1726] text-[#DC1726] hover:text-white border border-red-200 text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              <EyeOff className="w-3 h-3" />
+                              <span>{uploadingExamId === String(ex.id) ? '...' : 'Unpublish'}</span>
+                            </button>
+                          ) : (
+                            <span className="text-[11px] font-semibold text-emerald-700 inline-flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Live
+                            </span>
+                          )
+                        ) : ex.all_results_created ? (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handlePublish(String(ex.id), true)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#10B981] hover:bg-emerald-600 text-white text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <UploadCloud className="w-3 h-3" />
+                            <span>{uploadingExamId === String(ex.id) ? '...' : 'Publish'}</span>
+                          </button>
+                        ) : ex.pending_students?.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleCreateForStudent(ex.pending_students[0].id, String(ex.id))
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-[11px] font-bold cursor-pointer"
+                          >
+                            <PlusCircle className="w-3 h-3" />
+                            <span>+{ex.pending_students.length} Left</span>
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-[#737373]">No students</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
-
-          {(selectedExam.total_students ?? 0) > 0 && (
-            <div className="space-y-1.5">
-              <div className="w-full h-2 rounded-full bg-white/80 overflow-hidden border border-black/5">
-                <div
-                  className={`h-full transition-all duration-300 ${
-                    selectedExam.all_results_created ? 'bg-emerald-500' : 'bg-amber-500'
-                  }`}
-                  style={{
-                    width: `${Math.min(
-                      100,
-                      Math.round(((selectedExam.created_results_count || 0) / Math.max(1, selectedExam.total_students)) * 100)
-                    )}%`,
-                  }}
-                />
-              </div>
-              {selectedExam.pending_students?.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                  <span className="text-[11px] font-semibold text-amber-800">Remaining students:</span>
-                  {selectedExam.pending_students.slice(0, 8).map((st: any) => (
-                    <button
-                      key={st.id}
-                      type="button"
-                      onClick={() => handleCreateForStudent(st.id, String(selectedExam.id))}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-amber-300 text-[11px] font-medium text-amber-900 hover:bg-amber-100 cursor-pointer"
-                    >
-                      + {st.full_name}
-                    </button>
-                  ))}
-                  {selectedExam.pending_students.length > 8 && (
-                    <span className="text-[11px] text-amber-800 font-medium">
-                      +{selectedExam.pending_students.length - 8} more
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       )}
 
       {tab === 'results' && (canEnterMarks || user.role_slug === 'committee_member') && (
         <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
+          <div className="px-4 py-2.5 bg-neutral-50 border-b border-neutral-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span className="font-bold text-[#171717]">{activeSelectionSubtitle}</span>
+            <span className="text-[#737373] font-mono-num">
+              {visibleResults.length} {visibleResults.length === 1 ? 'result' : 'results'}
+            </span>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
@@ -721,14 +1141,14 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {results.length === 0 ? (
+                {visibleResults.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="p-8 text-center text-[#737373]">
                       No saved results available for this selection.
                     </td>
                   </tr>
                 ) : (
-                  results.map((r) => (
+                  visibleResults.map((r) => (
                     <tr key={r.id} className="hover:bg-neutral-50">
                       <td className="px-4 py-3 font-mono-num font-bold">
                         <span
@@ -821,13 +1241,13 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
 
       {tab === 'results' &&
         (user.role_slug === 'student' || user.role_slug === 'parent') &&
-        (results.length === 0 ? (
+        (visibleResults.length === 0 ? (
           <div className="bg-white rounded-xl border border-neutral-200 p-8 text-center text-xs text-[#737373]">
             No published examination results available yet.
           </div>
         ) : (
           <div className="space-y-5">
-            {results.map((r) => {
+            {visibleResults.map((r) => {
               const inlineCardData = {
                 ...buildCardDataFromSavedResult(r, settings),
                 totalStudents:
@@ -1070,7 +1490,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
       )}
 
       {/* Printable Class Result Sheet */}
-      <PrintModal open={printClassSheet} title="Official Class Result Sheet" subtitle={selectedExam?.name || 'All Examinations'} settings={settings} onClose={() => setPrintClassSheet(false)}>
+      <PrintModal open={printClassSheet} title="Official Class Result Sheet" subtitle={activeSelectionSubtitle} settings={settings} onClose={() => setPrintClassSheet(false)}>
         <table className="w-full text-xs border-collapse border border-neutral-300">
           <thead>
             <tr className="bg-neutral-100">
@@ -1084,7 +1504,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
             </tr>
           </thead>
           <tbody>
-            {results.map((r) => (
+            {visibleResults.map((r) => (
               <tr key={r.id}>
                 <td className="border border-neutral-300 px-3 py-2 font-mono-num font-bold">#{r.position}</td>
                 <td className="border border-neutral-300 px-3 py-2 font-mono-num">{r.student_code}</td>

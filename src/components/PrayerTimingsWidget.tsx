@@ -27,6 +27,7 @@ import {
   PRESET_AREAS,
   calculateHanafiPrayerSchedule,
   formatLiveClockForZone,
+  getUpcomingNamazCountdown,
   resolveSafeTimeZone,
 } from '../lib/hanafiPrayerTimes.ts';
 import { User } from '../types.ts';
@@ -389,15 +390,12 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
   // Real-time live clock for the active location's exact timezone
   const liveLocationTime = formatLiveClockForZone(now, schedule.timeZone, true);
 
-  // Current (abhi wala) Namaz name & Namaz (Jamaat) time — NOT Azan, NOT Next
-  const isJumuahNow =
-    schedule.isFriday &&
-    schedule.activePrayer.key === 'zuhr' &&
-    Boolean(prayerSettings.jumuah_namaz_time);
-  const currentNamazLabel = isJumuahNow ? "Jumu'ah" : schedule.activePrayer.shortName;
-  const currentNamazTime = isJumuahNow
-    ? prayerSettings.jumuah_namaz_time
-    : schedule.activePrayer.namazFormatted;
+  // Next upcoming Namaz (by Namaz/Jamaat time) + live 1-second remaining countdown ("kitna baki hai")
+  const upcomingNamaz = getUpcomingNamazCountdown(
+    schedule,
+    now,
+    prayerSettings.jumuah_namaz_time
+  );
 
   const showRamzanTab = isSuperAdmin || Boolean(prayerSettings.ramzan_timetable_visible);
 
@@ -557,7 +555,7 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
             setMsg('');
             void fetchPrayerSettings();
           }}
-          title={`Namaz's Time (${location.areaName}) — Current Namaz: ${currentNamazLabel} ${currentNamazTime} | Live Time: ${liveLocationTime}`}
+          title={`Namaz's Time (${location.areaName}) — Next Namaz: ${upcomingNamaz.name} ${upcomingNamaz.namazFormatted} (${upcomingNamaz.remainingLabel} left) | Live Time: ${liveLocationTime}`}
           className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 py-1.5 hover:bg-emerald-100/80 transition-colors cursor-pointer"
         >
           <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-700 shrink-0" />
@@ -566,16 +564,12 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
               Namaz&apos;s Time
             </span>
             <span className="text-emerald-300">|</span>
-            <span className="font-bold text-emerald-900">{currentNamazLabel}</span>
+            <span className="font-bold text-emerald-900">{upcomingNamaz.name}</span>
             <span className="font-mono-num font-extrabold text-emerald-700">
-              {currentNamazTime}
+              {upcomingNamaz.namazFormatted}
             </span>
-            <span className="hidden md:inline text-emerald-300">•</span>
-            <span
-              className="hidden md:inline font-mono-num font-semibold text-emerald-800/90 text-[11px]"
-              title={`Real-time clock (${location.areaName})`}
-            >
-              {liveLocationTime}
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-600/15 font-mono-num font-bold text-emerald-900 text-[10px] sm:text-[11px]">
+              {upcomingNamaz.remainingLabel} left
             </span>
           </div>
         </button>
@@ -716,9 +710,14 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
                     )}
 
                     <div className="px-2.5 py-1.5 rounded-lg bg-black/25 text-[11px] font-semibold">
-                      {schedule.activePrayer.isCurrentWaqt ? 'Current Namaz:' : 'Namaz:'}{' '}
-                      <span className="text-emerald-200">{currentNamazLabel}</span>{' '}
-                      <span className="font-mono-num font-bold text-white">{currentNamazTime}</span>
+                      Next Namaz:{' '}
+                      <span className="text-emerald-200">{upcomingNamaz.name}</span>{' '}
+                      <span className="font-mono-num font-bold text-white">
+                        {upcomingNamaz.namazFormatted}
+                      </span>{' '}
+                      <span className="font-mono-num text-amber-200">
+                        ({upcomingNamaz.remainingLabel} left)
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -850,14 +849,14 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
                           <tbody className="divide-y divide-neutral-100">
                             {schedule.prayers.map((p) => {
                               const isCurrent = schedule.currentPrayerKey === p.key;
-                              const isNext = schedule.nextPrayer.key === p.key;
+                              const isNext = upcomingNamaz.key === p.key;
                               return (
                                 <tr
                                   key={p.key}
                                   className={
-                                    isCurrent
-                                      ? 'bg-emerald-50/70'
-                                      : isNext
+                                    isNext
+                                      ? 'bg-emerald-50/80'
+                                      : isCurrent
                                         ? 'bg-sky-50/40'
                                         : 'hover:bg-neutral-50'
                                   }
@@ -880,13 +879,13 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
                                     {p.namazFormatted}
                                   </td>
                                   <td className="px-4 py-3 text-end">
-                                    {isCurrent ? (
-                                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold">
-                                        Current Waqt
+                                    {isNext ? (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold font-mono-num">
+                                        Next · {upcomingNamaz.remainingLabel} left
                                       </span>
-                                    ) : isNext ? (
+                                    ) : isCurrent ? (
                                       <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-sky-100 text-sky-800 text-[10px] font-bold">
-                                        Next ({schedule.nextPrayer.countdownLabel})
+                                        Current Waqt
                                       </span>
                                     ) : (
                                       <span className="text-[11px] text-[#737373]">Hanafi</span>

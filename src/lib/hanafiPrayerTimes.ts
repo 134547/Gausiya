@@ -500,3 +500,92 @@ export function calculateHanafiPrayerSchedule(
     },
   };
 }
+
+export interface UpcomingNamazCountdown {
+  key: PrayerRow['key'];
+  name: string;
+  namazFormatted: string;
+  remainingSeconds: number;
+  remainingLabel: string;
+}
+
+export function parseTimeStringToMinutes(raw?: string): number | null {
+  const txt = String(raw || '').trim();
+  const match = txt.match(/^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
+  if (!match) return null;
+  let hrs = Number(match[1]);
+  const mins = Number(match[2]);
+  const period = (match[3] || '').toUpperCase();
+  if (!Number.isFinite(hrs) || !Number.isFinite(mins) || mins < 0 || mins > 59) return null;
+  if (period === 'PM' && hrs < 12) hrs += 12;
+  if (period === 'AM' && hrs === 12) hrs = 0;
+  if (hrs < 0 || hrs > 23) return null;
+  return hrs * 60 + mins;
+}
+
+export function formatRemainingSeconds(totalSeconds: number): string {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const hrs = Math.floor(safe / 3600);
+  const mins = Math.floor((safe % 3600) / 60);
+  const secs = safe % 60;
+  if (hrs > 0) {
+    return `${hrs}h ${String(mins).padStart(2, '0')}m ${String(secs).padStart(2, '0')}s`;
+  }
+  if (mins > 0) {
+    return `${mins}m ${String(secs).padStart(2, '0')}s`;
+  }
+  return `${secs}s`;
+}
+
+export function getUpcomingNamazCountdown(
+  schedule: HanafiDaySchedule,
+  now: Date,
+  jumuahNamazTime?: string
+): UpcomingNamazCountdown {
+  const zoned = getZonedClockParts(now, schedule.timeZone);
+  const nowSec = zoned.hour * 3600 + zoned.minute * 60 + zoned.second;
+
+  const jumuahMins =
+    schedule.isFriday && jumuahNamazTime ? parseTimeStringToMinutes(jumuahNamazTime) : null;
+
+  const targets = schedule.prayers.map((p) => {
+    if (p.key === 'zuhr' && jumuahMins !== null && jumuahNamazTime) {
+      return {
+        key: p.key,
+        name: "Jumu'ah",
+        namazFormatted: jumuahNamazTime.trim(),
+        targetSeconds: jumuahMins * 60,
+      };
+    }
+    return {
+      key: p.key,
+      name: p.shortName,
+      namazFormatted: p.namazFormatted,
+      targetSeconds: p.namazMinutes * 60,
+    };
+  });
+
+  const upcoming = targets.find((t) => t.targetSeconds > nowSec);
+  if (upcoming) {
+    const remainingSeconds = upcoming.targetSeconds - nowSec;
+    return {
+      key: upcoming.key,
+      name: upcoming.name,
+      namazFormatted: upcoming.namazFormatted,
+      remainingSeconds,
+      remainingLabel: formatRemainingSeconds(remainingSeconds),
+    };
+  }
+
+  // After today's Isha Namaz -> next upcoming is tomorrow's Fajr Namaz
+  const fajr = targets[0];
+  const remainingSeconds = 86400 - nowSec + fajr.targetSeconds;
+  return {
+    key: fajr.key,
+    name: fajr.name,
+    namazFormatted: fajr.namazFormatted,
+    remainingSeconds,
+    remainingLabel: formatRemainingSeconds(remainingSeconds),
+  };
+}
+
