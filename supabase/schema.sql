@@ -720,6 +720,34 @@ CREATE TABLE IF NOT EXISTS public.madrasa_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS public.prayer_settings (
+  id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  jumuah_azan_time TEXT NOT NULL DEFAULT '12:45 PM',
+  jumuah_namaz_time TEXT NOT NULL DEFAULT '01:30 PM',
+  jumuah_note TEXT NOT NULL DEFAULT 'Khutbah starts 15 minutes before Jamaat',
+  eid_ul_fitr_time TEXT NOT NULL DEFAULT '07:30 AM',
+  eid_ul_fitr_note TEXT NOT NULL DEFAULT 'Madrasa Eidgah / Masjid',
+  eid_ul_adha_time TEXT NOT NULL DEFAULT '07:00 AM',
+  eid_ul_adha_note TEXT NOT NULL DEFAULT 'Madrasa Eidgah / Masjid',
+  fajr_jamaat_offset INTEGER NOT NULL DEFAULT 20,
+  zuhr_jamaat_offset INTEGER NOT NULL DEFAULT 15,
+  asr_jamaat_offset INTEGER NOT NULL DEFAULT 15,
+  maghrib_jamaat_offset INTEGER NOT NULL DEFAULT 5,
+  isha_jamaat_offset INTEGER NOT NULL DEFAULT 15,
+  ramzan_timetable_title TEXT NOT NULL DEFAULT 'Ramzan Mubarak Timetable',
+  ramzan_timetable_url TEXT NOT NULL DEFAULT '',
+  ramzan_timetable_type TEXT NOT NULL DEFAULT '',
+  ramzan_timetable_name TEXT NOT NULL DEFAULT '',
+  ramzan_timetable_visible BOOLEAN NOT NULL DEFAULT FALSE,
+  default_location_name TEXT NOT NULL DEFAULT 'Islamnagar, Ramgarh, Palamu, Jharkhand',
+  default_latitude DOUBLE PRECISION NOT NULL DEFAULT 23.8800,
+  default_longitude DOUBLE PRECISION NOT NULL DEFAULT 84.0800,
+  updated_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO public.prayer_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
 -- Attach updated_at triggers
 DO $$
 DECLARE
@@ -730,7 +758,7 @@ BEGIN
     'class_subjects', 'parents', 'students', 'admissions', 'attendance',
     'teacher_attendance', 'examinations', 'examination_subjects', 'marks',
     'results', 'conversations', 'homework', 'online_classes', 'notices',
-    'committee_members', 'programs', 'feed_posts', 'madrasa_settings'
+    'committee_members', 'programs', 'feed_posts', 'madrasa_settings', 'prayer_settings'
   ] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS trg_%I_updated_at ON public.%I;', t, t);
     EXECUTE format('CREATE TRIGGER trg_%I_updated_at BEFORE UPDATE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();', t, t);

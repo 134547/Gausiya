@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Bell, Check, CheckCheck, Copy, LogOut, Menu } from 'lucide-react';
 import { NavModuleId, NotificationItem, User } from '../types.ts';
 import { Language, translations } from '../i18n/translations.ts';
+import { PrayerTimingsWidget } from './PrayerTimingsWidget.tsx';
 
 interface TopBarProps {
   user: User;
@@ -94,8 +95,10 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         </div>
 
-        {/* Right: Notifications, Profile, Logout */}
+        {/* Right: Hanafi Namaz Timings, Notifications, Profile, Logout */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* Hanafi Fiqh Azan, Namaz, Jumu'ah, Eid & Ramzan Widget */}
+          <PrayerTimingsWidget user={user} />
 
           {/* Notification Bell */}
           <div className="relative" ref={dropRef}>

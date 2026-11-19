@@ -198,13 +198,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     } catch (err: any) {
       const payload = err?.data || {};
       if (err?.status === 429 || payload.code === 'TOO_MANY_ATTEMPTS' || payload.code === 'RATE_LIMITED') {
-        const lockEnd = Number(payload.lockedUntil) || Date.now() + (Number(payload.retryAfterSeconds) || 900) * 1000;
+        const lockEnd = Number(payload.lockedUntil) || Date.now() + (Number(payload.retryAfterSeconds) || 10) * 1000;
         setNowTick(Date.now());
         setLockedUntil(lockEnd);
         setCaptcha(null);
         setCaptchaAnswer('');
         setErrorCode('TOO_MANY_ATTEMPTS');
-        setError('Too many attempts. Please try again later.');
+        setError(payload.error || 'Too many failed attempts. Please wait 10 seconds and try again.');
       } else {
         setErrorCode(payload.code || err?.code || '');
         if (payload.captchaRequired) {

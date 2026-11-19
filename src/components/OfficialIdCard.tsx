@@ -60,7 +60,6 @@ export const OfficialIdCard: React.FC<OfficialIdCardProps> = ({ type, person, se
   const institutionAddress =
     settings?.address || 'Islamnagar, Ramgarh, Palamu, Jharkhand - 822110';
   const institutionPhone = settings?.phone?.trim() || '';
-  const institutionWebsite = settings?.website?.trim() || 'gausiya.zite.so';
 
   const rows: Array<{ label: string; value: string; mono?: boolean }> = isStudent
     ? [
@@ -122,9 +121,11 @@ export const OfficialIdCard: React.FC<OfficialIdCardProps> = ({ type, person, se
           <div className="text-[8.5px] leading-tight text-blue-100 line-clamp-2">
             {institutionAddress}
           </div>
-          <div className="text-[9.5px] font-bold tracking-wide text-white font-mono-num">
-            {institutionPhone ? `Phone No.: ${institutionPhone}` : `Web: ${institutionWebsite}`}
-          </div>
+          {institutionPhone && (
+            <div className="text-[9.5px] font-bold tracking-wide text-white font-mono-num">
+              Phone No.: {institutionPhone}
+            </div>
+          )}
         </div>
 
         {/* Curved Double Wave Bottom (Exact match to reference ID card) */}

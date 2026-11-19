@@ -137,6 +137,234 @@ router.put('/settings', requireAuth, requireRole('super_admin'), async (req: Aut
   }
 });
 
+// ==================== HANAFI PRAYER TIMINGS, JUMU'AH, EID & RAMZAN TIMETABLE ====================
+const DEFAULT_PRAYER_SETTINGS = {
+  id: 1,
+  jumuah_azan_time: '12:45 PM',
+  jumuah_namaz_time: '01:30 PM',
+  jumuah_note: 'Khutbah starts 15 minutes before Jamaat',
+  eid_ul_fitr_time: '07:30 AM',
+  eid_ul_fitr_note: 'Madrasa Eidgah / Masjid',
+  eid_ul_adha_time: '07:00 AM',
+  eid_ul_adha_note: 'Madrasa Eidgah / Masjid',
+  fajr_jamaat_offset: 20,
+  zuhr_jamaat_offset: 15,
+  asr_jamaat_offset: 15,
+  maghrib_jamaat_offset: 5,
+  isha_jamaat_offset: 15,
+  ramzan_timetable_title: 'Ramzan Mubarak Timetable',
+  ramzan_timetable_url: '',
+  ramzan_timetable_type: '',
+  ramzan_timetable_name: '',
+  ramzan_timetable_visible: false,
+  default_location_name: 'Islamnagar, Ramgarh, Palamu, Jharkhand',
+  default_latitude: 23.88,
+  default_longitude: 84.08,
+};
+
+function isMissingPrayerTableError(error: any): boolean {
+  const code = String(error?.code || '');
+  const msg = String(error?.message || '').toLowerCase();
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    msg.includes('prayer_settings') && (msg.includes('does not exist') || msg.includes('schema cache'))
+  );
+}
+
+router.get('/prayer-timings', requireAuth, async (req: AuthRequest, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+
+  const isSuperAdmin = req.user!.role_slug === 'super_admin';
+  const { data, error } = await admin
+    .from('prayer_settings')
+    .select('*')
+    .eq('id', 1)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingPrayerTableError(error)) {
+      return res.json({
+        settings: { ...DEFAULT_PRAYER_SETTINGS },
+        tableReady: false,
+      });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+
+  const merged = {
+    ...DEFAULT_PRAYER_SETTINGS,
+    ...(data || {}),
+  };
+
+  const canViewRamzan = isSuperAdmin || Boolean(merged.ramzan_timetable_visible);
+  const resolvedRamzanUrl =
+    canViewRamzan && merged.ramzan_timetable_url
+      ? await resolveStorageUrl(merged.ramzan_timetable_url)
+      : '';
+
+  return res.json({
+    settings: {
+      ...merged,
+      ramzan_timetable_url: canViewRamzan ? resolvedRamzanUrl : '',
+      ramzan_timetable_name: canViewRamzan ? merged.ramzan_timetable_name : '',
+      ramzan_timetable_type: canViewRamzan ? merged.ramzan_timetable_type : '',
+      ramzan_timetable_visible: Boolean(merged.ramzan_timetable_visible),
+    },
+    tableReady: true,
+  });
+});
+
+router.put('/prayer-timings', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const b = req.body || {};
+
+    const clampOffset = (val: unknown, fallback: number) => {
+      const n = Number(val);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.max(0, Math.min(120, Math.round(n)));
+    };
+
+    const payload: Record<string, any> = {
+      id: 1,
+      updated_by: req.user!.id,
+    };
+
+    if (b.jumuah_azan_time !== undefined) payload.jumuah_azan_time = String(b.jumuah_azan_time || '').trim();
+    if (b.jumuah_namaz_time !== undefined) payload.jumuah_namaz_time = String(b.jumuah_namaz_time || '').trim();
+    if (b.jumuah_note !== undefined) payload.jumuah_note = String(b.jumuah_note || '').trim();
+    if (b.eid_ul_fitr_time !== undefined) payload.eid_ul_fitr_time = String(b.eid_ul_fitr_time || '').trim();
+    if (b.eid_ul_fitr_note !== undefined) payload.eid_ul_fitr_note = String(b.eid_ul_fitr_note || '').trim();
+    if (b.eid_ul_adha_time !== undefined) payload.eid_ul_adha_time = String(b.eid_ul_adha_time || '').trim();
+    if (b.eid_ul_adha_note !== undefined) payload.eid_ul_adha_note = String(b.eid_ul_adha_note || '').trim();
+
+    if (b.fajr_jamaat_offset !== undefined) payload.fajr_jamaat_offset = clampOffset(b.fajr_jamaat_offset, 20);
+    if (b.zuhr_jamaat_offset !== undefined) payload.zuhr_jamaat_offset = clampOffset(b.zuhr_jamaat_offset, 15);
+    if (b.asr_jamaat_offset !== undefined) payload.asr_jamaat_offset = clampOffset(b.asr_jamaat_offset, 15);
+    if (b.maghrib_jamaat_offset !== undefined) payload.maghrib_jamaat_offset = clampOffset(b.maghrib_jamaat_offset, 5);
+    if (b.isha_jamaat_offset !== undefined) payload.isha_jamaat_offset = clampOffset(b.isha_jamaat_offset, 15);
+
+    if (b.ramzan_timetable_title !== undefined) {
+      payload.ramzan_timetable_title = String(b.ramzan_timetable_title || '').trim() || 'Ramzan Mubarak Timetable';
+    }
+    if (b.ramzan_timetable_url !== undefined) {
+      const rawUrl = String(b.ramzan_timetable_url || '').trim();
+      payload.ramzan_timetable_url = rawUrl ? normalizeStorageRef(rawUrl) : '';
+    }
+    if (b.ramzan_timetable_type !== undefined) {
+      payload.ramzan_timetable_type = String(b.ramzan_timetable_type || '').trim();
+    }
+    if (b.ramzan_timetable_name !== undefined) {
+      payload.ramzan_timetable_name = String(b.ramzan_timetable_name || '').trim();
+    }
+    if (b.ramzan_timetable_visible !== undefined) {
+      payload.ramzan_timetable_visible = Boolean(b.ramzan_timetable_visible);
+    }
+    if (b.default_location_name !== undefined) {
+      payload.default_location_name = String(b.default_location_name || '').trim() || DEFAULT_PRAYER_SETTINGS.default_location_name;
+    }
+    if (b.default_latitude !== undefined && Number.isFinite(Number(b.default_latitude))) {
+      payload.default_latitude = Number(b.default_latitude);
+    }
+    if (b.default_longitude !== undefined && Number.isFinite(Number(b.default_longitude))) {
+      payload.default_longitude = Number(b.default_longitude);
+    }
+
+    const { data: saved, error } = await admin
+      .from('prayer_settings')
+      .upsert(payload, { onConflict: 'id' })
+      .select('*')
+      .single();
+
+    if (error) {
+      if (isMissingPrayerTableError(error)) {
+        return res.status(400).json({
+          error: 'Database table "prayer_settings" is not created yet. Please run the prayer_settings SQL in Supabase SQL Editor first.',
+        });
+      }
+      return res.status(400).json({ error: error.message });
+    }
+
+    const resolvedUrl = saved?.ramzan_timetable_url ? await resolveStorageUrl(saved.ramzan_timetable_url) : '';
+    await logActivity(
+      req.user!,
+      'PRAYER_SETTINGS_UPDATED',
+      'super_admin',
+      '1',
+      `Updated Hanafi Namaz / Jumu'ah / Eid / Ramzan Timetable settings (Ramzan visible: ${saved?.ramzan_timetable_visible ? 'ON' : 'OFF'})`,
+      req.ip
+    );
+
+    return res.json({
+      settings: {
+        ...DEFAULT_PRAYER_SETTINGS,
+        ...(saved || {}),
+        ramzan_timetable_url: resolvedUrl,
+        ramzan_timetable_visible: Boolean(saved?.ramzan_timetable_visible),
+      },
+      tableReady: true,
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to update prayer timings' });
+  }
+});
+
+router.get('/prayer-timings/reverse-geocode', requireAuth, async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return res.status(400).json({ error: 'Valid latitude and longitude are required.' });
+  }
+
+  const fallbackLabel = `Live GPS (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    const resp = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lng))}&zoom=12&accept-language=en`,
+      {
+        headers: {
+          'User-Agent': 'MadrasaGausiyaRazviaPortal/1.0',
+          Accept: 'application/json',
+        },
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(timer);
+    if (!resp.ok) {
+      return res.json({ areaName: fallbackLabel });
+    }
+    const geo: any = await resp.json().catch(() => null);
+    const addr = geo?.address || {};
+    const locality =
+      addr.village ||
+      addr.town ||
+      addr.suburb ||
+      addr.city_district ||
+      addr.city ||
+      addr.municipality ||
+      '';
+    const district = addr.state_district || addr.county || '';
+    const state = addr.state || '';
+    const country = addr.country || '';
+
+    const parts: string[] = [];
+    for (const p of [locality, district, state, country]) {
+      const clean = String(p || '').trim();
+      if (clean && !parts.some((x) => x.toLowerCase() === clean.toLowerCase())) {
+        parts.push(clean);
+      }
+    }
+    const areaName = parts.slice(0, 3).join(', ') || geo?.display_name?.split(',').slice(0, 3).join(', ') || fallbackLabel;
+    return res.json({ areaName });
+  } catch {
+    return res.json({ areaName: fallbackLabel });
+  }
+});
+
 router.post('/sessions', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {
   try {
     const admin = requireSupabaseAdmin(res);

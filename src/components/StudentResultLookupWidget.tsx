@@ -123,12 +123,12 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
         ) {
           const lockEnd =
             Number(data?.lockedUntil) ||
-            Date.now() + (Number(data?.retryAfterSeconds) || 900) * 1000;
+            Date.now() + (Number(data?.retryAfterSeconds) || 10) * 1000;
           setNowTick(Date.now());
           setLockedUntil(lockEnd);
           setCaptcha(null);
           setCaptchaAnswer('');
-          setError('Too many attempts. Please try again later.');
+          setError(data?.error || 'Too many failed attempts. Please wait 10 seconds and try again.');
           return;
         }
         if (data?.captchaRequired) {

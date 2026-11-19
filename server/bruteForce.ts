@@ -5,9 +5,9 @@ import { logActivity } from './auth.ts';
 
 export const MAX_FAILED_ATTEMPTS = 5;
 export const CAPTCHA_TRIGGER_ATTEMPTS = 3;
-export const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+export const LOCKOUT_DURATION_MS = 10 * 1000; // 10 seconds
 export const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
-export const TOO_MANY_ATTEMPTS_MESSAGE = 'Too many attempts. Please try again later.';
+export const TOO_MANY_ATTEMPTS_MESSAGE = 'Too many failed attempts. Please wait 10 seconds and try again.';
 
 const AUTH_SECURITY_ENTITY_ID = '00000000-0000-0000-0000-000000000010';
 const AUTH_SECURITY_FILE_TYPE = 'auth_security';
@@ -471,7 +471,7 @@ export async function recordFailedLoginAttempt(
     'auth',
     bucketTitle.slice(0, 16),
     acctLocked || ipLocked
-      ? `Locked ${scope} for 15 minutes after ${acctAttempts} failed attempts`
+      ? `Locked ${scope} for 10 seconds after ${acctAttempts} failed attempts`
       : `Failed ${scope} attempt ${acctAttempts}/${MAX_FAILED_ATTEMPTS}`,
     ip
   );
