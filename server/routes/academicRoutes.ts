@@ -843,13 +843,13 @@ router.post('/results/publish/:examId', requireAuth, requireRole('super_admin', 
     if (pendingStudents.length > 0) {
       const sampleNames = pendingStudents.slice(0, 3).map((s: any) => s.full_name).join(', ');
       return res.status(400).json({
-        error: `Cannot upload results yet: ${pendingStudents.length} of ${activeStudents?.length || 0} students still need results created (${sampleNames}${pendingStudents.length > 3 ? '...' : ''}).`,
+        error: `Cannot publish results yet: ${pendingStudents.length} of ${activeStudents?.length || 0} students still need results created (${sampleNames}${pendingStudents.length > 3 ? '...' : ''}).`,
         pendingCount: pendingStudents.length,
         totalStudents: activeStudents?.length || 0,
       });
     }
 
-    // Finalize all ranks (by highest obtained marks) and percentages across the entire class before uploading
+    // Finalize all ranks (by highest obtained marks) and percentages across the entire class before publishing
     await recalculateExamPositions(admin, eid);
   }
 
@@ -862,9 +862,9 @@ router.post('/results/publish/:examId', requireAuth, requireRole('super_admin', 
   if (resRes.error) return res.status(400).json({ error: resRes.error.message });
 
   if (flag) {
-    await notifyRoles(['student', 'parent', 'teacher'], 'result', 'Examination Results Uploaded', `${exam.name} results have been finalized and uploaded with class ranks.`, 'results', eid);
+    await notifyRoles(['student', 'parent', 'teacher'], 'result', 'Examination Results Published', `${exam.name} results have been finalized and published with class ranks.`, 'results', eid);
   }
-  await logActivity(user, flag ? 'RESULTS_PUBLISHED' : 'RESULTS_UNPUBLISHED', 'results', eid, `${flag ? 'Uploaded & published' : 'Unpublished'} results for exam ${eid}`, req.ip);
+  await logActivity(user, flag ? 'RESULTS_PUBLISHED' : 'RESULTS_UNPUBLISHED', 'results', eid, `${flag ? 'Published' : 'Unpublished'} results for exam ${eid}`, req.ip);
   return res.json({ success: true, published: flag });
 });
 

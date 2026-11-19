@@ -26,6 +26,8 @@ import { apiRequest, uploadFile } from '../lib/api.ts';
 import {
   PRESET_AREAS,
   calculateHanafiPrayerSchedule,
+  formatLiveClockForZone,
+  resolveSafeTimeZone,
 } from '../lib/hanafiPrayerTimes.ts';
 import { User } from '../types.ts';
 
@@ -61,6 +63,7 @@ interface StoredLocationState {
   latitude: number;
   longitude: number;
   areaName: string;
+  timeZone: string;
 }
 
 const DEFAULT_SETTINGS: PrayerSettingsData = {
@@ -98,11 +101,14 @@ function readStoredLocation(): StoredLocationState {
         Number.isFinite(Number(parsed.latitude)) &&
         Number.isFinite(Number(parsed.longitude))
       ) {
+        const lat = Number(parsed.latitude);
+        const lng = Number(parsed.longitude);
         return {
           gpsEnabled: Boolean(parsed.gpsEnabled),
-          latitude: Number(parsed.latitude),
-          longitude: Number(parsed.longitude),
+          latitude: lat,
+          longitude: lng,
           areaName: String(parsed.areaName || DEFAULT_SETTINGS.default_location_name),
+          timeZone: resolveSafeTimeZone(parsed.timeZone, lat, lng),
         };
       }
     }
@@ -114,6 +120,7 @@ function readStoredLocation(): StoredLocationState {
     latitude: DEFAULT_SETTINGS.default_latitude,
     longitude: DEFAULT_SETTINGS.default_longitude,
     areaName: DEFAULT_SETTINGS.default_location_name,
+    timeZone: 'Asia/Kolkata',
   };
 }
 
@@ -173,11 +180,14 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
       // If user hasn't picked a custom/GPS location yet, use Madrasa's default coordinates
       try {
         if (!localStorage.getItem(LOC_STORAGE_KEY)) {
+          const defLat = Number(merged.default_latitude) || DEFAULT_SETTINGS.default_latitude;
+          const defLng = Number(merged.default_longitude) || DEFAULT_SETTINGS.default_longitude;
           setLocation({
             gpsEnabled: false,
-            latitude: Number(merged.default_latitude) || DEFAULT_SETTINGS.default_latitude,
-            longitude: Number(merged.default_longitude) || DEFAULT_SETTINGS.default_longitude,
+            latitude: defLat,
+            longitude: defLng,
             areaName: merged.default_location_name || DEFAULT_SETTINGS.default_location_name,
+            timeZone: resolveSafeTimeZone('', defLat, defLng),
           });
         }
       } catch {
@@ -194,21 +204,11 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
     fetchPrayerSettings();
   }, [fetchPrayerSettings]);
 
-  // Minute clock tick (lightweight, only updates when minute changes — no API polling)
+  // Real-time 1-second live clock (isolated inside widget, zero API polling)
   useEffect(() => {
     const id = window.setInterval(() => {
-      setNow((prev) => {
-        const next = new Date();
-        if (
-          prev.getMinutes() === next.getMinutes() &&
-          prev.getHours() === next.getHours() &&
-          prev.getDate() === next.getDate()
-        ) {
-          return prev;
-        }
-        return next;
-      });
-    }, 20000);
+      setNow(new Date());
+    }, 1000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -220,13 +220,16 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
         Math.abs(prevCoords.lat - lat) > 0.015 ||
         Math.abs(prevCoords.lng - lng) > 0.015;
 
-      // Immediately update coordinates so Hanafi times recalculate instantaneously
+      const immediateTz = resolveSafeTimeZone('', lat, lng);
+
+      // Immediately update coordinates so Hanafi times & real-time clock recalculate instantaneously
       setLocation((prev) => {
         const next: StoredLocationState = {
           gpsEnabled,
           latitude: lat,
           longitude: lng,
           areaName: movedEnough ? `Detecting area (${lat.toFixed(2)}°, ${lng.toFixed(2)}°)...` : prev.areaName,
+          timeZone: movedEnough ? immediateTz : prev.timeZone || immediateTz,
         };
         saveStoredLocation(next);
         return next;
@@ -236,19 +239,34 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
       lastGeoCoordsRef.current = { lat, lng };
 
       try {
-        const res = await apiRequest<{ areaName?: string }>(
+        const res = await apiRequest<{ areaName?: string; timeZone?: string }>(
           `/api/prayer-timings/reverse-geocode?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`
         );
         const areaName = res.areaName || `Live GPS (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)`;
+        const resolvedTz = resolveSafeTimeZone(res.timeZone, lat, lng);
         setLocation((prev) => {
-          const next: StoredLocationState = { ...prev, gpsEnabled, latitude: lat, longitude: lng, areaName };
+          const next: StoredLocationState = {
+            ...prev,
+            gpsEnabled,
+            latitude: lat,
+            longitude: lng,
+            areaName,
+            timeZone: resolvedTz,
+          };
           saveStoredLocation(next);
           return next;
         });
       } catch {
         const fallback = `Live GPS (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)`;
         setLocation((prev) => {
-          const next: StoredLocationState = { ...prev, gpsEnabled, latitude: lat, longitude: lng, areaName: fallback };
+          const next: StoredLocationState = {
+            ...prev,
+            gpsEnabled,
+            latitude: lat,
+            longitude: lng,
+            areaName: fallback,
+            timeZone: immediateTz,
+          };
           saveStoredLocation(next);
           return next;
         });
@@ -337,19 +355,29 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
+  // Recompute astronomical schedule once per minute (while live clock updates every second)
+  const minuteBucket = Math.floor(now.getTime() / 60000);
+
   const schedule = useMemo(
     () =>
-      calculateHanafiPrayerSchedule(location.latitude, location.longitude, now, {
-        fajr: prayerSettings.fajr_jamaat_offset,
-        zuhr: prayerSettings.zuhr_jamaat_offset,
-        asr: prayerSettings.asr_jamaat_offset,
-        maghrib: prayerSettings.maghrib_jamaat_offset,
-        isha: prayerSettings.isha_jamaat_offset,
-      }),
+      calculateHanafiPrayerSchedule(
+        location.latitude,
+        location.longitude,
+        new Date(minuteBucket * 60000),
+        {
+          fajr: prayerSettings.fajr_jamaat_offset,
+          zuhr: prayerSettings.zuhr_jamaat_offset,
+          asr: prayerSettings.asr_jamaat_offset,
+          maghrib: prayerSettings.maghrib_jamaat_offset,
+          isha: prayerSettings.isha_jamaat_offset,
+        },
+        location.timeZone
+      ),
     [
       location.latitude,
       location.longitude,
-      now,
+      location.timeZone,
+      minuteBucket,
       prayerSettings.fajr_jamaat_offset,
       prayerSettings.zuhr_jamaat_offset,
       prayerSettings.asr_jamaat_offset,
@@ -357,6 +385,19 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
       prayerSettings.isha_jamaat_offset,
     ]
   );
+
+  // Real-time live clock for the active location's exact timezone
+  const liveLocationTime = formatLiveClockForZone(now, schedule.timeZone, true);
+
+  // Current (abhi wala) Namaz name & Namaz (Jamaat) time — NOT Azan, NOT Next
+  const isJumuahNow =
+    schedule.isFriday &&
+    schedule.activePrayer.key === 'zuhr' &&
+    Boolean(prayerSettings.jumuah_namaz_time);
+  const currentNamazLabel = isJumuahNow ? "Jumu'ah" : schedule.activePrayer.shortName;
+  const currentNamazTime = isJumuahNow
+    ? prayerSettings.jumuah_namaz_time
+    : schedule.activePrayer.namazFormatted;
 
   const showRamzanTab = isSuperAdmin || Boolean(prayerSettings.ramzan_timetable_visible);
 
@@ -374,11 +415,14 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
     if (location.gpsEnabled) {
       stopWatchingGps();
       setLocNotice('');
+      const defLat = Number(prayerSettings.default_latitude) || DEFAULT_SETTINGS.default_latitude;
+      const defLng = Number(prayerSettings.default_longitude) || DEFAULT_SETTINGS.default_longitude;
       const fallback: StoredLocationState = {
         gpsEnabled: false,
-        latitude: Number(prayerSettings.default_latitude) || DEFAULT_SETTINGS.default_latitude,
-        longitude: Number(prayerSettings.default_longitude) || DEFAULT_SETTINGS.default_longitude,
+        latitude: defLat,
+        longitude: defLng,
         areaName: prayerSettings.default_location_name || DEFAULT_SETTINGS.default_location_name,
+        timeZone: resolveSafeTimeZone('', defLat, defLng),
       };
       setLocation(fallback);
       saveStoredLocation(fallback);
@@ -398,6 +442,7 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
       latitude: found.latitude,
       longitude: found.longitude,
       areaName: found.name,
+      timeZone: found.timeZone || resolveSafeTimeZone('', found.latitude, found.longitude),
     };
     setLocation(next);
     saveStoredLocation(next);
@@ -502,36 +547,66 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
 
   return (
     <>
-      {/* TopBar Button right beside Notification Bell */}
-      <button
-        type="button"
-        onClick={() => {
-          setOpen(true);
-          setErr('');
-          setMsg('');
-          void fetchPrayerSettings();
-        }}
-        title={`Hanafi Namaz Timings (${location.areaName}) — Next: ${schedule.nextPrayer.name} ${schedule.nextPrayer.azanFormatted}`}
-        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50/80 hover:bg-emerald-100/80 text-emerald-900 transition-colors shrink-0"
-      >
-        <div className="relative flex items-center justify-center">
-          <Moon className="w-4 h-4 text-emerald-700" />
-          {location.gpsEnabled && (
+      {/* TopBar "Namaz's Time" Widget right beside Notification Bell */}
+      <div className="inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-50/90 text-emerald-950 overflow-hidden shrink-0 shadow-[0_1px_2px_rgba(6,95,70,0.06)]">
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(true);
+            setErr('');
+            setMsg('');
+            void fetchPrayerSettings();
+          }}
+          title={`Namaz's Time (${location.areaName}) — Current Namaz: ${currentNamazLabel} ${currentNamazTime} | Live Time: ${liveLocationTime}`}
+          className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 py-1.5 hover:bg-emerald-100/80 transition-colors cursor-pointer"
+        >
+          <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-700 shrink-0" />
+          <div className="flex items-center gap-1.5 text-[11px] sm:text-xs leading-none whitespace-nowrap">
+            <span className="font-extrabold text-emerald-950 tracking-tight">
+              Namaz&apos;s Time
+            </span>
+            <span className="text-emerald-300">|</span>
+            <span className="font-bold text-emerald-900">{currentNamazLabel}</span>
+            <span className="font-mono-num font-extrabold text-emerald-700">
+              {currentNamazTime}
+            </span>
+            <span className="hidden md:inline text-emerald-300">•</span>
             <span
-              className="absolute -top-0.5 -end-0.5 w-2 h-2 rounded-full bg-emerald-500 ring-1 ring-white"
-              title="Live GPS Location Active"
-            />
+              className="hidden md:inline font-mono-num font-semibold text-emerald-800/90 text-[11px]"
+              title={`Real-time clock (${location.areaName})`}
+            >
+              {liveLocationTime}
+            </span>
+          </div>
+        </button>
+
+        {/* Direct Location ON / OFF toggle right on TopBar */}
+        <button
+          type="button"
+          onClick={handleToggleGps}
+          disabled={locating}
+          aria-pressed={location.gpsEnabled}
+          title={
+            location.gpsEnabled
+              ? `Live Location ON (${location.areaName}) — Click to turn OFF`
+              : 'Turn Location ON for automatic real-time area Namaz timings'
+          }
+          className={`inline-flex items-center gap-1 px-2 py-1.5 border-s border-emerald-200 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-60 ${
+            location.gpsEnabled
+              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+              : 'bg-white/80 text-neutral-600 hover:bg-emerald-100 hover:text-emerald-900'
+          }`}
+        >
+          {locating ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+          ) : (
+            <LocateFixed className="w-3.5 h-3.5 shrink-0" />
           )}
-        </div>
-        <div className="flex items-center gap-1.5 text-xs leading-none">
-          <span className="hidden md:inline font-bold text-emerald-900">
-            {schedule.nextPrayer.name.replace(' (Hanafi)', '')}
+          <span className="hidden sm:inline">
+            {locating ? '...' : location.gpsEnabled ? 'ON' : 'OFF'}
           </span>
-          <span className="font-mono-num font-bold text-emerald-700">
-            {schedule.nextPrayer.azanFormatted}
-          </span>
-        </div>
-      </button>
+        </button>
+      </div>
 
       {/* Modal Portal */}
       {open &&
@@ -553,11 +628,11 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
                         <Moon className="w-3 h-3" /> Hanafi Fiqh · Karachi
                       </span>
                       <span className="urdu-text text-sm font-bold text-emerald-100" dir="rtl">
-                        اوقاتِ اذان و نماز (فقہ حنفی)
+                        اوقاتِ نماز (فقہ حنفی)
                       </span>
                     </div>
                     <h2 className="text-base sm:text-lg font-extrabold tracking-tight">
-                      Azan, Namaz, Jumu&apos;ah &amp; Eid Timings
+                      Namaz&apos;s Time — Jumu&apos;ah, Eid &amp; Live Timetable
                     </h2>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-emerald-100">
                       <span className="inline-flex items-center gap-1">
@@ -572,24 +647,34 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setOpen(false)}
-                    className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white shrink-0"
-                    aria-label="Close prayer timings"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="hidden sm:flex flex-col items-end px-3 py-1.5 rounded-xl bg-black/25 border border-white/10">
+                      <span className="text-[9px] uppercase tracking-wider text-emerald-200 font-semibold">
+                        Live Local Time
+                      </span>
+                      <span className="font-mono-num text-sm font-extrabold text-white">
+                        {liveLocationTime}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setOpen(false)}
+                      className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white shrink-0"
+                      aria-label="Close Namaz's Time"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
                 </div>
 
-                {/* Next Azan Live Banner + GPS Location Bar */}
+                {/* Current Namaz Live Banner + GPS Location Bar */}
                 <div className="mt-3.5 pt-3 border-t border-white/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
                   <div className="flex items-center gap-2 min-w-0">
                     <MapPin className="w-4 h-4 text-emerald-200 shrink-0" />
                     <div className="min-w-0">
                       <div className="font-semibold text-white truncate">{location.areaName}</div>
                       <div className="text-[10px] text-emerald-200 font-mono-num">
-                        {location.gpsEnabled ? 'Live GPS Auto-Sync ON' : 'Area Timetable'} ·{' '}
+                        {location.gpsEnabled ? 'Live GPS ON' : 'Manual Area'} · {liveLocationTime} ·{' '}
                         {location.latitude.toFixed(2)}°N, {location.longitude.toFixed(2)}°E
                       </div>
                     </div>
@@ -600,7 +685,7 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
                       type="button"
                       onClick={handleToggleGps}
                       disabled={locating}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
                         location.gpsEnabled
                           ? 'bg-emerald-400 text-[#064E3B] hover:bg-emerald-300'
                           : 'bg-white/15 text-white hover:bg-white/25'
@@ -615,7 +700,7 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
                         ? 'Detecting...'
                         : location.gpsEnabled
                           ? 'Location: ON'
-                          : 'Turn Location ON'}
+                          : 'Location: OFF'}
                     </button>
 
                     {location.gpsEnabled && (
@@ -624,16 +709,16 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
                         onClick={() => detectLiveLocation(true)}
                         disabled={locating}
                         title="Refresh Live GPS Area"
-                        className="p-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white"
+                        className="p-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-white cursor-pointer"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${locating ? 'animate-spin' : ''}`} />
                       </button>
                     )}
 
                     <div className="px-2.5 py-1.5 rounded-lg bg-black/25 text-[11px] font-semibold">
-                      Next: <span className="text-emerald-200">{schedule.nextPrayer.name.replace(' (Hanafi)', '')}</span>{' '}
-                      <span className="font-mono-num">{schedule.nextPrayer.azanFormatted}</span>{' '}
-                      <span className="text-emerald-200">({schedule.nextPrayer.countdownLabel})</span>
+                      {schedule.activePrayer.isCurrentWaqt ? 'Current Namaz:' : 'Namaz:'}{' '}
+                      <span className="text-emerald-200">{currentNamazLabel}</span>{' '}
+                      <span className="font-mono-num font-bold text-white">{currentNamazTime}</span>
                     </div>
                   </div>
                 </div>

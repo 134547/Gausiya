@@ -1,6 +1,7 @@
 import React from 'react';
 import { MadrasaSettings } from '../types.ts';
 import { MadrasaLogo } from './MadrasaLogo.tsx';
+import principalSignatureImg from '../assets/images/principal_signature_pro_1795082378400.jpg';
 
 export interface IdCardPerson {
   id: string;
@@ -220,16 +221,13 @@ export const OfficialIdCard: React.FC<OfficialIdCardProps> = ({ type, person, se
         </div>
 
         <div className="text-center shrink-0">
-          <div className="h-[18px] flex items-end justify-center">
-            <svg viewBox="0 0 80 20" className="w-[64px] h-[16px]" aria-hidden="true">
-              <path
-                d="M6,15 C14,4 22,18 30,10 C36,5 40,14 48,11 C55,8 62,13 74,7"
-                fill="none"
-                stroke="#1E3A8A"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-              />
-            </svg>
+          <div className="h-[34px] flex items-end justify-center -mb-1">
+            <img
+              src={principalSignatureImg}
+              alt="Principal Signature"
+              referrerPolicy="no-referrer"
+              className="h-[34px] w-auto max-w-[106px] object-contain contrast-110 mix-blend-multiply pointer-events-none select-none"
+            />
           </div>
           <div className="border-t border-neutral-400 pt-0.5 text-[9.5px] font-bold text-[#111827]">
             Principal Sign.

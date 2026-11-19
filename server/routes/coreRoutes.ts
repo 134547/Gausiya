@@ -320,49 +320,77 @@ router.get('/prayer-timings/reverse-geocode', requireAuth, async (req, res) => {
   }
 
   const fallbackLabel = `Live GPS (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)`;
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4500);
-    const resp = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lng))}&zoom=12&accept-language=en`,
-      {
-        headers: {
-          'User-Agent': 'MadrasaGausiyaRazviaPortal/1.0',
-          Accept: 'application/json',
-        },
-        signal: controller.signal,
-      }
-    );
-    clearTimeout(timer);
-    if (!resp.ok) {
-      return res.json({ areaName: fallbackLabel });
-    }
-    const geo: any = await resp.json().catch(() => null);
-    const addr = geo?.address || {};
-    const locality =
-      addr.village ||
-      addr.town ||
-      addr.suburb ||
-      addr.city_district ||
-      addr.city ||
-      addr.municipality ||
-      '';
-    const district = addr.state_district || addr.county || '';
-    const state = addr.state || '';
-    const country = addr.country || '';
+  const indiaBounds = lat >= 6 && lat <= 38 && lng >= 68 && lng <= 98;
+  const fallbackTz = indiaBounds ? 'Asia/Kolkata' : '';
 
-    const parts: string[] = [];
-    for (const p of [locality, district, state, country]) {
-      const clean = String(p || '').trim();
-      if (clean && !parts.some((x) => x.toLowerCase() === clean.toLowerCase())) {
-        parts.push(clean);
+  const fetchNominatim = async (): Promise<string> => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4500);
+      const resp = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lng))}&zoom=12&accept-language=en`,
+        {
+          headers: {
+            'User-Agent': 'MadrasaGausiyaRazviaPortal/1.0',
+            Accept: 'application/json',
+          },
+          signal: controller.signal,
+        }
+      );
+      clearTimeout(timer);
+      if (!resp.ok) return fallbackLabel;
+      const geo: any = await resp.json().catch(() => null);
+      const addr = geo?.address || {};
+      const locality =
+        addr.village ||
+        addr.town ||
+        addr.suburb ||
+        addr.city_district ||
+        addr.city ||
+        addr.municipality ||
+        '';
+      const district = addr.state_district || addr.county || '';
+      const state = addr.state || '';
+      const country = addr.country || '';
+
+      const parts: string[] = [];
+      for (const p of [locality, district, state, country]) {
+        const clean = String(p || '').trim();
+        if (clean && !parts.some((x) => x.toLowerCase() === clean.toLowerCase())) {
+          parts.push(clean);
+        }
       }
+      return parts.slice(0, 3).join(', ') || geo?.display_name?.split(',').slice(0, 3).join(', ') || fallbackLabel;
+    } catch {
+      return fallbackLabel;
     }
-    const areaName = parts.slice(0, 3).join(', ') || geo?.display_name?.split(',').slice(0, 3).join(', ') || fallbackLabel;
-    return res.json({ areaName });
-  } catch {
-    return res.json({ areaName: fallbackLabel });
-  }
+  };
+
+  const fetchTimeZone = async (): Promise<string> => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3500);
+      const resp = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(String(lat))}&longitude=${encodeURIComponent(String(lng))}&current=is_day&timezone=auto`,
+        {
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        }
+      );
+      clearTimeout(timer);
+      if (!resp.ok) return fallbackTz;
+      const data: any = await resp.json().catch(() => null);
+      if (typeof data?.timezone === 'string' && data.timezone.includes('/')) {
+        return data.timezone;
+      }
+      return fallbackTz;
+    } catch {
+      return fallbackTz;
+    }
+  };
+
+  const [areaName, timeZone] = await Promise.all([fetchNominatim(), fetchTimeZone()]);
+  return res.json({ areaName, timeZone });
 });
 
 router.post('/sessions', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {

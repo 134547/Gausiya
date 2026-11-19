@@ -2637,7 +2637,7 @@ router.get('/reports', requireAuth, requireRole('super_admin', 'committee_member
           'Start Date': e.start_date,
           'End Date': e.end_date,
           'Status': e.status,
-          'Results': e.results_published ? 'Published' : 'Draft',
+          'Results': e.results_published ? 'Published' : 'Unpublished',
         })),
       });
     }

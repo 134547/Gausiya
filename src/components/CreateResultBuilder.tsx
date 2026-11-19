@@ -1114,11 +1114,11 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
             <div className="p-2.5 rounded-xl border border-white/10 bg-white/[0.04] text-[11px] leading-relaxed text-slate-300">
               {currentExamObj?.results_published ? (
                 <span className="text-emerald-300">
-                  <strong>Uploaded Exam:</strong> Saving updates this student and recalculates all class ranks &amp; percentages automatically.
+                  <strong>Published Exam:</strong> Saving updates this student and recalculates all class ranks &amp; percentages automatically.
                 </span>
               ) : (
                 <span>
-                  <strong className="text-amber-300">Draft Mode:</strong> Results stay in Draft until all students&apos; results are created. Once all students are ready, click <strong>Upload Result</strong> on the Results tab.
+                  <strong className="text-amber-300">Unpublished:</strong> Results stay unpublished until all students&apos; results are created. Once all students are ready, click <strong>Publish</strong> on the Results tab.
                 </span>
               )}
             </div>

@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
-  Clock,
   Download,
   Edit3,
   Eye,
+  EyeOff,
   FileText,
   PlusCircle,
   Power,
@@ -199,8 +199,8 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
       });
       setMsg(
         publish
-          ? 'All students’ results verified, ranks finalized by highest marks, and results uploaded to students & parents.'
-          : 'Results moved back to Draft.'
+          ? 'Results published successfully. Class ranks finalized and now visible to students & parents.'
+          : 'Results unpublished successfully. Hidden from students & parents.'
       );
       await loadExaminations();
       await loadResults(selectedExamId || undefined);
@@ -223,7 +223,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
     setMsg(
       wasEditing
         ? 'Result updated and class ranks & percentages recalculated.'
-        : 'Result card saved to Draft. Class ranks & percentages updated automatically.'
+        : 'Result card saved (Unpublished). Class ranks & percentages updated automatically.'
     );
   };
 
@@ -441,7 +441,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
               <option value="">All Examinations</option>
               {exams.map((ex) => (
                 <option key={ex.id} value={ex.id}>
-                  {ex.name} — {ex.class_name} ({ex.results_published ? 'Uploaded' : `${ex.created_results_count ?? 0}/${ex.total_students ?? 0} Draft`})
+                  {ex.name} — {ex.class_name} ({ex.results_published ? 'Published' : `${ex.created_results_count ?? 0}/${ex.total_students ?? 0} Unpublished`})
                 </option>
               ))}
             </select>
@@ -465,26 +465,75 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
             </button>
           )}
           {canEnterMarks && selectedExam && tab !== 'create' && (
-            selectedExam.results_published ? (
-              isAdmin && (
+            isAdmin ? (
+              <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-neutral-100 border border-neutral-200">
                 <button
                   type="button"
-                  disabled={uploadingExamId === String(selectedExam.id)}
-                  onClick={() => handlePublish(selectedExam.id, false)}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-[#171717] hover:bg-neutral-800 cursor-pointer disabled:opacity-60"
+                  disabled={
+                    selectedExam.results_published ||
+                    !selectedExam.all_results_created ||
+                    uploadingExamId === String(selectedExam.id)
+                  }
+                  onClick={() => handlePublish(selectedExam.id, true)}
+                  title={
+                    selectedExam.results_published
+                      ? 'Results are already published'
+                      : selectedExam.all_results_created
+                        ? 'Publish results for students & parents'
+                        : `Create remaining ${selectedExam.pending_students?.length || 0} student results first`
+                  }
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                    selectedExam.results_published
+                      ? 'bg-[#10B981] text-white shadow-xs cursor-default'
+                      : selectedExam.all_results_created
+                        ? 'text-[#10B981] hover:bg-emerald-50 cursor-pointer'
+                        : 'text-neutral-400 cursor-not-allowed'
+                  }`}
                 >
-                  <Clock className="w-4 h-4" />
-                  <span>{uploadingExamId === String(selectedExam.id) ? 'Updating...' : 'Move to Draft (Unpublish)'}</span>
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>
+                    {uploadingExamId === String(selectedExam.id) && !selectedExam.results_published
+                      ? 'Publishing...'
+                      : selectedExam.results_published
+                        ? 'Published'
+                        : selectedExam.all_results_created
+                          ? 'Publish'
+                          : `Publish (${selectedExam.created_results_count ?? 0}/${selectedExam.total_students ?? 0})`}
+                  </span>
                 </button>
-              )
-            ) : (
+                <button
+                  type="button"
+                  disabled={!selectedExam.results_published || uploadingExamId === String(selectedExam.id)}
+                  onClick={() => handlePublish(selectedExam.id, false)}
+                  title={
+                    selectedExam.results_published
+                      ? 'Unpublish results and hide from students & parents'
+                      : 'Results are currently unpublished'
+                  }
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                    !selectedExam.results_published
+                      ? 'bg-[#DC1726] text-white shadow-xs cursor-default'
+                      : 'text-[#DC1726] hover:bg-red-50 cursor-pointer'
+                  }`}
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>
+                    {uploadingExamId === String(selectedExam.id) && selectedExam.results_published
+                      ? 'Unpublishing...'
+                      : !selectedExam.results_published
+                        ? 'Unpublished'
+                        : 'Unpublish'}
+                  </span>
+                </button>
+              </div>
+            ) : !selectedExam.results_published ? (
               <button
                 type="button"
                 disabled={!selectedExam.all_results_created || uploadingExamId === String(selectedExam.id)}
                 onClick={() => handlePublish(selectedExam.id, true)}
                 title={
                   selectedExam.all_results_created
-                    ? 'All students created — Upload & Publish Results now'
+                    ? 'All students created — Publish Results now'
                     : `Create remaining ${selectedExam.pending_students?.length || 0} student results first`
                 }
                 className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-white transition-colors ${
@@ -496,13 +545,13 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
                 <UploadCloud className="w-4 h-4" />
                 <span>
                   {uploadingExamId === String(selectedExam.id)
-                    ? 'Uploading Results...'
+                    ? 'Publishing...'
                     : selectedExam.all_results_created
-                      ? 'Upload Result'
-                      : `Upload Result (${selectedExam.created_results_count ?? 0}/${selectedExam.total_students ?? 0})`}
+                      ? 'Publish Result'
+                      : `Publish Result (${selectedExam.created_results_count ?? 0}/${selectedExam.total_students ?? 0})`}
                 </span>
               </button>
-            )
+            ) : null
           )}
           {results.length > 0 && tab === 'results' && (
             <button
@@ -558,23 +607,35 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
                     }`}
                   >
                     {selectedExam.results_published
-                      ? 'Uploaded'
+                      ? 'Published'
                       : selectedExam.all_results_created
-                        ? 'Ready to Upload'
-                        : 'Draft (Pending All Students)'}
+                        ? 'Ready to Publish'
+                        : 'Unpublished (Pending All Students)'}
                   </span>
                 </div>
                 <p className="text-[11px] text-[#525252] mt-0.5">
                   {selectedExam.results_published
-                    ? `All ${selectedExam.created_results_count ?? selectedExam.total_saved_results ?? 0} students' results are uploaded. Ranks are ordered by highest marks & percentage.`
+                    ? `All ${selectedExam.created_results_count ?? selectedExam.total_saved_results ?? 0} students' results are published. Ranks are ordered by highest marks & percentage.`
                     : selectedExam.all_results_created
-                      ? `All ${selectedExam.total_students || selectedExam.created_results_count} students' results are created! Click "Upload Result" to finalize ranks by highest marks and publish.`
-                      : `${selectedExam.created_results_count ?? 0} of ${selectedExam.total_students ?? 0} active students created. Complete the remaining ${selectedExam.pending_students?.length ?? 0} student(s) before uploading results.`}
+                      ? `All ${selectedExam.total_students || selectedExam.created_results_count} students' results are created! Click "Publish" to finalize ranks by highest marks and make them visible.`
+                      : `${selectedExam.created_results_count ?? 0} of ${selectedExam.total_students ?? 0} active students created. Complete the remaining ${selectedExam.pending_students?.length ?? 0} student(s) before publishing results.`}
                 </p>
               </div>
             </div>
 
-            {!selectedExam.results_published && (
+            {selectedExam.results_published ? (
+              isAdmin && (
+                <button
+                  type="button"
+                  disabled={uploadingExamId === String(selectedExam.id)}
+                  onClick={() => handlePublish(selectedExam.id, false)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold text-white bg-[#DC1726] hover:bg-red-700 cursor-pointer shadow-xs disabled:opacity-60"
+                >
+                  <EyeOff className="w-4 h-4" />
+                  <span>{uploadingExamId === String(selectedExam.id) ? 'Unpublishing...' : 'Unpublish'}</span>
+                </button>
+              )
+            ) : (
               <div className="flex items-center gap-2">
                 {selectedExam.pending_students?.length > 0 && (
                   <button
@@ -597,7 +658,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
                   }`}
                 >
                   <UploadCloud className="w-4 h-4" />
-                  <span>{uploadingExamId === String(selectedExam.id) ? 'Uploading...' : 'Upload Result'}</span>
+                  <span>{uploadingExamId === String(selectedExam.id) ? 'Publishing...' : 'Publish'}</span>
                 </button>
               </div>
             )}
@@ -700,7 +761,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
                               : 'bg-amber-50 text-amber-700'
                           }`}
                         >
-                          {r.is_published ? 'Uploaded' : 'Draft (Not Uploaded)'}
+                          {r.is_published ? 'Published' : 'Unpublished'}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-end font-mono-num font-semibold">
