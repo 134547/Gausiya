@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { BookOpen, CheckSquare, FileUp, KeyRound, Pencil, Plus, Printer, Trash2, X } from 'lucide-react';
+import { BookOpen, CheckSquare, CreditCard, FileUp, KeyRound, Pencil, Plus, Printer, Trash2, X } from 'lucide-react';
 import { apiRequest, uploadFile } from '../lib/api.ts';
 import { MadrasaSettings, User } from '../types.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { PrintModal } from '../components/PrintModal.tsx';
+import { OfficialIdCard } from '../components/OfficialIdCard.tsx';
 
 interface TeachersPageProps {
   user: User;
@@ -46,6 +47,7 @@ export const TeachersPage: React.FC<TeachersPageProps> = ({ user, settings }) =>
   const [loginTarget, setLoginTarget] = useState<any>(null);
   const [loginCreds, setLoginCreds] = useState({ username: '', password: '' });
   const [printTeacher, setPrintTeacher] = useState<any>(null);
+  const [printTeacherMode, setPrintTeacherMode] = useState<'profile' | 'id_card'>('profile');
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
@@ -219,7 +221,8 @@ export const TeachersPage: React.FC<TeachersPageProps> = ({ user, settings }) =>
                     <td className="px-4 py-3 capitalize font-semibold text-[#10B981]">{t.employment_status}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        <button type="button" onClick={() => setPrintTeacher(t)} title="Print Profile" className="p-1.5 rounded-md hover:bg-neutral-100"><Printer className="w-4 h-4" /></button>
+                        <button type="button" onClick={() => { setPrintTeacher(t); setPrintTeacherMode('id_card'); }} title="Print Teacher ID Card" className="p-1.5 rounded-md text-[#1D56B8] hover:bg-blue-50"><CreditCard className="w-4 h-4" /></button>
+                        <button type="button" onClick={() => { setPrintTeacher(t); setPrintTeacherMode('profile'); }} title="Print Profile" className="p-1.5 rounded-md hover:bg-neutral-100"><Printer className="w-4 h-4" /></button>
                         {isAdmin && (
                           <>
                             <button type="button" onClick={() => openAssign(t)} title="Assign Classes & Subjects" className="p-1.5 rounded-md text-[#0EA5E9] hover:bg-sky-50"><BookOpen className="w-4 h-4" /></button>
@@ -403,8 +406,36 @@ export const TeachersPage: React.FC<TeachersPageProps> = ({ user, settings }) =>
         </div>
       )}
 
-      <PrintModal open={Boolean(printTeacher)} title="Teacher Profile" subtitle={printTeacher?.teacher_code} settings={settings} onClose={() => setPrintTeacher(null)}>
-        {printTeacher && (
+      <PrintModal
+        open={Boolean(printTeacher)}
+        title={printTeacherMode === 'id_card' ? 'Official Teacher Identity Card' : 'Teacher Profile'}
+        subtitle={printTeacher?.teacher_code}
+        settings={settings}
+        standalone={printTeacherMode === 'id_card'}
+        onClose={() => setPrintTeacher(null)}
+      >
+        {printTeacher && printTeacherMode === 'id_card' && (
+          <div className="flex justify-center py-6">
+            <OfficialIdCard
+              type="teacher"
+              settings={settings}
+              person={{
+                id: printTeacher.id,
+                code: printTeacher.teacher_code || '—',
+                full_name: printTeacher.full_name || 'Teacher',
+                father_name: printTeacher.father_name || '',
+                dob: printTeacher.dob || '',
+                mobile: printTeacher.mobile || '',
+                address: printTeacher.address || '',
+                qualification: printTeacher.qualification || '',
+                joining_date: printTeacher.joining_date || '',
+                photo_url: printTeacher.photo_url || '',
+                status: printTeacher.employment_status || 'active',
+              }}
+            />
+          </div>
+        )}
+        {printTeacher && printTeacherMode === 'profile' && (
           <div className="grid grid-cols-2 gap-3 text-xs border border-neutral-200 rounded-lg p-4">
             <div><span className="text-[#737373]">Teacher ID:</span> <strong className="font-mono-num">{printTeacher.teacher_code}</strong></div>
             <div><span className="text-[#737373]">Full Name:</span> <strong>{printTeacher.full_name}</strong></div>

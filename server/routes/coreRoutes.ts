@@ -1050,7 +1050,7 @@ router.get('/students', requireAuth, async (req: AuthRequest, res) => {
   if (status) q = q.eq('status', status);
   if (search) {
     const s = sanitizeOrTerm(search);
-    if (s) q = q.or(`full_name.ilike.%${s}%,student_code.ilike.%${s}%,father_name.ilike.%${s}%,mobile.ilike.%${s}%`);
+    if (s) q = q.or(`full_name.ilike.%${s}%,student_code.ilike.%${s}%,admission_no.ilike.%${s}%,father_name.ilike.%${s}%,mobile.ilike.%${s}%`);
   }
 
   const { data, error } = await q;
@@ -1134,7 +1134,7 @@ router.get('/students/:id', requireAuth, async (req: AuthRequest, res) => {
     resultsQuery = resultsQuery.eq('is_published', true);
   }
 
-  const [guardiansRes, promotionsRes, attendanceRes, resultsRes, homeworkRes, noticesRes, documentsRes] = await Promise.all([
+  const [guardiansRes, promotionsRes, attendanceRes, resultsRes, homeworkRes, noticesRes, documentsRes, admissionRes] = await Promise.all([
     admin.from('student_guardians').select('relationship, is_primary, parents(*)').eq('student_id', id),
     admin
       .from('student_promotions')
@@ -1153,6 +1153,7 @@ router.get('/students/:id', requireAuth, async (req: AuthRequest, res) => {
       : Promise.resolve({ data: [] }),
     admin.from('notices').select('*').is('deleted_at', null).order('created_at', { ascending: false }).limit(30),
     admin.from('documents').select('*').eq('entity_type', 'student').eq('entity_id', id).order('created_at', { ascending: false }),
+    admin.from('admissions').select('*').eq('student_id', id).is('deleted_at', null).order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   const guardians = (guardiansRes.data || [])
@@ -1196,8 +1197,15 @@ router.get('/students/:id', requireAuth, async (req: AuthRequest, res) => {
     .slice(0, 15);
 
   const documents = await resolveStorageUrlsInRows(documentsRes.data || [], ['file_url']);
+  const admission = admissionRes.data
+    ? {
+        ...admissionRes.data,
+        photo_url: await resolveStorageUrl(admissionRes.data.photo_url || studentRaw.photo_url),
+        class_name: student.class_name,
+      }
+    : null;
 
-  return res.json({ student, guardians, promotions, attendance, results, homework, notices, documents });
+  return res.json({ student, admission, guardians, promotions, attendance, results, homework, notices, documents });
 });
 
 router.post('/students', requireAuth, requireRole('super_admin'), async (req: AuthRequest, res) => {
@@ -1206,6 +1214,7 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
 
   let createdAuthId: string | null = null;
   let createdStudentId: string | null = null;
+  let createdAdmissionId: string | null = null;
 
   try {
     const b = req.body;
@@ -1236,15 +1245,34 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
       }
     }
 
+    const customAdmissionNo = String(b.admission_no || '').trim();
+    if (customAdmissionNo) {
+      const [{ data: dupStudAdm }, { data: dupAdmRow }] = await Promise.all([
+        admin.from('students').select('id').eq('admission_no', customAdmissionNo).limit(1).maybeSingle(),
+        admin.from('admissions').select('id').eq('admission_no', customAdmissionNo).limit(1).maybeSingle(),
+      ]);
+      if (dupStudAdm?.id || dupAdmRow?.id) {
+        return res.status(409).json({ error: `Admission No "${customAdmissionNo}" is already in use. Leave it blank to auto-generate.` });
+      }
+    }
+
     const [{ data: activeSession }, codes] = await Promise.all([
       admin.from('academic_sessions').select('id').eq('is_active', true).limit(1).maybeSingle(),
       generateNextStudentCodes(admin),
     ]);
     const studentCode = codes.studentCode;
-    const officialAdmissionNo = String(b.admission_no || '').trim() || codes.officialAdmissionNo;
+    const officialAdmissionNo = customAdmissionNo || codes.officialAdmissionNo;
     const desiredStatus = b.status || 'active';
     const isActive = desiredStatus === 'active';
+    const nowIso = new Date().toISOString();
+    const admissionDate = b.admission_date || nowIso.slice(0, 10);
     const photoRef = normalizeStorageRef(b.photo_url);
+    const cleanFullName = b.full_name.trim();
+    const cleanFatherName = b.father_name.trim();
+    const cleanGuardianName = String(b.guardian_name || '').trim() || cleanFatherName;
+    const cleanGuardianRelationship = String(b.guardian_relationship || '').trim() || 'Father';
+    const cleanStudentMobile = String(b.mobile || '').trim();
+    const cleanGuardianMobile = String(b.guardian_mobile || '').trim() || cleanStudentMobile;
 
     if (wantsPortalAccount) {
       const studentRole = await ensureStudentRole(admin);
@@ -1255,7 +1283,7 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
         password: rawPassword,
         email_confirm: true,
         user_metadata: {
-          full_name: b.full_name.trim(),
+          full_name: cleanFullName,
           username: cleanUsername,
           account_type: 'student',
         },
@@ -1274,9 +1302,9 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
           user_code: userCode,
           username: cleanUsername,
           email: internalEmail,
-          mobile: b.mobile || '',
-          full_name: b.full_name.trim(),
-          father_name: b.father_name.trim(),
+          mobile: cleanStudentMobile,
+          full_name: cleanFullName,
+          father_name: cleanFatherName,
           dob: b.dob || '',
           gender: b.gender || 'Male',
           address: b.address || '',
@@ -1291,7 +1319,7 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
           linked_type: 'student',
           auth_user_id: createdAuthId,
           approved_by: isActive ? req.user!.id : null,
-          approved_at: isActive ? new Date().toISOString() : null,
+          approved_at: isActive ? nowIso : null,
           deleted_at: null,
         },
         'id'
@@ -1303,8 +1331,8 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
       admission_no: officialAdmissionNo,
       admission_number: officialAdmissionNo,
       username: cleanUsername || null,
-      full_name: b.full_name.trim(),
-      father_name: b.father_name.trim(),
+      full_name: cleanFullName,
+      father_name: cleanFatherName,
       mother_name: b.mother_name || '',
       dob: b.dob || '',
       gender: b.gender || 'Male',
@@ -1314,13 +1342,15 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
       district: b.district || 'Palamu',
       state: b.state || 'Jharkhand',
       pin_code: b.pin_code || '',
-      mobile: b.mobile || '',
+      mobile: cleanStudentMobile,
       class_id: b.class_id || null,
       academic_session_id: b.academic_session_id || activeSession?.id || null,
-      admission_date: b.admission_date || new Date().toISOString().slice(0, 10),
+      admission_date: admissionDate,
       photo_url: photoRef,
       status: desiredStatus,
       approval_status: isActive ? 'approved' : 'pending',
+      approved_by: isActive ? req.user!.id : null,
+      approved_at: isActive ? nowIso : null,
       previous_school: b.previous_school || '',
       previous_class: b.previous_class || '',
       remarks: b.remarks || '',
@@ -1328,6 +1358,55 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
       auth_user_id: createdAuthId,
     });
     createdStudentId = created.id;
+
+    // Fetch exact student_code & admission_no saved (in case safeStudentInsert retried on a race condition)
+    const { data: savedStudent } = await admin
+      .from('students')
+      .select('*, classes(name)')
+      .eq('id', created.id)
+      .maybeSingle();
+
+    const finalStudentCode = savedStudent?.student_code || studentCode;
+    const finalAdmissionNo = savedStudent?.admission_no || officialAdmissionNo;
+    const finalClassName = (savedStudent as any)?.classes?.name || 'Unassigned';
+
+    // Automatically create the linked Admission record so Student ID + Official Admission both exist together
+    const createdAdmission = await safeTableUpsert(admin, 'admissions', {
+      admission_no: finalAdmissionNo,
+      admission_number: finalAdmissionNo,
+      username: cleanUsername || '',
+      auth_user_id: createdAuthId,
+      student_id: created.id,
+      student_name: cleanFullName,
+      father_name: cleanFatherName,
+      mother_name: b.mother_name || '',
+      dob: b.dob || '',
+      gender: b.gender || 'Male',
+      religion: b.religion || 'Islam',
+      address: b.address || '',
+      village: b.village || '',
+      district: b.district || 'Palamu',
+      state: b.state || 'Jharkhand',
+      pin_code: b.pin_code || '',
+      student_mobile: cleanStudentMobile,
+      guardian_name: cleanGuardianName,
+      guardian_relationship: cleanGuardianRelationship,
+      guardian_mobile: cleanGuardianMobile,
+      previous_school: b.previous_school || '',
+      previous_class: b.previous_class || '',
+      admission_date: admissionDate,
+      admission_class_id: b.class_id || null,
+      photo_url: photoRef,
+      documents_json: [],
+      remarks: b.remarks || 'Direct Admission by Admin',
+      status: isActive ? 'approved' : 'pending',
+      approval_status: isActive ? 'approved' : 'pending',
+      reviewed_by: isActive ? req.user!.id : null,
+      reviewed_at: isActive ? nowIso : null,
+      approved_by: isActive ? req.user!.id : null,
+      approved_at: isActive ? nowIso : null,
+    });
+    createdAdmissionId = createdAdmission?.id || null;
 
     if (createdAuthId) {
       await safeTableUpdate(admin, 'profiles', createdAuthId, {
@@ -1339,7 +1418,7 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
         user_id: createdAuthId,
         type: 'student_welcome',
         title: 'Student Dashboard Activated',
-        message: `Assalamu Alaikum ${b.full_name.trim()}, your Student Portal & Dashboard (${officialAdmissionNo}) is active. Username: ${cleanUsername}`,
+        message: `Assalamu Alaikum ${cleanFullName}, your Student Portal & Dashboard (${finalStudentCode} · ${finalAdmissionNo}) is active. Username: ${cleanUsername}`,
         entity_type: 'dashboard',
         entity_id: created.id,
       });
@@ -1350,18 +1429,61 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
         {
           student_id: created.id,
           parent_id: b.parent_id,
-          relationship: b.guardian_relationship || 'Father',
+          relationship: cleanGuardianRelationship,
           is_primary: true,
         },
         { onConflict: 'student_id,parent_id' }
       );
+    } else if (cleanGuardianMobile) {
+      try {
+        const { data: existingParent } = await admin
+          .from('parents')
+          .select('id')
+          .eq('mobile', cleanGuardianMobile)
+          .is('deleted_at', null)
+          .maybeSingle();
+
+        let parentId = existingParent?.id || null;
+        if (!parentId) {
+          const { count: pCount } = await admin.from('parents').select('id', { count: 'exact', head: true });
+          const pCode = `PAR-${200 + (pCount || 0) + 1}`;
+          const { data: newParent } = await admin
+            .from('parents')
+            .insert({
+              parent_code: pCode,
+              full_name: cleanGuardianName,
+              mobile: cleanGuardianMobile,
+              address: b.address || '',
+              relationship: cleanGuardianRelationship,
+              status: 'active',
+            })
+            .select('id')
+            .single();
+          parentId = newParent?.id || null;
+        }
+        if (parentId) {
+          await admin.from('student_guardians').upsert(
+            {
+              student_id: created.id,
+              parent_id: parentId,
+              relationship: cleanGuardianRelationship,
+              is_primary: true,
+            },
+            { onConflict: 'student_id,parent_id' }
+          );
+        }
+      } catch {
+        // Parent linking is best-effort and should not block direct student enrollment
+      }
     }
+
+    const resolvedPhotoUrl = await resolveStorageUrl(photoRef);
 
     await notifyRoles(
       ['super_admin'],
       'student',
-      'New Student Enrolled',
-      `${b.full_name.trim()} (${studentCode}${cleanUsername ? ` · @${cleanUsername}` : ''}) added to student directory.`,
+      'New Student Enrolled & Admission Issued',
+      `${cleanFullName} (ID: ${finalStudentCode} · Admission: ${finalAdmissionNo}${cleanUsername ? ` · @${cleanUsername}` : ''}) added to directory & admissions.`,
       'students',
       created.id
     );
@@ -1370,18 +1492,58 @@ router.post('/students', requireAuth, requireRole('super_admin'), async (req: Au
       'STUDENT_ADDED',
       'students',
       created.id,
-      `Added student ${b.full_name.trim()} (${studentCode})${cleanUsername ? ` with dashboard account @${cleanUsername}` : ''}`,
+      `Added student ${cleanFullName} (ID: ${finalStudentCode}, Admission: ${finalAdmissionNo})${cleanUsername ? ` with dashboard account @${cleanUsername}` : ''}`,
       req.ip
     );
 
     return res.status(201).json({
       id: created.id,
-      student_code: studentCode,
-      admission_no: officialAdmissionNo,
+      student_code: finalStudentCode,
+      admission_no: finalAdmissionNo,
+      admission_id: createdAdmissionId,
       username: cleanUsername || null,
       dashboard_created: Boolean(createdAuthId),
+      student: {
+        ...(savedStudent || {}),
+        id: created.id,
+        student_code: finalStudentCode,
+        admission_no: finalAdmissionNo,
+        full_name: cleanFullName,
+        father_name: cleanFatherName,
+        mother_name: b.mother_name || '',
+        dob: b.dob || '',
+        gender: b.gender || 'Male',
+        religion: b.religion || 'Islam',
+        address: b.address || '',
+        village: b.village || '',
+        district: b.district || 'Palamu',
+        state: b.state || 'Jharkhand',
+        pin_code: b.pin_code || '',
+        mobile: cleanStudentMobile,
+        guardian_name: cleanGuardianName,
+        guardian_relationship: cleanGuardianRelationship,
+        guardian_mobile: cleanGuardianMobile,
+        previous_school: b.previous_school || '',
+        previous_class: b.previous_class || '',
+        admission_date: admissionDate,
+        remarks: b.remarks || '',
+        status: desiredStatus,
+        class_name: finalClassName,
+        photo_url: resolvedPhotoUrl,
+        login_username: cleanUsername || null,
+      },
+      admission: createdAdmission
+        ? {
+            ...createdAdmission,
+            class_name: finalClassName,
+            photo_url: resolvedPhotoUrl,
+          }
+        : null,
     });
   } catch (err: any) {
+    if (createdAdmissionId) {
+      try { await admin.from('admissions').delete().eq('id', createdAdmissionId); } catch {}
+    }
     if (createdStudentId) {
       try { await admin.from('student_guardians').delete().eq('student_id', createdStudentId); } catch {}
       try { await admin.from('students').delete().eq('id', createdStudentId); } catch {}
@@ -1564,6 +1726,52 @@ router.put('/students/:id', requireAuth, requireRole('super_admin'), async (req:
     }
 
     await safeTableUpdate(admin, 'students', id, payload);
+
+    // Keep linked admission record in sync when student info is updated
+    try {
+      const { data: linkedAdm } = await admin
+        .from('admissions')
+        .select('id')
+        .eq('student_id', id)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (linkedAdm?.id) {
+        const admSync: Record<string, any> = {};
+        if (b.full_name !== undefined) admSync.student_name = String(b.full_name).trim();
+        if (b.father_name !== undefined) admSync.father_name = String(b.father_name).trim();
+        if (b.mother_name !== undefined) admSync.mother_name = b.mother_name;
+        if (b.dob !== undefined) admSync.dob = b.dob;
+        if (b.gender !== undefined) admSync.gender = b.gender;
+        if (b.religion !== undefined) admSync.religion = b.religion;
+        if (b.address !== undefined) admSync.address = b.address;
+        if (b.village !== undefined) admSync.village = b.village;
+        if (b.district !== undefined) admSync.district = b.district;
+        if (b.state !== undefined) admSync.state = b.state;
+        if (b.pin_code !== undefined) admSync.pin_code = b.pin_code;
+        if (b.mobile !== undefined) admSync.student_mobile = b.mobile;
+        if (b.guardian_name !== undefined && String(b.guardian_name).trim()) admSync.guardian_name = String(b.guardian_name).trim();
+        if (b.guardian_mobile !== undefined && String(b.guardian_mobile).trim()) admSync.guardian_mobile = String(b.guardian_mobile).trim();
+        if (b.class_id !== undefined) admSync.admission_class_id = b.class_id || null;
+        if (b.photo_url !== undefined) admSync.photo_url = normalizeStorageRef(b.photo_url);
+        if (b.previous_school !== undefined) admSync.previous_school = b.previous_school;
+        if (b.previous_class !== undefined) admSync.previous_class = b.previous_class;
+        if (b.remarks !== undefined) admSync.remarks = b.remarks;
+        if (b.admission_date !== undefined && b.admission_date) admSync.admission_date = b.admission_date;
+        if (b.admission_no !== undefined && String(b.admission_no).trim()) {
+          admSync.admission_number = String(b.admission_no).trim();
+        }
+        if (finalUsername) admSync.username = finalUsername;
+        if (Object.keys(admSync).length > 0) {
+          await safeTableUpdate(admin, 'admissions', linkedAdm.id, admSync);
+        }
+      }
+    } catch {
+      // Best-effort sync to linked admission record
+    }
+
     await logActivity(req.user!, 'STUDENT_UPDATED', 'students', id, `Updated student ${id}`, req.ip);
     return res.json({ success: true, username: finalUsername, dashboard_created: Boolean(newAuthId || linkedProfile) });
   } catch (err: any) {

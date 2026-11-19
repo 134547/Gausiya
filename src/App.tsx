@@ -22,6 +22,7 @@ const SuperAdminPage = lazy(() => import('./pages/SuperAdminPage.tsx').then((m) 
 const AdmissionsPage = lazy(() => import('./pages/AdmissionsPage.tsx').then((m) => ({ default: m.AdmissionsPage })));
 const StudentsPage = lazy(() => import('./pages/StudentsPage.tsx').then((m) => ({ default: m.StudentsPage })));
 const TeachersPage = lazy(() => import('./pages/TeachersPage.tsx').then((m) => ({ default: m.TeachersPage })));
+const IdCardsPage = lazy(() => import('./pages/IdCardsPage.tsx').then((m) => ({ default: m.IdCardsPage })));
 const ParentsPage = lazy(() => import('./pages/ParentsPage.tsx').then((m) => ({ default: m.ParentsPage })));
 const ClassesPage = lazy(() => import('./pages/ClassesPage.tsx').then((m) => ({ default: m.ClassesPage })));
 const SubjectsPage = lazy(() => import('./pages/SubjectsPage.tsx').then((m) => ({ default: m.SubjectsPage })));
@@ -600,6 +601,12 @@ export default function App() {
         return <StudentsPage user={user} settings={settings} />;
       case 'teachers':
         return <TeachersPage user={user} settings={settings} />;
+      case 'id_cards':
+        return user.role_slug === 'super_admin' ? (
+          <IdCardsPage settings={settings} />
+        ) : (
+          <DashboardPage user={user} lang={lang} onNavigate={handleSelectModule} onOpenChild={handleOpenParentChild} />
+        );
       case 'parents':
         return <ParentsPage user={user} />;
       case 'classes':

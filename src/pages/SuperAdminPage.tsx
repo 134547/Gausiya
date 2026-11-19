@@ -3,6 +3,7 @@ import {
   BookOpen,
   Calendar,
   Check,
+  CreditCard,
   Eye,
   GraduationCap,
   KeyRound,
@@ -22,6 +23,7 @@ import { apiRequest, uploadFile } from '../lib/api.ts';
 import { AcademicSession, GradingRule, MadrasaSettings, User } from '../types.ts';
 import { MadrasaLogo } from '../components/MadrasaLogo.tsx';
 import { SyllabusPage } from './SyllabusPage.tsx';
+import { IdCardsPage } from './IdCardsPage.tsx';
 
 interface SuperAdminPageProps {
   user: User;
@@ -31,7 +33,7 @@ interface SuperAdminPageProps {
 const ROLE_ORDER = ['super_admin', 'teacher', 'student', 'parent', 'public', 'committee_member'];
 
 export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ user, onSettingsUpdated }) => {
-  const [activeTab, setActiveTab] = useState<'settings' | 'users' | 'syllabus' | 'class_teachers'>('settings');
+  const [activeTab, setActiveTab] = useState<'settings' | 'users' | 'syllabus' | 'class_teachers' | 'id_cards'>('settings');
 
   // Settings & Sessions state
   const [settings, setSettings] = useState<MadrasaSettings | null>(null);
@@ -484,6 +486,16 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ user, onSettings
             <GraduationCap className="w-3.5 h-3.5 text-[#DC1726]" />
             <span>Class Teachers ({classesList.length})</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('id_cards')}
+            className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
+              activeTab === 'id_cards' ? 'bg-white text-[#171717] shadow-xs' : 'text-[#737373] hover:text-[#171717]'
+            }`}
+          >
+            <CreditCard className="w-3.5 h-3.5 text-[#1D56B8]" />
+            <span>ID Cards</span>
+          </button>
         </div>
 
         {activeTab === 'users' && (
@@ -518,6 +530,8 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ user, onSettings
 
       {activeTab === 'syllabus' ? (
         <SyllabusPage user={user} embedded />
+      ) : activeTab === 'id_cards' ? (
+        <IdCardsPage settings={settings} />
       ) : activeTab === 'class_teachers' ? (
         <div className="space-y-5">
           {/* Quick Add Class with Class Teacher */}

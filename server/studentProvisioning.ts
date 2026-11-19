@@ -247,24 +247,44 @@ export async function generateNextStudentCodes(admin: SupabaseClient): Promise<{
   officialAdmissionNo: string;
 }> {
   const year = new Date().getFullYear();
-  const { count } = await admin.from('students').select('id', { count: 'exact', head: true });
-  const seq = (count || 0) + 1;
-  let studentCode = `MGR-${year}-${String(seq).padStart(3, '0')}`;
-  let officialAdmissionNo = `ADM-${year}-${String(seq).padStart(3, '0')}`;
+  const [{ count: studentCount }, { count: admCount }] = await Promise.all([
+    admin.from('students').select('id', { count: 'exact', head: true }),
+    admin.from('admissions').select('id', { count: 'exact', head: true }),
+  ]);
 
-  const { data: dupCode } = await admin
-    .from('students')
-    .select('id')
-    .or(`student_code.eq.${studentCode},admission_no.eq.${officialAdmissionNo}`)
-    .limit(1)
-    .maybeSingle();
+  let seq = Math.max(studentCount || 0, admCount || 0) + 1;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidateStudentCode = `MGR-${year}-${String(seq + attempt).padStart(3, '0')}`;
+    const candidateAdmissionNo = `ADM-${year}-${String(seq + attempt).padStart(3, '0')}`;
 
-  if (dupCode) {
-    const suffix = `${Date.now().toString().slice(-4)}${crypto.randomInt(10, 99)}`;
-    studentCode = `MGR-${year}-${suffix}`;
-    officialAdmissionNo = `ADM-${year}-${suffix}`;
+    const [{ data: dupStudent }, { data: dupAdmission }] = await Promise.all([
+      admin
+        .from('students')
+        .select('id')
+        .or(`student_code.eq.${candidateStudentCode},admission_no.eq.${candidateAdmissionNo}`)
+        .limit(1)
+        .maybeSingle(),
+      admin
+        .from('admissions')
+        .select('id')
+        .eq('admission_no', candidateAdmissionNo)
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    if (!dupStudent && !dupAdmission) {
+      return {
+        studentCode: candidateStudentCode,
+        officialAdmissionNo: candidateAdmissionNo,
+      };
+    }
   }
-  return { studentCode, officialAdmissionNo };
+
+  const suffix = `${Date.now().toString().slice(-4)}${crypto.randomInt(10, 99)}`;
+  return {
+    studentCode: `MGR-${year}-${suffix}`,
+    officialAdmissionNo: `ADM-${year}-${suffix}`,
+  };
 }
 
 export interface StudentAdmissionInput {

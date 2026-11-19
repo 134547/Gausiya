@@ -10,6 +10,7 @@ export type NavModuleId =
   | 'login_details'
   | 'students'
   | 'teachers'
+  | 'id_cards'
   | 'parents'
   | 'classes'
   | 'subjects'

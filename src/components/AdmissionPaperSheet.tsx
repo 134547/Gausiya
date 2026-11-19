@@ -5,6 +5,7 @@ import { MadrasaLogo } from './MadrasaLogo.tsx';
 export interface AdmissionPaperData {
   reference_no?: string;
   admission_no?: string;
+  student_code?: string;
   admission_date?: string;
   student_name?: string;
   father_name?: string;
@@ -107,22 +108,36 @@ export const AdmissionPaperSheet: React.FC<AdmissionPaperSheetProps> = ({ settin
         </span>
       </div>
 
-      {/* Reference Number & Status Summary Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 border border-neutral-300 rounded-lg p-3.5 bg-neutral-50/70 text-xs">
+      {/* Reference / Official Admission Number & Status Summary Strip */}
+      <div className={`grid grid-cols-1 ${data.student_code ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3 border border-neutral-300 rounded-lg p-3.5 bg-neutral-50/70 text-xs`}>
+        {data.student_code && (
+          <div>
+            <span className="text-[#737373]">Student ID:</span>{' '}
+            <strong className="font-mono-num text-sm text-[#171717]">
+              {data.student_code}
+            </strong>
+          </div>
+        )}
         <div>
-          <span className="text-[#737373]">Reference Number:</span>{' '}
+          <span className="text-[#737373]">
+            {data.status === 'approved' && !String(referenceNo).startsWith('REF-')
+              ? 'Official Admission No:'
+              : 'Reference Number:'}
+          </span>{' '}
           <strong className="font-mono-num text-sm text-[#DC1726]">
             {referenceNo}
           </strong>
         </div>
         <div>
-          <span className="text-[#737373]">Application Date:</span>{' '}
+          <span className="text-[#737373]">
+            {data.status === 'approved' ? 'Admission Date:' : 'Application Date:'}
+          </span>{' '}
           <strong className="font-mono-num text-[#171717]">
             {data.admission_date || '—'}
           </strong>
         </div>
         <div>
-          <span className="text-[#737373]">Application Status:</span>{' '}
+          <span className="text-[#737373]">Status:</span>{' '}
           <strong
             className={`uppercase ${
               data.status === 'approved'
@@ -212,7 +227,9 @@ export const AdmissionPaperSheet: React.FC<AdmissionPaperSheetProps> = ({ settin
       {/* Office Note & Signature Footer */}
       <div className="border border-neutral-300 rounded-lg p-3.5 bg-neutral-50/50 space-y-3 text-xs">
         <p className="text-[11px] text-[#525252]">
-          Note: This Reference Number is issued for admission application tracking. Official Student Admission Number is assigned by the Madrasa Administration upon approval.
+          {data.status === 'approved'
+            ? 'Note: Official Student Admission confirmed by the Madrasa Administration. Keep this Admission Form and Student ID for all future academic records.'
+            : 'Note: This Reference Number is issued for admission application tracking. Official Student Admission Number is assigned by the Madrasa Administration upon approval.'}
         </p>
         <div className="grid grid-cols-3 gap-4 pt-7 text-center text-[11px] text-[#737373]">
           <div className="border-t border-neutral-400 pt-1.5 font-medium text-[#171717]">

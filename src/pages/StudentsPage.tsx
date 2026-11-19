@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowUpRight, CreditCard, Eye, EyeOff, FileUp, KeyRound, Pencil, Plus, Printer, Search, ShieldCheck, Trash2, X } from 'lucide-react';
+import { ArrowUpRight, CheckCircle, CreditCard, Eye, EyeOff, FileText, FileUp, KeyRound, Pencil, Plus, Printer, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import { apiRequest, uploadFile } from '../lib/api.ts';
 import { MadrasaSettings, User } from '../types.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { PrintModal } from '../components/PrintModal.tsx';
-import { MadrasaLogo } from '../components/MadrasaLogo.tsx';
+import { AdmissionPaperSheet } from '../components/AdmissionPaperSheet.tsx';
+import { IqrarNamaSheet } from '../components/IqrarNamaSheet.tsx';
+import { OfficialIdCard } from '../components/OfficialIdCard.tsx';
 
 interface StudentsPageProps {
   user: User;
@@ -24,6 +26,9 @@ const emptyStudent = {
   state: 'Jharkhand',
   pin_code: '',
   mobile: '',
+  guardian_name: '',
+  guardian_relationship: 'Father',
+  guardian_mobile: '',
   class_id: '',
   admission_no: '',
   admission_date: new Date().toISOString().slice(0, 10),
@@ -57,11 +62,47 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
   const [profileTab, setProfileTab] = useState<string>('personal');
   const [promoteTarget, setPromoteTarget] = useState<any>(null);
   const [promoteForm, setPromoteForm] = useState({ to_class_id: '', to_session_id: '', action_type: 'promote', remarks: '' });
-  const [printMode, setPrintMode] = useState<'profile' | 'id_card' | null>(null);
+  const [printMode, setPrintMode] = useState<'profile' | 'id_card' | 'admission' | null>(null);
   const [printStudent, setPrintStudent] = useState<any>(null);
+  const [recentEnrollment, setRecentEnrollment] = useState<{
+    student: any;
+    admission?: any;
+    student_code: string;
+    admission_no: string;
+    username?: string | null;
+    dashboard_created?: boolean;
+  } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+
+  const buildAdmissionData = (st: any, linkedAdmission?: any) => ({
+    reference_no: linkedAdmission?.admission_no || st?.admission_no || st?.student_code || '—',
+    admission_no: linkedAdmission?.admission_number || linkedAdmission?.admission_no || st?.admission_no || '',
+    student_code: st?.student_code || '',
+    admission_date: linkedAdmission?.admission_date || st?.admission_date || '',
+    student_name: linkedAdmission?.student_name || st?.full_name || '',
+    father_name: linkedAdmission?.father_name || st?.father_name || '',
+    mother_name: linkedAdmission?.mother_name || st?.mother_name || '',
+    dob: linkedAdmission?.dob || st?.dob || '',
+    gender: linkedAdmission?.gender || st?.gender || 'Male',
+    religion: linkedAdmission?.religion || st?.religion || 'Islam',
+    class_name: linkedAdmission?.class_name || st?.class_name || 'Unassigned',
+    guardian_name: linkedAdmission?.guardian_name || st?.guardian_name || st?.father_name || '',
+    guardian_relationship: linkedAdmission?.guardian_relationship || st?.guardian_relationship || 'Father',
+    guardian_mobile: linkedAdmission?.guardian_mobile || st?.guardian_mobile || st?.mobile || '',
+    student_mobile: linkedAdmission?.student_mobile || st?.mobile || '',
+    address: linkedAdmission?.address || st?.address || '',
+    village: linkedAdmission?.village || st?.village || '',
+    district: linkedAdmission?.district || st?.district || 'Palamu',
+    state: linkedAdmission?.state || st?.state || 'Jharkhand',
+    pin_code: linkedAdmission?.pin_code || st?.pin_code || '',
+    previous_school: linkedAdmission?.previous_school || st?.previous_school || '',
+    previous_class: linkedAdmission?.previous_class || st?.previous_class || '',
+    photo_url: linkedAdmission?.photo_url || st?.photo_url || '',
+    remarks: linkedAdmission?.remarks || st?.remarks || '',
+    status: linkedAdmission?.status || (st?.status === 'active' ? 'approved' : 'pending'),
+  });
 
   const suggestUsernameFromName = (name: string) => {
     const clean = name
@@ -131,18 +172,30 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
         );
       } else {
         const res = await apiRequest<{
+          id: string;
           student_code: string;
-          admission_no?: string;
-          username?: string;
+          admission_no: string;
+          admission_id?: string | null;
+          username?: string | null;
           dashboard_created?: boolean;
+          student?: any;
+          admission?: any;
         }>('/api/students', {
           method: 'POST',
           body: JSON.stringify({ ...form, create_account: true }),
         });
+        setRecentEnrollment({
+          student: res.student || { ...form, id: res.id, student_code: res.student_code, admission_no: res.admission_no, class_name: classes.find((c) => String(c.id) === String(form.class_id))?.name || 'Unassigned' },
+          admission: res.admission || null,
+          student_code: res.student_code,
+          admission_no: res.admission_no,
+          username: res.username,
+          dashboard_created: res.dashboard_created,
+        });
         setMsg(
           res.dashboard_created && res.username
-            ? `Student ${res.student_code} enrolled & Dashboard created (Username: @${res.username}).`
-            : `Student ${res.student_code} enrolled.`
+            ? `Student ID (${res.student_code}), Official Admission (${res.admission_no}) & Dashboard (@${res.username}) created successfully.`
+            : `Student ID (${res.student_code}) & Official Admission (${res.admission_no}) created successfully.`
         );
       }
       setFormOpen(false);
@@ -208,6 +261,71 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
       {msg && <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-700 font-medium">{msg}</div>}
       {err && <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-[#DC1726] font-medium">{err}</div>}
 
+      {/* Newly Created Student ID & Admission Ready Banner */}
+      {recentEnrollment && (
+        <div className="bg-emerald-50/90 rounded-xl border border-emerald-200 p-4 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
+              <CheckCircle className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <div className="text-sm font-bold text-[#171717]">
+                {recentEnrollment.student.full_name} — Student ID &amp; Official Admission Created
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-neutral-700">
+                <span>
+                  Student ID: <strong className="font-mono-num text-[#171717]">{recentEnrollment.student_code}</strong>
+                </span>
+                <span>
+                  Admission No: <strong className="font-mono-num text-[#DC1726]">{recentEnrollment.admission_no}</strong>
+                </span>
+                {recentEnrollment.username && (
+                  <span>
+                    Portal Login: <strong className="font-mono-num text-emerald-700">@{recentEnrollment.username}</strong>
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-neutral-600">
+                Approved admission record is also added to the <strong>Admissions</strong> section automatically.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setPrintStudent(recentEnrollment.student);
+                setPrintMode('id_card');
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#171717] text-white text-xs font-semibold hover:bg-neutral-800"
+            >
+              <CreditCard className="w-3.5 h-3.5" /> Print ID Card
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPrintStudent({
+                  ...recentEnrollment.student,
+                  _linkedAdmission: recentEnrollment.admission,
+                });
+                setPrintMode('admission');
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700"
+            >
+              <FileText className="w-3.5 h-3.5" /> Print Admission Paper
+            </button>
+            <button
+              type="button"
+              onClick={() => setRecentEnrollment(null)}
+              title="Dismiss"
+              className="p-2 rounded-lg text-neutral-500 hover:bg-emerald-100"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Filter & Actions */}
       <div className="bg-white rounded-xl border border-neutral-200 p-4 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
         <form
@@ -221,7 +339,7 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
             <Search className="w-4 h-4 text-[#737373] absolute start-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search by Student Name or Student ID..."
+              placeholder="Search by Name, Student ID, or Admission No..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full ps-9 pe-3 py-2 text-xs rounded-lg border border-neutral-200"
@@ -323,6 +441,9 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
                         <button type="button" onClick={() => { setPrintStudent(st); setPrintMode('id_card'); }} title="Print ID Card" className="p-1.5 rounded-md text-[#10B981] hover:bg-emerald-50">
                           <CreditCard className="w-4 h-4" />
                         </button>
+                        <button type="button" onClick={() => { setPrintStudent(st); setPrintMode('admission'); }} title="Print Admission Paper & Iqrar Nama" className="p-1.5 rounded-md text-[#DC1726] hover:bg-red-50">
+                          <FileText className="w-4 h-4" />
+                        </button>
                         <button type="button" onClick={() => { setPrintStudent(st); setPrintMode('profile'); }} title="Print Profile PDF" className="p-1.5 rounded-md text-[#171717] hover:bg-neutral-100">
                           <Printer className="w-4 h-4" />
                         </button>
@@ -359,6 +480,9 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
                                   state: st.state || 'Jharkhand',
                                   pin_code: st.pin_code || '',
                                   mobile: st.mobile || '',
+                                  guardian_name: st.guardian_name || st.father_name || '',
+                                  guardian_relationship: st.guardian_relationship || 'Father',
+                                  guardian_mobile: st.guardian_mobile || st.mobile || '',
                                   class_id: st.class_id ? String(st.class_id) : '',
                                   admission_no: st.admission_no || '',
                                   admission_date: st.admission_date || '',
@@ -401,6 +525,11 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
               <button type="button" onClick={() => setFormOpen(false)} className="p-1.5 rounded-lg hover:bg-neutral-200"><X className="w-4 h-4" /></button>
             </div>
             <form onSubmit={handleSave} className="p-6 space-y-3 text-xs">
+              {!editingId && (
+                <div className="rounded-lg border border-sky-200 bg-sky-50/70 px-3.5 py-2.5 text-[11px] text-sky-900">
+                  Student add karte hi <strong>Official Student ID (MGR-...)</strong>, <strong>Admission No (ADM-...)</strong>, <strong>Approved Admission Paper &amp; Iqrar Nama</strong>, <strong>ID Card</strong>, aur <strong>Student Dashboard</strong> sab automatically ban jayega.
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div><label className="block font-medium mb-1">Full Name *</label><input type="text" required value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200" /></div>
                 <div><label className="block font-medium mb-1">Father Name *</label><input type="text" required value={form.father_name} onChange={(e) => setForm({ ...form, father_name: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200" /></div>
@@ -413,7 +542,14 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
                   </select>
                 </div>
                 <div><label className="block font-medium mb-1">Date of Birth</label><input type="date" value={form.dob} onChange={(e) => setForm({ ...form, dob: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num" /></div>
-                <div><label className="block font-medium mb-1">Mobile</label><input type="text" value={form.mobile} onChange={(e) => setForm({ ...form, mobile: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num" /></div>
+                <div>
+                  <label className="block font-medium mb-1">Gender</label>
+                  <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white">
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                  </select>
+                </div>
+                <div><label className="block font-medium mb-1">Mobile / Guardian Mobile</label><input type="text" value={form.mobile} onChange={(e) => setForm({ ...form, mobile: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num" /></div>
                 <div><label className="block font-medium mb-1">Village</label><input type="text" value={form.village} onChange={(e) => setForm({ ...form, village: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200" /></div>
                 <div>
                   <label className="block font-medium mb-1">Status</label>
@@ -425,12 +561,16 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
                   </select>
                 </div>
                 <div>
-                  <label className="block font-medium mb-1">Admission No <span className="text-[#737373] font-normal">(Optional · auto if blank)</span></label>
-                  <input type="text" placeholder="e.g. ADM-2026-001" value={form.admission_no} onChange={(e) => setForm({ ...form, admission_no: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num" />
+                  <label className="block font-medium mb-1">Admission No <span className="text-[#737373] font-normal">(Auto ADM-... if blank)</span></label>
+                  <input type="text" placeholder="Auto-generated e.g. ADM-2026-001" value={form.admission_no} onChange={(e) => setForm({ ...form, admission_no: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num" />
                 </div>
                 <div>
                   <label className="block font-medium mb-1">Admission Date</label>
                   <input type="date" value={form.admission_date} onChange={(e) => setForm({ ...form, admission_date: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200 font-mono-num" />
+                </div>
+                <div>
+                  <label className="block font-medium mb-1">Guardian Name <span className="text-[#737373] font-normal">(Auto Father if blank)</span></label>
+                  <input type="text" placeholder="Defaults to Father Name" value={form.guardian_name} onChange={(e) => setForm({ ...form, guardian_name: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200" />
                 </div>
                 <div className="sm:col-span-2"><label className="block font-medium mb-1">Complete Address</label><input type="text" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200" /></div>
 
@@ -561,11 +701,38 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
                 <div>
                   <h3 className="text-base font-bold">{profileData.student.full_name}</h3>
                   <p className="text-xs text-neutral-300 font-mono-num">
-                    {profileData.student.student_code} · {profileData.student.class_name} · {profileData.student.status.toUpperCase()}
+                    {profileData.student.student_code}
+                    {profileData.student.admission_no ? ` · ${profileData.student.admission_no}` : ''}
+                    {` · ${profileData.student.class_name} · ${profileData.student.status.toUpperCase()}`}
                   </p>
                 </div>
               </div>
-              <button type="button" onClick={() => setProfileData(null)} className="p-1.5 rounded-lg hover:bg-white/10"><X className="w-5 h-5" /></button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPrintStudent(profileData.student);
+                    setPrintMode('id_card');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium text-white"
+                >
+                  <CreditCard className="w-3.5 h-3.5" /> ID Card
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPrintStudent({
+                      ...profileData.student,
+                      _linkedAdmission: profileData.admission || null,
+                    });
+                    setPrintMode('admission');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#DC1726] hover:bg-red-700 text-xs font-medium text-white"
+                >
+                  <FileText className="w-3.5 h-3.5" /> Admission Paper
+                </button>
+                <button type="button" onClick={() => setProfileData(null)} className="p-1.5 rounded-lg hover:bg-white/10"><X className="w-5 h-5" /></button>
+              </div>
             </div>
 
             {/* 8 Profile Tabs */}
@@ -755,52 +922,73 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
         </div>
       )}
 
-      {/* Print Profile or Student ID Card */}
+      {/* Print Profile, Student ID Card, or Admission Paper & Iqrar Nama */}
       <PrintModal
         open={Boolean(printMode && printStudent)}
-        title={printMode === 'id_card' ? 'Official Student Identity Card' : 'Official Student Profile'}
-        subtitle={printStudent?.student_code}
+        title={
+          printMode === 'id_card'
+            ? 'Official Student Identity Card'
+            : printMode === 'admission'
+              ? 'Official Admission Form & Iqrar Nama'
+              : 'Official Student Profile'
+        }
+        subtitle={
+          printMode === 'admission'
+            ? `${printStudent?.student_code || ''}${printStudent?.admission_no ? ` · ${printStudent.admission_no}` : ''}`
+            : printStudent?.student_code
+        }
         settings={settings}
+        standalone={printMode === 'admission' || printMode === 'id_card'}
+        extraPages={
+          printStudent && printMode === 'admission' ? (
+            <IqrarNamaSheet
+              settings={settings}
+              data={buildAdmissionData(printStudent, printStudent._linkedAdmission)}
+            />
+          ) : undefined
+        }
         onClose={() => { setPrintMode(null); setPrintStudent(null); }}
       >
         {printStudent && printMode === 'id_card' && (
-          <div className="flex justify-center py-4">
-            <div className="w-80 rounded-xl border-2 border-[#171717] overflow-hidden shadow-md">
-              <div className="bg-[#171717] text-white p-3 flex items-center gap-2.5">
-                <MadrasaLogo logoUrl={settings?.logo_url} size={34} surface="dark" />
-                <div>
-                  <div className="text-xs font-bold">{settings?.name || 'Madrasa Gausiya Razvia'}</div>
-                  <div className="text-[10px] text-neutral-300">Islamnagar, Ramgarh, Palamu, Jharkhand - 822110</div>
-                </div>
-              </div>
-              <div className="bg-[#DC1726] text-white text-center text-[11px] font-bold py-1 tracking-wider">
-                STUDENT IDENTITY CARD
-              </div>
-              <div className="p-4 bg-white flex flex-col items-center text-center text-xs space-y-2">
-                {printStudent.photo_url ? (
-                  <img src={printStudent.photo_url} alt={printStudent.full_name} className="w-20 h-20 rounded-full object-cover border-2 border-[#DC1726]" />
-                ) : (
-                  <div className="w-20 h-20 rounded-full bg-neutral-100 border-2 border-[#DC1726] flex items-center justify-center text-2xl font-bold text-[#171717]">
-                    {printStudent.full_name.charAt(0)}
-                  </div>
-                )}
-                <div className="text-sm font-bold text-[#171717]">{printStudent.full_name}</div>
-                <div className="font-mono-num text-[#DC1726] font-semibold">{printStudent.student_code}</div>
-                <div className="w-full pt-2 border-t border-neutral-100 text-start space-y-1 text-[11px]">
-                  <div><span className="text-[#737373]">Class:</span> <strong>{printStudent.class_name}</strong></div>
-                  <div><span className="text-[#737373]">Father:</span> <strong>{printStudent.father_name}</strong></div>
-                  <div><span className="text-[#737373]">Mobile:</span> <strong className="font-mono-num">{printStudent.mobile || '-'}</strong></div>
-                  <div><span className="text-[#737373]">Address:</span> <strong>{printStudent.village || printStudent.address || 'Islamnagar, Ramgarh, Palamu'}</strong></div>
-                </div>
-              </div>
-            </div>
+          <div className="flex justify-center py-6">
+            <OfficialIdCard
+              type="student"
+              settings={settings}
+              person={{
+                id: printStudent.id,
+                code: printStudent.student_code || '—',
+                admission_no: printStudent.admission_no || '',
+                full_name: printStudent.full_name || 'Student',
+                father_name: printStudent.father_name || '',
+                mother_name: printStudent.mother_name || '',
+                dob: printStudent.dob || '',
+                mobile: printStudent.mobile || '',
+                address: printStudent.address || '',
+                village: printStudent.village || '',
+                district: printStudent.district || 'Palamu',
+                state: printStudent.state || 'Jharkhand',
+                pin_code: printStudent.pin_code || '',
+                class_name: printStudent.class_name || 'Unassigned',
+                photo_url: printStudent.photo_url || '',
+                status: printStudent.status || 'active',
+              }}
+            />
           </div>
+        )}
+
+        {printStudent && printMode === 'admission' && (
+          <AdmissionPaperSheet
+            settings={settings}
+            data={buildAdmissionData(printStudent, printStudent._linkedAdmission)}
+          />
         )}
 
         {printStudent && printMode === 'profile' && (
           <div className="grid grid-cols-2 gap-3 text-xs border border-neutral-200 rounded-lg p-4">
             <div><span className="text-[#737373]">Student ID:</span> <strong className="font-mono-num">{printStudent.student_code}</strong></div>
+            <div><span className="text-[#737373]">Admission No:</span> <strong className="font-mono-num">{printStudent.admission_no || '-'}</strong></div>
             <div><span className="text-[#737373]">Class:</span> <strong>{printStudent.class_name}</strong></div>
+            <div><span className="text-[#737373]">Admission Date:</span> <strong className="font-mono-num">{printStudent.admission_date || '-'}</strong></div>
             <div><span className="text-[#737373]">Full Name:</span> <strong>{printStudent.full_name}</strong></div>
             <div><span className="text-[#737373]">Father&apos;s Name:</span> <strong>{printStudent.father_name}</strong></div>
             <div><span className="text-[#737373]">Date of Birth:</span> <strong className="font-mono-num">{printStudent.dob || '-'}</strong></div>
