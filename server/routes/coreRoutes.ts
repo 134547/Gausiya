@@ -2301,7 +2301,6 @@ router.get('/parent/children/:studentId/overview', requireAuth, requireRole('par
         .from('results')
         .select('*, classes(name), examinations!inner(name, start_date, results_published, deleted_at, academic_sessions(name))')
         .eq('student_id', studentId)
-        .eq('is_published', true)
         .is('examinations.deleted_at', null)
         .order('created_at', { ascending: false }),
       student.class_id
@@ -2382,7 +2381,9 @@ router.get('/parent/children/:studentId/overview', requireAuth, requireRole('par
     });
 
     // Enrich published results with subject marks & card_meta so parent can view full Grade Card
-    const rawResults = resultsRes.data || [];
+    const rawResults = (resultsRes.data || []).filter(
+      (r: any) => Boolean(r.is_published) || Boolean(r.examinations?.results_published)
+    );
     const examIds = Array.from(new Set(rawResults.map((r: any) => r.examination_id).filter(Boolean)));
     const resultIds = rawResults.map((r: any) => r.id).filter(Boolean);
     const [{ data: marksRaw }, { data: esRaw }, { data: metaDocs }, { data: examCountsRaw }] = await Promise.all([

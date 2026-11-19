@@ -547,30 +547,36 @@ router.get('/results', requireAuth, async (req: AuthRequest, res) => {
     .order('obtained_marks', { ascending: false })
     .order('percentage', { ascending: false });
 
+  let restrictToPublished = false;
   if (user.role_slug === 'student') {
     const stId = await getStudentIdForUser(user);
     if (!stId) return res.json({ results: [] });
-    q = q.eq('student_id', stId).eq('is_published', true);
+    q = q.eq('student_id', stId);
+    restrictToPublished = true;
   } else if (user.role_slug === 'parent') {
     const pid = await getParentIdForUser(user);
     const cids = pid ? await getParentStudentIds(pid) : [];
     if (!cids.length) return res.json({ results: [] });
-    q = q.in('student_id', cids).eq('is_published', true);
+    q = q.in('student_id', cids);
+    restrictToPublished = true;
   } else if (user.role_slug === 'teacher') {
     const tid = await getTeacherIdForUser(user);
     const classIds = tid ? await getTeacherAssignedClassIds(tid) : [];
     if (!classIds.length) return res.json({ results: [] });
     q = q.in('class_id', classIds);
   } else if (user.role_slug === 'committee_member') {
-    q = q.eq('is_published', true);
+    restrictToPublished = true;
   }
 
   if (examId) q = q.eq('examination_id', examId);
   if (classId) q = q.eq('class_id', classId);
   if (studentId) q = q.eq('student_id', studentId);
 
-  const { data: resultsRaw } = await q;
-  if (!resultsRaw || resultsRaw.length === 0) {
+  const { data: fetchedResults } = await q;
+  const resultsRaw = restrictToPublished
+    ? (fetchedResults || []).filter((r: any) => Boolean(r.is_published) || Boolean(r.examinations?.results_published))
+    : fetchedResults || [];
+  if (resultsRaw.length === 0) {
     return res.json({ results: [] });
   }
 
@@ -991,7 +997,7 @@ async function saveOrUpdateResultCard(
   body: CardSavePayload,
   existingResultId?: string
 ) {
-  const { class_id, student_id, examination_id, subjects, is_published, card_meta } = body;
+  const { class_id, student_id, examination_id, subjects, card_meta } = body;
 
   if (!class_id || !student_id) {
     throw Object.assign(new Error('Class and Student selection are required.'), { status: 400 });

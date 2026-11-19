@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
+  Eye,
+  EyeOff,
   KeyRound,
   Lock,
   Mail,
@@ -53,6 +55,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   });
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -525,15 +529,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <div className="relative">
                 <Lock className="w-4 h-4 text-[#737373] absolute start-3 top-1/2 -translate-y-1/2" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   disabled={isLocked}
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder={lang === 'ur' ? 'پاس ورڈ درج کریں' : 'Enter password'}
-                  className="w-full ps-9 pe-3 py-2.5 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-[#DC1726]/20 focus:border-[#DC1726] disabled:bg-neutral-100"
+                  className="w-full ps-9 pe-10 py-2.5 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-[#DC1726]/20 focus:border-[#DC1726] disabled:bg-neutral-100"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((p) => !p)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute end-2.5 top-1/2 -translate-y-1/2 p-1 text-[#737373] hover:text-[#171717]"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
@@ -710,16 +722,26 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
             <div>
               <label className="block text-xs font-medium text-[#171717] mb-1">Password (min 6 chars) *</label>
-              <input
-                type="password"
-                required
-                minLength={6}
-                autoComplete="new-password"
-                placeholder="Create password"
-                value={registerForm.password}
-                onChange={(e) => setRegisterForm((p) => ({ ...p, password: e.target.value }))}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:border-[#DC1726]"
-              />
+              <div className="relative">
+                <input
+                  type={showRegisterPassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                  placeholder="Create password"
+                  value={registerForm.password}
+                  onChange={(e) => setRegisterForm((p) => ({ ...p, password: e.target.value }))}
+                  className="w-full px-3 pe-10 py-2 text-sm rounded-lg border border-neutral-200 focus:outline-none focus:border-[#DC1726]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterPassword((p) => !p)}
+                  aria-label={showRegisterPassword ? 'Hide password' : 'Show password'}
+                  className="absolute end-2.5 top-1/2 -translate-y-1/2 p-1 text-[#737373] hover:text-[#171717]"
+                >
+                  {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
             <button
               type="submit"
@@ -828,7 +850,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
             <button
               type="submit"
-              disabled={loading || !isSupabaseClientConfigured}
+              disabled={loading || !supabaseReady}
               className="w-full py-2.5 px-4 rounded-lg bg-[#DC1726] hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-60"
             >
               {loading ? 'Sending...' : 'Send Reset Link'}

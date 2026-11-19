@@ -11,7 +11,6 @@ import {
   Clock,
   Download,
   ExternalLink,
-  Eye,
   FileText,
   FileUp,
   GraduationCap,

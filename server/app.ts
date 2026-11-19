@@ -38,21 +38,28 @@ async function syncDefaultAddressIfLegacy() {
   }
 }
 
-async function ensurePublicRoleExists() {
+async function ensureCoreRolesExist() {
   if (!supabaseAdmin) return;
   try {
     const { error } = await supabaseAdmin
       .from('roles')
       .upsert(
-        {
-          name: 'Public',
-          slug: 'public',
-          description: 'Public account access to feed, notices, programs, committee, and contact information',
-        },
+        [
+          {
+            name: 'Public',
+            slug: 'public',
+            description: 'Public account access to feed, notices, programs, committee, and contact information',
+          },
+          {
+            name: 'Parent',
+            slug: 'parent',
+            description: 'Access to linked children profiles, attendance, results, homework, syllabus, and notices',
+          },
+        ],
         { onConflict: 'slug' }
       );
     if (error) {
-      console.warn('Public role sync skipped:', error.message);
+      console.warn('Core roles sync skipped:', error.message);
     }
   } catch {
     // ignore startup sync error
@@ -63,7 +70,7 @@ let startupSyncPromise: Promise<void> | null = null;
 
 function ensureStartupSync() {
   if (!startupSyncPromise) {
-    startupSyncPromise = Promise.all([syncDefaultAddressIfLegacy(), ensurePublicRoleExists()]).then(() => {});
+    startupSyncPromise = Promise.all([syncDefaultAddressIfLegacy(), ensureCoreRolesExist()]).then(() => {});
   }
   return startupSyncPromise;
 }

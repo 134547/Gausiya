@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Search, X } from 'lucide-react';
-import { CHAT_EMOJI_CATEGORIES } from '../data/chatEmojis.ts';
+import { CHAT_EMOJI_CATEGORIES } from '../lib/chatEmojis.ts';
 
 interface EmojiPickerPanelProps {
   onSelect: (emoji: string) => void;

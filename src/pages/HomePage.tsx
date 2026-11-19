@@ -343,6 +343,15 @@ export const HomePage: React.FC<HomePageProps> = ({
                   Check Result
                 </button>
               )}
+              {onOpenParentRegister && (
+                <button
+                  type="button"
+                  onClick={() => { setMobileMenuOpen(false); onOpenParentRegister(); }}
+                  className="flex-1 py-2 rounded-lg bg-[#1E3A8A] text-white font-semibold text-center"
+                >
+                  Parent Register
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -954,6 +963,11 @@ export const HomePage: React.FC<HomePageProps> = ({
             <button type="button" onClick={onOpenLogin} className="hover:text-white underline">
               Portal Login
             </button>
+            {onOpenParentRegister && (
+              <button type="button" onClick={onOpenParentRegister} className="hover:text-white underline">
+                Parent Register
+              </button>
+            )}
             <button type="button" onClick={onOpenAdmission} className="hover:text-white underline">
               Online Admission
             </button>

@@ -33,7 +33,7 @@ import { downloadImageFile, sanitizeFileName } from '../lib/download.ts';
 import { MadrasaSettings, User } from '../types.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { EmojiPickerPanel } from '../components/EmojiPickerPanel.tsx';
-import { QUICK_REACTION_EMOJIS } from '../data/chatEmojis.ts';
+import { QUICK_REACTION_EMOJIS } from '../lib/chatEmojis.ts';
 
 interface ChatsPageProps {
   user: User;

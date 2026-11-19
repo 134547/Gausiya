@@ -305,11 +305,11 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
         studentIds.length
           ? admin
               .from('results')
-              .select('*, examinations(name), students(full_name)')
+              .select('*, examinations!inner(name, results_published, deleted_at), students(full_name)')
               .in('student_id', studentIds)
-              .eq('is_published', true)
+              .is('examinations.deleted_at', null)
               .order('created_at', { ascending: false })
-              .limit(5)
+              .limit(15)
           : Promise.resolve({ data: [] }),
         admin
           .from('notices')
@@ -353,11 +353,14 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
         };
       });
 
-      const recentResults = (resultsRes.data || []).map((r: any) => ({
-        ...r,
-        exam_name: r.examinations?.name || '',
-        student_name: r.students?.full_name || '',
-      }));
+      const recentResults = (resultsRes.data || [])
+        .filter((r: any) => Boolean(r.is_published) || Boolean(r.examinations?.results_published))
+        .slice(0, 5)
+        .map((r: any) => ({
+          ...r,
+          exam_name: r.examinations?.name || '',
+          student_name: r.students?.full_name || '',
+        }));
 
       return res.json({
         role: 'parent',
@@ -459,11 +462,11 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
       stId
         ? admin
             .from('results')
-            .select('*, examinations(name, start_date)')
+            .select('*, examinations!inner(name, start_date, results_published, deleted_at)')
             .eq('student_id', stId)
-            .eq('is_published', true)
+            .is('examinations.deleted_at', null)
             .order('created_at', { ascending: false })
-            .limit(5)
+            .limit(15)
         : Promise.resolve({ data: [] }),
       admin
         .from('notices')
@@ -585,11 +588,14 @@ router.get('/', requireAuth, async (req: AuthRequest, res) => {
     });
     const homeworkPendingCount = recentHomework.filter((h: any) => h.submission_status === 'pending').length;
 
-    const recentResults = (resultsRes.data || []).map((r: any) => ({
-      ...r,
-      exam_name: r.examinations?.name || '',
-      exam_date: r.examinations?.start_date || '',
-    }));
+    const recentResults = (resultsRes.data || [])
+      .filter((r: any) => Boolean(r.is_published) || Boolean(r.examinations?.results_published))
+      .slice(0, 5)
+      .map((r: any) => ({
+        ...r,
+        exam_name: r.examinations?.name || '',
+        exam_date: r.examinations?.start_date || '',
+      }));
 
     const onlineClasses = (ocRes.data || []).map((oc: any) => ({
       id: oc.id,
