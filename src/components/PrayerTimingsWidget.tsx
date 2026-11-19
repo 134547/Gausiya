@@ -33,7 +33,8 @@ import {
 import { User } from '../types.ts';
 
 interface PrayerTimingsWidgetProps {
-  user: User;
+  user?: User | null;
+  compact?: boolean;
 }
 
 interface PrayerSettingsData {
@@ -140,8 +141,9 @@ function isPdfAsset(url?: string, mime?: string, name?: string): boolean {
   return m.includes('pdf') || n.endsWith('.pdf') || u.endsWith('.pdf');
 }
 
-export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }) => {
-  const isSuperAdmin = user.role_slug === 'super_admin';
+export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user, compact = false }) => {
+  const isSuperAdmin = user?.role_slug === 'super_admin';
+  const isPublicMode = !user;
 
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'timings' | 'ramzan' | 'manage'>('timings');
@@ -169,9 +171,16 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
   const fetchPrayerSettings = useCallback(async () => {
     setLoadingSettings(true);
     try {
-      const res = await apiRequest<{ settings: PrayerSettingsData; tableReady?: boolean }>(
-        '/api/prayer-timings'
-      );
+      let res: { settings?: PrayerSettingsData; tableReady?: boolean };
+      if (isPublicMode) {
+        const raw = await fetch('/api/public/prayer-timings', { cache: 'no-store' });
+        if (!raw.ok) throw new Error('Failed to load public prayer timings');
+        res = (await raw.json()) as { settings?: PrayerSettingsData; tableReady?: boolean };
+      } else {
+        res = await apiRequest<{ settings: PrayerSettingsData; tableReady?: boolean }>(
+          '/api/prayer-timings'
+        );
+      }
       const merged = { ...DEFAULT_SETTINGS, ...(res.settings || {}) };
       setPrayerSettings(merged);
       setForm(merged);
@@ -199,7 +208,7 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
     } finally {
       setLoadingSettings(false);
     }
-  }, []);
+  }, [isPublicMode]);
 
   useEffect(() => {
     fetchPrayerSettings();
@@ -240,9 +249,17 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
       lastGeoCoordsRef.current = { lat, lng };
 
       try {
-        const res = await apiRequest<{ areaName?: string; timeZone?: string }>(
-          `/api/prayer-timings/reverse-geocode?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`
-        );
+        const query = `lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`;
+        let res: { areaName?: string; timeZone?: string };
+        if (isPublicMode) {
+          const raw = await fetch(`/api/public/prayer-timings/reverse-geocode?${query}`);
+          if (!raw.ok) throw new Error('Geocode unavailable');
+          res = (await raw.json()) as { areaName?: string; timeZone?: string };
+        } else {
+          res = await apiRequest<{ areaName?: string; timeZone?: string }>(
+            `/api/prayer-timings/reverse-geocode?${query}`
+          );
+        }
         const areaName = res.areaName || `Live GPS (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)`;
         const resolvedTz = resolveSafeTimeZone(res.timeZone, lat, lng);
         setLocation((prev) => {
@@ -556,10 +573,16 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
             void fetchPrayerSettings();
           }}
           title={`Namaz's Time (${location.areaName}) — Next Namaz: ${upcomingNamaz.name} ${upcomingNamaz.namazFormatted} (${upcomingNamaz.remainingLabel} left) | Live Time: ${liveLocationTime}`}
-          className="inline-flex items-center gap-1.5 sm:gap-2 px-2.5 py-1.5 hover:bg-emerald-100/80 transition-colors cursor-pointer"
+          className={`inline-flex items-center hover:bg-emerald-100/80 transition-colors cursor-pointer ${
+            compact ? 'gap-1.5 px-2 py-1.5' : 'gap-1.5 sm:gap-2 px-2.5 py-1.5'
+          }`}
         >
           <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-700 shrink-0" />
-          <div className="flex items-center gap-1.5 text-[11px] sm:text-xs leading-none whitespace-nowrap">
+          <div
+            className={`flex items-center leading-none whitespace-nowrap ${
+              compact ? 'gap-1 text-[11px]' : 'gap-1.5 text-[11px] sm:text-xs'
+            }`}
+          >
             <span className="font-extrabold text-emerald-950 tracking-tight">
               Namaz&apos;s Time
             </span>
@@ -596,7 +619,7 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user }
           ) : (
             <LocateFixed className="w-3.5 h-3.5 shrink-0" />
           )}
-          <span className="hidden sm:inline">
+          <span className={compact ? 'inline' : 'hidden sm:inline'}>
             {locating ? '...' : location.gpsEnabled ? 'ON' : 'OFF'}
           </span>
         </button>

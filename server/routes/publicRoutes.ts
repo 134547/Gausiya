@@ -947,4 +947,176 @@ router.get('/image-data', async (req, res) => {
   }
 });
 
+// ==================== PUBLIC HANAFI PRAYER TIMINGS (NO LOGIN REQUIRED) ====================
+const DEFAULT_PUBLIC_PRAYER_SETTINGS = {
+  id: 1,
+  jumuah_azan_time: '12:45 PM',
+  jumuah_namaz_time: '01:30 PM',
+  jumuah_note: 'Khutbah starts 15 minutes before Jamaat',
+  eid_ul_fitr_time: '07:30 AM',
+  eid_ul_fitr_note: 'Madrasa Eidgah / Masjid',
+  eid_ul_adha_time: '07:00 AM',
+  eid_ul_adha_note: 'Madrasa Eidgah / Masjid',
+  fajr_jamaat_offset: 20,
+  zuhr_jamaat_offset: 15,
+  asr_jamaat_offset: 15,
+  maghrib_jamaat_offset: 5,
+  isha_jamaat_offset: 15,
+  ramzan_timetable_title: 'Ramzan Mubarak Timetable',
+  ramzan_timetable_url: '',
+  ramzan_timetable_type: '',
+  ramzan_timetable_name: '',
+  ramzan_timetable_visible: false,
+  default_location_name: 'Islamnagar, Ramgarh, Palamu, Jharkhand',
+  default_latitude: 23.88,
+  default_longitude: 84.08,
+};
+
+function isMissingPublicPrayerTableError(error: any): boolean {
+  const code = String(error?.code || '');
+  const msg = String(error?.message || '').toLowerCase();
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    (msg.includes('prayer_settings') && (msg.includes('does not exist') || msg.includes('schema cache')))
+  );
+}
+
+router.get('/prayer-timings', async (_req, res) => {
+  try {
+    if (!isSupabaseServerConfigured || !supabaseAdmin) {
+      return res.json({
+        settings: { ...DEFAULT_PUBLIC_PRAYER_SETTINGS },
+        tableReady: false,
+      });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('prayer_settings')
+      .select('*')
+      .eq('id', 1)
+      .maybeSingle();
+
+    if (error) {
+      if (isMissingPublicPrayerTableError(error)) {
+        return res.json({
+          settings: { ...DEFAULT_PUBLIC_PRAYER_SETTINGS },
+          tableReady: false,
+        });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+
+    const merged = {
+      ...DEFAULT_PUBLIC_PRAYER_SETTINGS,
+      ...(data || {}),
+    };
+
+    const showRamzan = Boolean(merged.ramzan_timetable_visible);
+    const resolvedRamzanUrl =
+      showRamzan && merged.ramzan_timetable_url
+        ? await resolveStorageUrl(merged.ramzan_timetable_url)
+        : '';
+
+    return res.json({
+      settings: {
+        ...merged,
+        ramzan_timetable_url: showRamzan ? resolvedRamzanUrl : '',
+        ramzan_timetable_name: showRamzan ? merged.ramzan_timetable_name : '',
+        ramzan_timetable_type: showRamzan ? merged.ramzan_timetable_type : '',
+        ramzan_timetable_visible: showRamzan,
+      },
+      tableReady: true,
+    });
+  } catch {
+    return res.json({
+      settings: { ...DEFAULT_PUBLIC_PRAYER_SETTINGS },
+      tableReady: false,
+    });
+  }
+});
+
+router.get('/prayer-timings/reverse-geocode', async (req, res) => {
+  if (!checkIpRateLimit(req, res, 'public_geo', 30)) return;
+
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return res.status(400).json({ error: 'Valid latitude and longitude are required.' });
+  }
+
+  const fallbackLabel = `Live GPS (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)`;
+  const indiaBounds = lat >= 6 && lat <= 38 && lng >= 68 && lng <= 98;
+  const fallbackTz = indiaBounds ? 'Asia/Kolkata' : '';
+
+  const fetchNominatim = async (): Promise<string> => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4500);
+      const resp = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lng))}&zoom=12&accept-language=en`,
+        {
+          headers: {
+            'User-Agent': 'MadrasaGausiyaRazviaPortal/1.0',
+            Accept: 'application/json',
+          },
+          signal: controller.signal,
+        }
+      );
+      clearTimeout(timer);
+      if (!resp.ok) return fallbackLabel;
+      const geo: any = await resp.json().catch(() => null);
+      const addr = geo?.address || {};
+      const locality =
+        addr.village ||
+        addr.town ||
+        addr.suburb ||
+        addr.city_district ||
+        addr.city ||
+        addr.municipality ||
+        '';
+      const district = addr.state_district || addr.county || '';
+      const state = addr.state || '';
+      const country = addr.country || '';
+
+      const parts: string[] = [];
+      for (const p of [locality, district, state, country]) {
+        const clean = String(p || '').trim();
+        if (clean && !parts.some((x) => x.toLowerCase() === clean.toLowerCase())) {
+          parts.push(clean);
+        }
+      }
+      return parts.slice(0, 3).join(', ') || geo?.display_name?.split(',').slice(0, 3).join(', ') || fallbackLabel;
+    } catch {
+      return fallbackLabel;
+    }
+  };
+
+  const fetchTimeZone = async (): Promise<string> => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3500);
+      const resp = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(String(lat))}&longitude=${encodeURIComponent(String(lng))}&current=is_day&timezone=auto`,
+        {
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        }
+      );
+      clearTimeout(timer);
+      if (!resp.ok) return fallbackTz;
+      const data: any = await resp.json().catch(() => null);
+      if (typeof data?.timezone === 'string' && data.timezone.includes('/')) {
+        return data.timezone;
+      }
+      return fallbackTz;
+    } catch {
+      return fallbackTz;
+    }
+  };
+
+  const [areaName, timeZone] = await Promise.all([fetchNominatim(), fetchTimeZone()]);
+  return res.json({ areaName, timeZone });
+});
+
 export default router;

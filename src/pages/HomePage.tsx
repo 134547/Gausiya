@@ -27,6 +27,7 @@ import heroCampusImg from '../assets/images/gausiya_madarsa_hero_crest_179480487
 import { Language } from '../i18n/translations.ts';
 import { MadrasaSettings } from '../types.ts';
 import { MadrasaLogo } from '../components/MadrasaLogo.tsx';
+import { PrayerTimingsWidget } from '../components/PrayerTimingsWidget.tsx';
 import { StudentResultLookupWidget } from '../components/StudentResultLookupWidget.tsx';
 import { downloadFeedPostCard, downloadImageFile } from '../lib/download.ts';
 
@@ -134,7 +135,6 @@ export const HomePage: React.FC<HomePageProps> = ({
   data,
   lang,
   onOpenLogin,
-  onOpenParentRegister,
   onOpenAdmission,
   onOpenAdmissionStatus,
   onOpenCheckResult,
@@ -229,9 +229,9 @@ export const HomePage: React.FC<HomePageProps> = ({
     <div className="min-h-screen bg-[#FAFAFA] text-[#171717]">
       {/* Sticky Top Navbar */}
       <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-neutral-200 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <a href="#top" className="flex items-center gap-3 shrink-0">
-            <MadrasaLogo logoUrl={settings?.logo_url} size={42} />
+        <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 xl:gap-4">
+          <a href="#top" className="flex items-center gap-2.5 shrink-0">
+            <MadrasaLogo logoUrl={settings?.logo_url} size={40} />
             <div className="hidden sm:block">
               <div className="text-sm font-bold text-[#DC1726] leading-tight whitespace-nowrap">
                 {lang === 'ur' ? (settings?.name_urdu || 'مدرسہ غوثیہ رضویہ') : (settings?.name || 'Madarsa Gausiya Razvia')}
@@ -240,7 +240,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
           </a>
 
-          <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-[#737373]">
+          <nav className="hidden xl:flex items-center gap-4 2xl:gap-5 text-sm font-medium text-[#737373]">
             <a href="#about" className="hover:text-[#DC1726] transition-colors whitespace-nowrap shrink-0">
               {lang === 'ur' ? 'تعارف' : 'About'}
             </a>
@@ -269,7 +269,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               <button
                 type="button"
                 onClick={scrollToCheckResult}
-                className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 whitespace-nowrap cursor-pointer"
+                className="hidden lg:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 whitespace-nowrap cursor-pointer"
               >
                 <Award className="w-3.5 h-3.5 text-[#DC1726]" />
                 <span>{lang === 'ur' ? 'نتائج' : 'Check Result'}</span>
@@ -278,7 +278,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <button
               type="button"
               onClick={onOpenAdmission}
-              className={`hidden md:inline-flex items-center px-3.5 py-2 rounded-lg border text-xs font-semibold whitespace-nowrap ${
+              className={`hidden md:inline-flex items-center px-3 py-2 rounded-lg border text-xs font-semibold whitespace-nowrap ${
                 admissionsOpen
                   ? 'border-neutral-200 bg-white text-[#171717] hover:bg-neutral-50'
                   : 'border-red-200 bg-red-50 text-[#DC1726] hover:bg-red-100'
@@ -286,10 +286,13 @@ export const HomePage: React.FC<HomePageProps> = ({
             >
               {lang === 'ur' ? (admissionsOpen ? 'داخلہ فارم' : 'داخلہ بند') : (admissionsOpen ? 'Admission' : 'Admission Closed')}
             </button>
+            <div className="hidden sm:flex items-center shrink-0">
+              <PrayerTimingsWidget user={null} compact />
+            </div>
             <button
               type="button"
               onClick={onOpenLogin}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg gold-gradient text-white text-xs font-semibold shadow-md hover:opacity-95 transition-opacity whitespace-nowrap"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg gold-gradient text-white text-xs font-semibold shadow-md hover:opacity-95 transition-opacity whitespace-nowrap cursor-pointer"
             >
               <LogIn className="w-3.5 h-3.5" />
               <span>{lang === 'ur' ? 'پورٹل لاگ ان' : 'Portal Login'}</span>
@@ -297,7 +300,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <button
               type="button"
               onClick={() => setMobileMenuOpen((p) => !p)}
-              className="lg:hidden p-2 rounded-lg border border-neutral-200 bg-white text-[#171717]"
+              className="xl:hidden p-2 rounded-lg border border-neutral-200 bg-white text-[#171717]"
               aria-label="Toggle menu"
             >
               {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
@@ -305,9 +308,14 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
         </div>
 
+        {/* Mobile Namaz's Time Bar (always visible without login on small screens) */}
+        <div className="sm:hidden border-t border-emerald-100 bg-emerald-50/40 px-3 py-1.5 flex items-center justify-center overflow-x-auto">
+          <PrayerTimingsWidget user={null} compact />
+        </div>
+
         {/* Mobile Drawer Menu */}
         {mobileMenuOpen && (
-          <div className="lg:hidden border-t border-neutral-200 bg-white px-4 py-3 space-y-2 text-xs">
+          <div className="xl:hidden border-t border-neutral-200 bg-white px-4 py-3 space-y-2 text-xs">
             <div className="grid grid-cols-3 gap-2 pb-2 border-b border-neutral-100">
               <a href="#about" onClick={() => setMobileMenuOpen(false)} className="py-1.5 font-medium text-[#171717]">About</a>
               <a href="#classes" onClick={() => setMobileMenuOpen(false)} className="py-1.5 font-medium text-[#171717]">Classes</a>
@@ -341,15 +349,6 @@ export const HomePage: React.FC<HomePageProps> = ({
                   className="flex-1 py-2 rounded-lg border border-neutral-200 font-semibold text-center"
                 >
                   Check Result
-                </button>
-              )}
-              {onOpenParentRegister && (
-                <button
-                  type="button"
-                  onClick={() => { setMobileMenuOpen(false); onOpenParentRegister(); }}
-                  className="flex-1 py-2 rounded-lg bg-[#1E3A8A] text-white font-semibold text-center"
-                >
-                  Parent Register
                 </button>
               )}
             </div>
@@ -447,24 +446,6 @@ export const HomePage: React.FC<HomePageProps> = ({
                 {lang === 'ur' ? 'نتیجہ دیکھیں' : 'Check Result'}
               </button>
             )}
-
-            {onOpenParentRegister && (
-              <button
-                type="button"
-                onClick={onOpenParentRegister}
-                className="inline-flex items-center gap-1.5 px-5 py-3 rounded-lg bg-[#1E3A8A] hover:bg-blue-900 text-white text-sm font-semibold shadow-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                <Users className="w-4 h-4" />
-                <span>{lang === 'ur' ? 'والدین اکاؤنٹ' : 'Parent Register'}</span>
-              </button>
-            )}
-
-            <a
-              href="#about"
-              className="px-6 py-3 rounded-lg border border-white/30 bg-black/45 text-white hover:bg-black/60 backdrop-blur-sm text-sm font-semibold transition-colors whitespace-nowrap shrink-0"
-            >
-              {lang === 'ur' ? 'مدرسہ کا تعارف' : 'Explore Madarsa'}
-            </a>
           </div>
         </div>
 
@@ -963,11 +944,6 @@ export const HomePage: React.FC<HomePageProps> = ({
             <button type="button" onClick={onOpenLogin} className="hover:text-white underline">
               Portal Login
             </button>
-            {onOpenParentRegister && (
-              <button type="button" onClick={onOpenParentRegister} className="hover:text-white underline">
-                Parent Register
-              </button>
-            )}
             <button type="button" onClick={onOpenAdmission} className="hover:text-white underline">
               Online Admission
             </button>
