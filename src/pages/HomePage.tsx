@@ -6,10 +6,12 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Download,
   Eye,
   GraduationCap,
   Heart,
+  Home,
   LogIn,
   Mail,
   MapPin,
@@ -229,25 +231,26 @@ export const HomePage: React.FC<HomePageProps> = ({
     <div className="min-h-screen bg-[#FAFAFA] text-[#171717]">
       {/* Sticky Top Navbar */}
       <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-neutral-200 shadow-xs">
-        <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 xl:gap-4">
-          <a href="#top" className="flex items-center gap-2.5 shrink-0">
-            <MadrasaLogo logoUrl={settings?.logo_url} size={40} />
-            <div className="hidden sm:block">
-              <div className="text-sm font-bold text-[#DC1726] leading-tight whitespace-nowrap">
+        <div className="max-w-[1440px] mx-auto px-3 sm:px-5 md:px-6 h-14 md:h-16 flex items-center justify-between gap-2 xl:gap-4">
+          <a href="#top" className="flex items-center gap-2.5 shrink-0 min-w-0">
+            <MadrasaLogo logoUrl={settings?.logo_url} size={38} />
+            <div className="min-w-0">
+              <div className="text-xs sm:text-sm font-bold text-[#DC1726] leading-tight truncate max-w-[155px] sm:max-w-none">
                 {lang === 'ur' ? (settings?.name_urdu || 'مدرسہ غوثیہ رضویہ') : (settings?.name || 'Madarsa Gausiya Razvia')}
               </div>
-              <div className="text-[11px] text-[#737373]">Islamnagar</div>
+              <div className="text-[10px] sm:text-[11px] text-[#737373]">Islamnagar</div>
             </div>
           </a>
 
-          <nav className="hidden xl:flex items-center gap-4 2xl:gap-5 text-sm font-medium text-[#737373]">
+          {/* Tablet & Desktop Web Navigation Links */}
+          <nav className="hidden lg:flex items-center gap-3.5 xl:gap-5 text-xs xl:text-sm font-medium text-[#737373]">
             <a href="#about" className="hover:text-[#DC1726] transition-colors whitespace-nowrap shrink-0">
               {lang === 'ur' ? 'تعارف' : 'About'}
             </a>
             <a href="#classes" className="hover:text-[#DC1726] transition-colors whitespace-nowrap shrink-0">
               {lang === 'ur' ? 'درجات' : 'Classes'}
             </a>
-            <a href="#features" className="hover:text-[#DC1726] transition-colors whitespace-nowrap shrink-0">
+            <a href="#features" className="hidden xl:inline hover:text-[#DC1726] transition-colors whitespace-nowrap shrink-0">
               {lang === 'ur' ? 'خصوصیات' : 'Features'}
             </a>
             <a href="#notices" className="hover:text-[#DC1726] transition-colors whitespace-nowrap shrink-0">
@@ -256,7 +259,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <a href="#feed" className="hover:text-[#DC1726] transition-colors whitespace-nowrap shrink-0">
               {lang === 'ur' ? 'فیڈ' : 'Feed'}
             </a>
-            <a href="#committee" className="hover:text-[#DC1726] transition-colors whitespace-nowrap shrink-0">
+            <a href="#committee" className="hidden xl:inline hover:text-[#DC1726] transition-colors whitespace-nowrap shrink-0">
               {lang === 'ur' ? 'کمیٹی' : 'Committee'}
             </a>
             <a href="#contact" className="hover:text-[#DC1726] transition-colors whitespace-nowrap shrink-0">
@@ -264,12 +267,12 @@ export const HomePage: React.FC<HomePageProps> = ({
             </a>
           </nav>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {resultsOpen && (
               <button
                 type="button"
                 onClick={scrollToCheckResult}
-                className="hidden lg:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 whitespace-nowrap cursor-pointer"
+                className="hidden xl:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 whitespace-nowrap cursor-pointer"
               >
                 <Award className="w-3.5 h-3.5 text-[#DC1726]" />
                 <span>{lang === 'ur' ? 'نتائج' : 'Check Result'}</span>
@@ -278,7 +281,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <button
               type="button"
               onClick={onOpenAdmission}
-              className={`hidden md:inline-flex items-center px-3 py-2 rounded-lg border text-xs font-semibold whitespace-nowrap ${
+              className={`hidden md:inline-flex items-center px-3 py-2 rounded-lg border text-xs font-semibold whitespace-nowrap cursor-pointer ${
                 admissionsOpen
                   ? 'border-neutral-200 bg-white text-[#171717] hover:bg-neutral-50'
                   : 'border-red-200 bg-red-50 text-[#DC1726] hover:bg-red-100'
@@ -286,13 +289,13 @@ export const HomePage: React.FC<HomePageProps> = ({
             >
               {lang === 'ur' ? (admissionsOpen ? 'داخلہ فارم' : 'داخلہ بند') : (admissionsOpen ? 'Admission' : 'Admission Closed')}
             </button>
-            <div className="hidden sm:flex items-center shrink-0">
+            <div className="hidden md:flex items-center shrink-0">
               <PrayerTimingsWidget user={null} compact />
             </div>
             <button
               type="button"
               onClick={onOpenLogin}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg gold-gradient text-white text-xs font-semibold shadow-md hover:opacity-95 transition-opacity whitespace-nowrap cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-lg gold-gradient text-white text-xs font-semibold shadow-md hover:opacity-95 transition-opacity whitespace-nowrap cursor-pointer"
             >
               <LogIn className="w-3.5 h-3.5" />
               <span>{lang === 'ur' ? 'پورٹل لاگ ان' : 'Portal Login'}</span>
@@ -300,7 +303,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <button
               type="button"
               onClick={() => setMobileMenuOpen((p) => !p)}
-              className="xl:hidden p-2 rounded-lg border border-neutral-200 bg-white text-[#171717]"
+              className="lg:hidden min-w-[38px] min-h-[38px] rounded-xl md:rounded-lg border border-neutral-200 bg-white text-[#171717] flex items-center justify-center"
               aria-label="Toggle menu"
             >
               {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
@@ -308,14 +311,14 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
         </div>
 
-        {/* Mobile Namaz's Time Bar (always visible without login on small screens) */}
-        <div className="sm:hidden border-t border-emerald-100 bg-emerald-50/40 px-3 py-1.5 flex items-center justify-center overflow-x-auto">
+        {/* Phone Namaz's Time Bar (always visible without login on phones) */}
+        <div className="md:hidden border-t border-emerald-100 bg-emerald-50/40 px-3 py-1.5 flex items-center justify-center overflow-x-auto no-scrollbar">
           <PrayerTimingsWidget user={null} compact />
         </div>
 
-        {/* Mobile Drawer Menu */}
+        {/* Phone & Tablet Compact Drawer Menu */}
         {mobileMenuOpen && (
-          <div className="xl:hidden border-t border-neutral-200 bg-white px-4 py-3 space-y-2 text-xs">
+          <div className="lg:hidden border-t border-neutral-200 bg-white px-4 py-3 space-y-2 text-xs">
             <div className="grid grid-cols-3 gap-2 pb-2 border-b border-neutral-100">
               <a href="#about" onClick={() => setMobileMenuOpen(false)} className="py-1.5 font-medium text-[#171717]">About</a>
               <a href="#classes" onClick={() => setMobileMenuOpen(false)} className="py-1.5 font-medium text-[#171717]">Classes</a>
@@ -357,7 +360,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       </header>
 
       {/* Hero Section */}
-      <section id="top" className="relative overflow-hidden min-h-[620px] sm:min-h-[720px] lg:min-h-[820px] flex items-end">
+      <section id="top" className="relative overflow-hidden min-h-[470px] sm:min-h-[600px] md:min-h-[700px] lg:min-h-[820px] flex items-end">
         <img
           src={heroCampusImg}
           alt="Madarsa Gausiya Razvia Islamnagar Campus"
@@ -366,7 +369,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         />
         <div className="absolute inset-0 bg-gradient-to-b from-black/5 via-black/45 to-black/85" />
 
-        <div className="relative w-full max-w-5xl mx-auto px-4 pt-60 sm:pt-72 md:pt-80 lg:pt-96 pb-20 md:pb-24 text-center">
+        <div className="relative w-full max-w-5xl mx-auto px-4 pt-36 sm:pt-56 md:pt-72 lg:pt-96 pb-14 md:pb-24 text-center">
           <p
             className="text-sm sm:text-base font-medium tracking-widest text-amber-300/95 drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)] mb-3"
             dir="rtl"
@@ -929,7 +932,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       </section>
 
       {/* Footer */}
-      <footer className="green-gradient py-10 text-white/85">
+      <footer className="green-gradient pt-10 pb-24 md:pb-10 text-white/85">
         <div className="max-w-6xl mx-auto px-4 text-center space-y-2">
           <div className="flex items-center justify-center gap-2.5 mb-2">
             <MadrasaLogo logoUrl={settings?.logo_url} size={32} surface="dark" />
@@ -965,6 +968,50 @@ export const HomePage: React.FC<HomePageProps> = ({
           <p className="pt-3 text-[11px] text-white/55">Ilm · Akhlaq · Taleem · Mustaqbil</p>
         </div>
       </footer>
+
+      {/* Native Mobile App Bottom Navigation Bar for Public Visitors (< 768px only) */}
+      <nav
+        aria-label="Mobile quick actions"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-neutral-200 shadow-[0_-4px_18px_rgba(0,0,0,0.06)] pb-safe no-print"
+      >
+        <div className={`grid ${resultsOpen ? 'grid-cols-4' : 'grid-cols-3'} items-center h-[58px]`}>
+          <a
+            href="#top"
+            className="flex flex-col items-center justify-center gap-1 h-full min-h-[48px] text-[#DC1726] active:scale-95 transition-transform"
+          >
+            <Home className="w-5 h-5" />
+            <span className="text-[10px] font-bold leading-none">Home</span>
+          </a>
+          {resultsOpen && (
+            <button
+              type="button"
+              onClick={scrollToCheckResult}
+              className="flex flex-col items-center justify-center gap-1 h-full min-h-[48px] text-neutral-600 active:scale-95 transition-transform"
+            >
+              <Award className="w-5 h-5" />
+              <span className="text-[10px] font-semibold leading-none">Result</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onOpenAdmission}
+            className="flex flex-col items-center justify-center gap-1 h-full min-h-[48px] text-neutral-600 active:scale-95 transition-transform"
+          >
+            <ClipboardList className="w-5 h-5" />
+            <span className="text-[10px] font-semibold leading-none">
+              {admissionsOpen ? 'Admission' : 'Closed'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenLogin}
+            className="flex flex-col items-center justify-center gap-1 h-full min-h-[48px] text-neutral-700 active:scale-95 transition-transform"
+          >
+            <LogIn className="w-5 h-5 text-[#DC1726]" />
+            <span className="text-[10px] font-bold leading-none text-[#DC1726]">Login</span>
+          </button>
+        </div>
+      </nav>
       {/* Public Feed View Modal */}
       {viewFeedPost && (() => {
         const imgs: string[] = Array.isArray(viewFeedPost.parsedImages) ? viewFeedPost.parsedImages : [];

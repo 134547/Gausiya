@@ -77,28 +77,32 @@ export const TopBar: React.FC<TopBarProps> = ({
       : `${t.institutionName} · ${t.institutionSub}`;
 
   return (
-    <header className="sticky top-0 z-20 bg-white border-b border-neutral-200 px-4 sm:px-6 py-3 no-print">
-      <div className="flex items-center justify-between gap-4">
-        {/* Left: Hamburger + Title */}
-        <div className="flex items-center gap-3 min-w-0">
+    <header className="sticky top-0 z-20 bg-white/95 backdrop-blur-md border-b border-neutral-200 no-print">
+      <div className="px-3 sm:px-5 md:px-6 py-2.5 md:py-3 flex items-center justify-between gap-2 sm:gap-4">
+        {/* Left: Phone Menu Trigger + Title */}
+        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
           <button
             type="button"
             onClick={onOpenMobileMenu}
-            className="lg:hidden p-2 rounded-lg border border-neutral-200 text-[#171717] hover:bg-neutral-100"
+            className="md:hidden min-w-[40px] min-h-[40px] rounded-xl border border-neutral-200 bg-white text-[#171717] hover:bg-neutral-100 active:scale-95 transition-transform flex items-center justify-center shrink-0"
             aria-label="Open menu"
           >
             <Menu className="w-5 h-5" />
           </button>
           <div className="min-w-0">
-            <h1 className="text-lg sm:text-xl font-bold text-[#171717] truncate">{title}</h1>
-            <p className="text-xs text-[#737373] truncate hidden sm:block">{subtitle}</p>
+            <h1 className="text-base sm:text-lg md:text-xl font-bold text-[#171717] truncate leading-tight">
+              {title}
+            </h1>
+            <p className="text-[11px] md:text-xs text-[#737373] truncate hidden sm:block">{subtitle}</p>
           </div>
         </div>
 
-        {/* Right: Hanafi Namaz Timings, Notifications, Profile, Logout */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          {/* Hanafi Fiqh Azan, Namaz, Jumu'ah, Eid & Ramzan Widget */}
-          <PrayerTimingsWidget user={user} />
+        {/* Right: Hanafi Namaz Timings (tablet+desktop), Notifications, Profile, Logout */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 md:gap-3 shrink-0">
+          {/* Tablet & Desktop inline Hanafi Namaz Timings Widget */}
+          <div className="hidden md:flex items-center shrink-0">
+            <PrayerTimingsWidget user={user} compact />
+          </div>
 
           {/* Notification Bell */}
           <div className="relative" ref={dropRef}>
@@ -111,7 +115,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   return next;
                 })
               }
-              className="relative p-2 rounded-lg border border-neutral-200 bg-white text-[#171717] hover:bg-neutral-50 transition-colors"
+              className="relative min-w-[40px] min-h-[40px] md:min-w-0 md:min-h-0 p-2 rounded-xl md:rounded-lg border border-neutral-200 bg-white text-[#171717] hover:bg-neutral-50 transition-colors flex items-center justify-center cursor-pointer"
               aria-label="Notifications"
             >
               <Bell className="w-4 h-4" />
@@ -123,7 +127,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             </button>
 
             {notifOpen && (
-              <div className="absolute end-0 mt-2 w-80 sm:w-96 rounded-xl bg-white border border-neutral-200 shadow-xl z-40 overflow-hidden">
+              <div className="fixed sm:absolute start-3 end-3 sm:start-auto sm:end-0 top-[56px] sm:top-auto sm:mt-2 sm:w-96 rounded-2xl sm:rounded-xl bg-white border border-neutral-200 shadow-2xl sm:shadow-xl z-50 overflow-hidden">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-100 bg-neutral-50">
                   <span className="text-sm font-semibold text-[#171717]">
                     {t.common.notifications} ({unreadCount})
@@ -205,28 +209,56 @@ export const TopBar: React.FC<TopBarProps> = ({
             )}
           </div>
 
-          {/* Profile Chip */}
+          {/* Mobile Avatar Trigger -> Profile */}
           <button
             type="button"
             onClick={() => onSelectModule('profile')}
-            className="hidden sm:flex items-center gap-2 ps-1.5 pe-3 py-1 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 transition-colors"
+            className="md:hidden min-w-[40px] min-h-[40px] rounded-full border border-neutral-200 bg-white flex items-center justify-center active:scale-95 transition-transform shrink-0"
+            aria-label="Open profile"
+          >
+            {user.photo_url ? (
+              <img
+                src={user.photo_url}
+                alt={user.full_name}
+                referrerPolicy="no-referrer"
+                className="w-8 h-8 rounded-full object-cover"
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-red-50 text-[#DC1726] flex items-center justify-center text-xs font-bold">
+                {user.full_name.charAt(0).toUpperCase()}
+              </div>
+            )}
+          </button>
+
+          {/* Tablet & Desktop Profile Chip */}
+          <button
+            type="button"
+            onClick={() => onSelectModule('profile')}
+            className="hidden md:flex items-center gap-2 ps-1.5 pe-3 py-1 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 transition-colors cursor-pointer"
           >
             <div className="w-7 h-7 rounded-full bg-red-50 text-[#DC1726] flex items-center justify-center text-xs font-bold">
               {user.full_name.charAt(0).toUpperCase()}
             </div>
-            <span className="text-xs font-medium text-[#171717] max-w-[120px] truncate">{user.full_name}</span>
+            <span className="text-xs font-medium text-[#171717] max-w-[110px] lg:max-w-[130px] truncate">
+              {user.full_name}
+            </span>
           </button>
 
-          {/* Logout Button */}
+          {/* Tablet & Desktop Logout Button */}
           <button
             type="button"
             onClick={onLogout}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-medium text-[#171717] hover:bg-neutral-50 transition-colors whitespace-nowrap"
+            className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 bg-white text-xs font-medium text-[#171717] hover:bg-neutral-50 transition-colors whitespace-nowrap cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{t.nav.logout}</span>
+            <span className="hidden lg:inline">{t.nav.logout}</span>
           </button>
         </div>
+      </div>
+
+      {/* Phone Dedicated Namaz's Time Strip (zero crowding, always readable without opening) */}
+      <div className="md:hidden border-t border-emerald-100/80 bg-emerald-50/40 px-3 py-1.5 flex items-center justify-center overflow-x-auto no-scrollbar">
+        <PrayerTimingsWidget user={user} compact />
       </div>
     </header>
   );

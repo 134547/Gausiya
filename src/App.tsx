@@ -6,6 +6,7 @@ import { Language } from './i18n/translations.ts';
 import { MadrasaSettings, NavModuleId, NotificationItem, User } from './types.ts';
 import { SIDEBAR_ITEMS, Sidebar } from './components/Sidebar.tsx';
 import { TopBar } from './components/TopBar.tsx';
+import { MobileBottomNav } from './components/MobileBottomNav.tsx';
 import { MadrasaLogo } from './components/MadrasaLogo.tsx';
 import { HomePage, PublicHomeData } from './pages/HomePage.tsx';
 
@@ -670,7 +671,7 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      <div className="lg:ps-64 min-h-screen flex flex-col">
+      <div className="md:ps-56 lg:ps-64 min-h-screen flex flex-col">
         <TopBar
           user={user}
           activeModule={activeModule}
@@ -685,12 +686,21 @@ export default function App() {
           onLogout={handleLogout}
         />
 
-        <main className="flex-1 p-4 sm:p-6">
+        <main className="flex-1 p-3 sm:p-5 md:p-6 pb-24 md:pb-6 min-w-0">
           <Suspense fallback={<PageLoaderFallback />}>
             {renderModule()}
           </Suspense>
         </main>
       </div>
+
+      <MobileBottomNav
+        user={user}
+        settings={settings}
+        activeModule={activeModule}
+        lang={lang}
+        onSelectModule={handleSelectModule}
+        onLogout={handleLogout}
+      />
     </div>
   );
 }

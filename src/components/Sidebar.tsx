@@ -96,7 +96,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   });
 
   const sidebarContent = (
-    <aside className="flex flex-col h-full w-64 bg-[#171717] text-white select-none">
+    <aside className="flex flex-col h-full w-64 md:w-56 lg:w-64 bg-[#171717] text-white select-none">
       {/* Brand Header */}
       <div className="flex items-center justify-between px-4 py-4 border-b border-white/10">
         <div className="flex items-center gap-3 min-w-0">
@@ -111,7 +111,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           type="button"
           onClick={onCloseMobile}
-          className="lg:hidden p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10"
+          className="md:hidden p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10"
           aria-label="Close navigation"
         >
           <X className="w-5 h-5" />
@@ -189,15 +189,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-      {/* Desktop Fixed Sidebar */}
-      <div className="hidden lg:block fixed inset-y-0 start-0 z-30 w-64 no-print">
+      {/* Tablet & Desktop Fixed Web Sidebar */}
+      <div className="hidden md:block fixed inset-y-0 start-0 z-30 md:w-56 lg:w-64 no-print">
         {sidebarContent}
       </div>
 
-      {/* Mobile Drawer */}
+      {/* Phone Slide-Over Drawer */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden flex no-print">
-          <div className="fixed inset-0 bg-black/50" onClick={onCloseMobile} />
+        <div className="fixed inset-0 z-50 md:hidden flex no-print">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-[2px]" onClick={onCloseMobile} />
           <div className="relative z-10 h-full">{sidebarContent}</div>
         </div>
       )}
