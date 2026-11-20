@@ -9,6 +9,7 @@ import coreRoutes from './routes/coreRoutes.ts';
 import academicRoutes from './routes/academicRoutes.ts';
 import communityRoutes from './routes/communityRoutes.ts';
 import publicRoutes from './routes/publicRoutes.ts';
+import reportRoutes from './routes/reportRoutes.ts';
 
 async function syncDefaultAddressIfLegacy() {
   if (!supabaseAdmin) return;
@@ -138,6 +139,7 @@ export async function createApiApp(): Promise<express.Express> {
   app.use('/api', coreRoutes);
   app.use('/api', academicRoutes);
   app.use('/api', communityRoutes);
+  app.use('/api', reportRoutes);
 
   app.get('/api/health', (_req, res) => {
     res.json({

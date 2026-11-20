@@ -642,7 +642,7 @@ export default function App() {
       case 'feed':
         return <FeedPage user={user} />;
       case 'reports':
-        return <ReportsPage settings={settings} />;
+        return <ReportsPage user={user} settings={settings} />;
       case 'activity_logs':
         return user.role_slug === 'super_admin' ? (
           <ActivityLogsPage />
