@@ -283,11 +283,18 @@ export const AnnualCompleteReportView: React.FC<AnnualCompleteReportViewProps> =
                   {sec.rows.length === 0 ? (
                     <div className="text-[11px] italic text-[#737373] py-1">No Records Found</div>
                   ) : (
-                    <table className="w-full text-[10px] border-collapse border border-neutral-300">
+                    <table
+                      className={`w-full border-collapse border border-neutral-300 table-fixed ${
+                        cols.length > 7 ? 'text-[9px]' : 'text-[10px]'
+                      }`}
+                    >
                       <thead className="bg-neutral-100">
                         <tr>
                           {cols.map((c) => (
-                            <th key={c} className="border border-neutral-300 px-2 py-1 text-start font-semibold">
+                            <th
+                              key={c}
+                              className="border border-neutral-300 px-1.5 py-1 text-start font-semibold break-words"
+                            >
                               {c}
                             </th>
                           ))}
@@ -297,7 +304,10 @@ export const AnnualCompleteReportView: React.FC<AnnualCompleteReportViewProps> =
                         {sec.rows.map((r, idx) => (
                           <tr key={idx}>
                             {cols.map((c) => (
-                              <td key={c} className="border border-neutral-300 px-2 py-1 font-mono-num">
+                              <td
+                                key={c}
+                                className="border border-neutral-300 px-1.5 py-1 font-mono-num break-words"
+                              >
                                 {String(r[c] ?? '—')}
                               </td>
                             ))}

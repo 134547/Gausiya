@@ -109,7 +109,7 @@ export const AdmissionPaperSheet: React.FC<AdmissionPaperSheetProps> = ({ settin
       </div>
 
       {/* Reference / Official Admission Number & Status Summary Strip */}
-      <div className={`grid grid-cols-1 ${data.student_code ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3 border border-neutral-300 rounded-lg p-3.5 bg-neutral-50/70 text-xs`}>
+      <div className={`grid ${data.student_code ? 'grid-cols-4' : 'grid-cols-3'} gap-3 border border-neutral-300 rounded-lg p-3.5 bg-neutral-50/70 text-xs`}>
         {data.student_code && (
           <div>
             <span className="text-[#737373]">Student ID:</span>{' '}
@@ -158,7 +158,7 @@ export const AdmissionPaperSheet: React.FC<AdmissionPaperSheetProps> = ({ settin
           Student &amp; Guardian Details
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-2.5">
           <div>
             <span className="text-[#737373]">Student Full Name:</span>{' '}
             <strong className="text-[#171717]">{data.student_name || '—'}</strong>
@@ -211,12 +211,12 @@ export const AdmissionPaperSheet: React.FC<AdmissionPaperSheetProps> = ({ settin
               {data.previous_class ? ` (${data.previous_class})` : ''}
             </strong>
           </div>
-          <div className="sm:col-span-2">
+          <div className="col-span-2">
             <span className="text-[#737373]">Complete Address:</span>{' '}
             <strong className="text-[#171717]">{fullAddress || '—'}</strong>
           </div>
           {data.remarks && (
-            <div className="sm:col-span-2">
+            <div className="col-span-2">
               <span className="text-[#737373]">Remarks:</span>{' '}
               <span className="text-[#171717]">{data.remarks}</span>
             </div>
@@ -245,7 +245,7 @@ export const AdmissionPaperSheet: React.FC<AdmissionPaperSheetProps> = ({ settin
       </div>
 
       {/* Institutional Bottom Strip */}
-      <div className="pt-2 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-neutral-500">
+      <div className="pt-2 border-t border-neutral-200 flex flex-row items-center justify-between gap-2 text-[11px] text-neutral-500">
         <span className="font-mono-num">Website: {websiteUrl}</span>
         <span>
           Admission Application Form - {settings?.name || 'Madrasa Gausiya Razvia'}

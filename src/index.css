@@ -168,6 +168,21 @@
     max-width: none !important;
     overflow: visible !important;
   }
+  .a4-scaled-outer {
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .a4-scaled-transform-layer {
+    transform: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+  }
+  .a4-paper-canvas {
+    width: 100% !important;
+    max-width: none !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
   table {
     border-collapse: collapse;
     page-break-inside: auto;

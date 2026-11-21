@@ -169,7 +169,7 @@ export const IqrarNamaSheet: React.FC<IqrarNamaSheetProps> = ({
       </div>
 
       {/* 2-Column Metadata Cards (RTL) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" dir="rtl">
+      <div className="grid grid-cols-2 gap-3" dir="rtl">
         {/* Right Column in RTL: Guardian Personal Information */}
         <div className="border border-neutral-300 rounded-lg p-3.5 bg-neutral-50/40 space-y-2">
           <div className="urdu-text text-sm font-bold text-[#141E30] border-b border-neutral-200 pb-1.5">
@@ -317,7 +317,7 @@ export const IqrarNamaSheet: React.FC<IqrarNamaSheetProps> = ({
 
       {/* Madrasa Office Administration Box */}
       <div className="border border-neutral-300 rounded-lg p-3.5 bg-neutral-50/60" dir="rtl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex flex-row items-center justify-between gap-4">
           <div className="space-y-3 flex-1">
             <div className="urdu-text text-sm font-bold text-[#141E30]">
               برائے مدرسہ انتظامیہ (دفتر کے لیے)
@@ -352,7 +352,7 @@ export const IqrarNamaSheet: React.FC<IqrarNamaSheetProps> = ({
       </div>
 
       {/* Footer matching Page 1 */}
-      <div className="pt-2 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-neutral-500">
+      <div className="pt-2 border-t border-neutral-200 flex flex-row items-center justify-between gap-2 text-[11px] text-neutral-500">
         <span className="font-mono-num">Website: {websiteUrl}</span>
         <span className="urdu-text">
           اقرار نامہ سرپرست برائے داخلہ - Madarsa Gausiya Rizviya Islamnagar

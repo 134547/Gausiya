@@ -198,6 +198,8 @@ async function waitForFontsReady() {
   }
 }
 
+const GRADE_CARD_CAPTURE_WIDTH = 794;
+
 export async function exportResultCardPng(
   element: HTMLElement,
   fileBaseName: string
@@ -205,11 +207,25 @@ export async function exportResultCardPng(
   await waitForFontsReady();
   const restore = await resolveElementImagesTemporarily(element);
   try {
+    const captureWidth = Math.max(element.offsetWidth || GRADE_CARD_CAPTURE_WIDTH, GRADE_CARD_CAPTURE_WIDTH);
+    const captureHeight = element.scrollHeight || element.offsetHeight;
+    const captureOpts = {
+      pixelRatio: 2,
+      backgroundColor: '#ffffff',
+      width: captureWidth,
+      height: captureHeight,
+      style: {
+        transform: 'none',
+        margin: '0',
+        width: `${captureWidth}px`,
+        maxWidth: `${captureWidth}px`,
+      },
+    };
     let dataUrl: string;
     try {
-      dataUrl = await toPng(element, { pixelRatio: 2, backgroundColor: '#ffffff', cacheBust: true });
+      dataUrl = await toPng(element, { ...captureOpts, cacheBust: true });
     } catch {
-      dataUrl = await toPng(element, { pixelRatio: 2, backgroundColor: '#ffffff', skipFonts: true });
+      dataUrl = await toPng(element, { ...captureOpts, skipFonts: true });
     }
     const fileName = `${sanitizeFileName(fileBaseName, 'result-card')}.png`;
     const link = document.createElement('a');
@@ -231,32 +247,53 @@ export async function exportResultCardPdf(
   await waitForFontsReady();
   const restore = await resolveElementImagesTemporarily(element);
   try {
+    const captureWidth = Math.max(element.offsetWidth || GRADE_CARD_CAPTURE_WIDTH, GRADE_CARD_CAPTURE_WIDTH);
+    const captureHeight = element.scrollHeight || element.offsetHeight;
+    const captureOpts = {
+      pixelRatio: 2,
+      backgroundColor: '#ffffff',
+      width: captureWidth,
+      height: captureHeight,
+      style: {
+        transform: 'none',
+        margin: '0',
+        width: `${captureWidth}px`,
+        maxWidth: `${captureWidth}px`,
+      },
+    };
     let dataUrl: string;
     try {
-      dataUrl = await toPng(element, { pixelRatio: 2, backgroundColor: '#ffffff', cacheBust: true });
+      dataUrl = await toPng(element, { ...captureOpts, cacheBust: true });
     } catch {
-      dataUrl = await toPng(element, { pixelRatio: 2, backgroundColor: '#ffffff', skipFonts: true });
+      dataUrl = await toPng(element, { ...captureOpts, skipFonts: true });
     }
     const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
     const imgProps = pdf.getImageProperties(dataUrl);
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
     const margin = 8;
-    const imgWidth = pageWidth - margin * 2;
-    const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
+    const usableWidth = pageWidth - margin * 2;
+    const usableHeight = pageHeight - margin * 2;
+    const imgHeight = (imgProps.height * usableWidth) / imgProps.width;
 
-    if (imgHeight <= pageHeight - margin * 2) {
-      pdf.addImage(dataUrl, 'PNG', margin, margin, imgWidth, imgHeight, undefined, 'FAST');
+    if (imgHeight <= usableHeight) {
+      pdf.addImage(dataUrl, 'PNG', margin, margin, usableWidth, imgHeight, undefined, 'FAST');
+    } else if (imgHeight <= usableHeight * 1.15) {
+      // Gently scale single-sheet grade card onto 1 crisp A4 page centered horizontally
+      const fitRatio = usableHeight / imgHeight;
+      const fittedWidth = usableWidth * fitRatio;
+      const xOffset = margin + (usableWidth - fittedWidth) / 2;
+      pdf.addImage(dataUrl, 'PNG', xOffset, margin, fittedWidth, usableHeight, undefined, 'FAST');
     } else {
       let heightLeft = imgHeight;
       let position = margin;
-      pdf.addImage(dataUrl, 'PNG', margin, position, imgWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pageHeight - margin * 2;
+      pdf.addImage(dataUrl, 'PNG', margin, position, usableWidth, imgHeight, undefined, 'FAST');
+      heightLeft -= usableHeight;
       while (heightLeft > 2) {
         position = margin - (imgHeight - heightLeft);
         pdf.addPage();
-        pdf.addImage(dataUrl, 'PNG', margin, position, imgWidth, imgHeight, undefined, 'FAST');
-        heightLeft -= pageHeight - margin * 2;
+        pdf.addImage(dataUrl, 'PNG', margin, position, usableWidth, imgHeight, undefined, 'FAST');
+        heightLeft -= usableHeight;
       }
     }
     const fileName = `${sanitizeFileName(fileBaseName, 'result-card')}.pdf`;
@@ -311,49 +348,46 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
     <div
       ref={cardRef}
       id="resultCard"
-      className="w-full max-w-[1060px] mx-auto bg-white text-black p-5 sm:p-6 border-2 border-[#111] shadow-sm"
+      className="w-full bg-white text-black p-5 border-2 border-[#111] shadow-sm"
       style={{ fontFamily: "'Inter', 'Plus Jakarta Sans', sans-serif" }}
     >
-      {/* Top Institution Header matching Official Madrasa Letterhead */}
-      <div className="grid grid-cols-[72px_1fr_72px] sm:grid-cols-[100px_1fr_100px] items-center gap-3 sm:gap-5 border-b-2 border-[#C9A227] pb-3.5">
+      {/* Top Institution Header matching Official Madrasa Letterhead — Fixed A4 3-column grid */}
+      <div className="grid grid-cols-[92px_1fr_92px] items-center gap-4 border-b-2 border-[#C9A227] pb-3">
         {/* Left: Balancing spacer so header stays centered */}
-        <div aria-hidden="true" className="w-[72px] sm:w-[100px]" />
+        <div aria-hidden="true" className="w-[92px]" />
 
         {/* Center: Arabic Bismillah, Urdu Title, English Title & Address */}
         <div className="text-center px-1">
-          <div
-            className="text-sm sm:text-base font-bold text-[#1E3A8A] leading-snug"
-            dir="rtl"
-          >
+          <div className="text-sm font-bold text-[#1E3A8A] leading-snug" dir="rtl">
             بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيْمِ
           </div>
           <h2
-            className="urdu-text m-0 mt-1 text-xl sm:text-2xl font-extrabold text-[#111827] leading-snug"
+            className="urdu-text m-0 mt-0.5 text-2xl font-extrabold text-[#111827] leading-snug"
             dir="rtl"
           >
             {FIXED_RESULT_URDU_NAME}
           </h2>
-          <div className="mt-1 text-xs sm:text-sm font-extrabold uppercase tracking-wider text-[#1E3A8A]">
+          <div className="mt-1 text-sm font-extrabold uppercase tracking-wider text-[#1E3A8A]">
             {FIXED_RESULT_SCHOOL_NAME}
           </div>
-          <div className="mt-0.5 text-[11px] sm:text-xs font-medium text-[#1f2937] leading-snug">
+          <div className="mt-0.5 text-[11px] font-medium text-[#1f2937] leading-snug">
             {FIXED_RESULT_SCHOOL_ADDRESS}
           </div>
         </div>
 
         {/* Right: Official Madrasa Logo */}
-        <div className="w-[72px] sm:w-[100px] h-[80px] sm:h-[96px] flex items-center justify-center mx-auto">
+        <div className="w-[92px] h-[88px] flex items-center justify-center mx-auto">
           <img
             src={logoSrc}
             alt="Madrasa Gausiya Razvia Logo"
             referrerPolicy="no-referrer"
-            className="w-[68px] sm:w-[92px] h-[68px] sm:h-[92px] object-contain select-none"
+            className="w-[84px] h-[84px] object-contain select-none"
           />
         </div>
       </div>
 
       {/* Academic Year & Issue Timestamp Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-[#111] py-2 border-b border-neutral-300">
+      <div className="flex flex-row items-center justify-between gap-2 text-xs font-bold text-[#111] py-1.5 border-b border-neutral-300">
         <div>Academic Year: {data.academicYear || '—'}</div>
         <div>
           Issued Date: {data.issueDate || '--/--/----'}
@@ -362,34 +396,34 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
       </div>
 
       {/* Grade Card Title */}
-      <div className="text-center mt-2.5 mb-1 text-2xl sm:text-3xl font-extrabold text-[#16a34a]">
+      <div className="text-center mt-2 mb-0.5 text-2xl font-extrabold text-[#16a34a] tracking-wide">
         GRADE CARD
       </div>
-      <div className="text-center text-base sm:text-lg font-extrabold mb-2.5 uppercase text-black">
+      <div className="text-center text-base font-extrabold mb-2.5 uppercase text-black">
         {examHeadline}
       </div>
 
-      {/* Student Metadata + Student Photo */}
-      <div className="border-2 border-[#111] border-b-0 px-3.5 py-2.5 grid grid-cols-[1fr_90px] sm:grid-cols-[1fr_104px] gap-4 items-center">
-        <div className="text-sm leading-[1.85] grid grid-cols-1 sm:grid-cols-2 gap-x-5">
+      {/* Student Metadata + Student Photo — Fixed 2-column A4 grid */}
+      <div className="border-2 border-[#111] border-b-0 px-3.5 py-2.5 grid grid-cols-[1fr_98px] gap-4 items-center">
+        <div className="text-[13px] leading-[1.8] grid grid-cols-2 gap-x-5">
           <div>
-            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Adm No:</b>{' '}
-            <span>{data.admNo || '-'}</span>
+            <b className="inline-block min-w-[105px]">Adm No:</b>{' '}
+            <span className="font-mono-num">{data.admNo || '-'}</span>
           </div>
           <div>
-            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Standard:</b>{' '}
+            <b className="inline-block min-w-[105px]">Standard:</b>{' '}
             <span>{data.className || '-'}</span>
           </div>
           <div>
-            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Name:</b>{' '}
-            <span>{data.studentName || 'Select Student'}</span>
+            <b className="inline-block min-w-[105px]">Name:</b>{' '}
+            <span className="font-semibold">{data.studentName || 'Select Student'}</span>
           </div>
           <div>
-            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Division:</b>{' '}
+            <b className="inline-block min-w-[105px]">Division:</b>{' '}
             <span>{data.division || 'A'}</span>
           </div>
           <div>
-            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Rank:</b>{' '}
+            <b className="inline-block min-w-[105px]">Rank:</b>{' '}
             <span className="font-bold font-mono-num">
               {data.rank
                 ? `#${data.rank}${data.totalStudents ? ` / ${data.totalStudents}` : ''}`
@@ -397,13 +431,13 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
             </span>
           </div>
           <div>
-            <b className="inline-block min-w-[115px] sm:min-w-[125px]">Class Teacher:</b>{' '}
+            <b className="inline-block min-w-[105px]">Class Teacher:</b>{' '}
             <span>{data.teacher || 'Class Teacher'}</span>
           </div>
         </div>
 
         {/* Student Photo placed inside Student Metadata box */}
-        <div className="w-[86px] sm:w-[98px] h-[104px] sm:h-[118px] border border-[#111] rounded-sm flex items-center justify-center overflow-hidden bg-[#f8fafc] mx-auto">
+        <div className="w-[92px] h-[110px] border border-[#111] rounded-sm flex items-center justify-center overflow-hidden bg-[#f8fafc] mx-auto">
           {safePhoto ? (
             <img
               src={safePhoto}
@@ -416,29 +450,29 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
         </div>
       </div>
 
-      {/* Subject Marks Table */}
-      <table className="w-full border-collapse">
+      {/* Subject Marks Table — Fixed 7-column layout fitting cleanly inside 794px */}
+      <table className="w-full border-collapse table-fixed">
         <thead>
           <tr>
-            <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[52px]">
+            <th className="border border-[#111] px-1.5 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[48px]">
               Sl.No
             </th>
-            <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[120px]">
+            <th className="border border-[#111] px-1.5 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[105px]">
               Subject Code
             </th>
             <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb]">
               Subjects
             </th>
-            <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[85px]">
+            <th className="border border-[#111] px-1.5 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[72px]">
               Scored
             </th>
-            <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[85px]">
+            <th className="border border-[#111] px-1.5 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[78px]">
               Max.Mark
             </th>
-            <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[80px]">
+            <th className="border border-[#111] px-1.5 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[66px]">
               Grade
             </th>
-            <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[80px]">
+            <th className="border border-[#111] px-1.5 py-1.5 text-xs font-extrabold text-center bg-[#e5e7eb] w-[72px]">
               Average
             </th>
           </tr>
@@ -453,23 +487,23 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
           ) : (
             stats.rows.map((row) => (
               <tr key={`${row.code}_${row.slNo}`}>
-                <td className="border border-[#111] px-2 py-1.5 text-xs text-center">{row.slNo}</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs text-center font-mono-num">
+                <td className="border border-[#111] px-1.5 py-1.5 text-xs text-center">{row.slNo}</td>
+                <td className="border border-[#111] px-1.5 py-1.5 text-xs text-center font-mono-num">
                   {row.code}
                 </td>
                 <td className="border border-[#111] px-2 py-1.5 text-xs text-left font-medium">
                   {row.name}
                 </td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs text-center font-mono-num">
+                <td className="border border-[#111] px-1.5 py-1.5 text-xs text-center font-mono-num">
                   {row.score}
                 </td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs text-center font-mono-num">
+                <td className="border border-[#111] px-1.5 py-1.5 text-xs text-center font-mono-num">
                   {row.max}
                 </td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs text-center font-bold">
+                <td className="border border-[#111] px-1.5 py-1.5 text-xs text-center font-bold">
                   {row.grade}
                 </td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs text-center font-mono-num">
+                <td className="border border-[#111] px-1.5 py-1.5 text-xs text-center font-mono-num">
                   {row.avg}
                 </td>
               </tr>
@@ -481,102 +515,102 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
             <th colSpan={3} className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#f3f4f6]">
               Total
             </th>
-            <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#f3f4f6] font-mono-num">
+            <th className="border border-[#111] px-1.5 py-1.5 text-xs font-extrabold text-center bg-[#f3f4f6] font-mono-num">
               {stats.total}
             </th>
-            <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#f3f4f6] font-mono-num">
+            <th className="border border-[#111] px-1.5 py-1.5 text-xs font-extrabold text-center bg-[#f3f4f6] font-mono-num">
               {stats.maxTotal}
             </th>
-            <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#f3f4f6]">
+            <th className="border border-[#111] px-1.5 py-1.5 text-xs font-extrabold text-center bg-[#f3f4f6]">
               {stats.overallGrade}
             </th>
-            <th className="border border-[#111] px-2 py-1.5 text-xs font-extrabold text-center bg-[#f3f4f6] font-mono-num">
+            <th className="border border-[#111] px-1.5 py-1.5 text-xs font-extrabold text-center bg-[#f3f4f6] font-mono-num">
               {Math.round(stats.overallPercent)}
             </th>
           </tr>
         </tfoot>
       </table>
 
-      {/* Academic Report & Remarks */}
-      <div className="grid grid-cols-1 sm:grid-cols-[1.2fr_1fr] border-2 border-[#111] border-t-0">
-        <div className="border-b-2 sm:border-b-0 sm:border-r-2 border-[#111]">
-          <div className="px-2.5 py-2 border-b-2 border-[#111] bg-[#f3f4f6] text-xs font-extrabold text-center">
+      {/* Academic Report & Remarks — Always Side-by-Side A4 2-Column Layout */}
+      <div className="grid grid-cols-[1.18fr_1fr] border-2 border-[#111] border-t-0">
+        <div className="border-r-2 border-[#111]">
+          <div className="px-2.5 py-1.5 border-b-2 border-[#111] bg-[#f3f4f6] text-xs font-extrabold text-center">
             ACADEMIC REPORT
           </div>
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                <th className="border border-[#111] px-2 py-1.5 text-xs font-bold text-left">Field</th>
-                <th className="border border-[#111] px-2 py-1.5 text-xs font-bold text-left">Value</th>
-                <th className="border border-[#111] px-2 py-1.5 text-xs font-bold text-left">Out of</th>
+                <th className="border border-[#111] px-2 py-1 text-xs font-bold text-left">Field</th>
+                <th className="border border-[#111] px-2 py-1 text-xs font-bold text-left">Value</th>
+                <th className="border border-[#111] px-2 py-1 text-xs font-bold text-left">Out of</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">Grand Total</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">{stats.total}</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">{stats.maxTotal}</td>
+                <td className="border border-[#111] px-2 py-1 text-xs">Grand Total</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">{stats.total}</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">{stats.maxTotal}</td>
               </tr>
               <tr>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">Overall Percentage</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">
+                <td className="border border-[#111] px-2 py-1 text-xs">Overall Percentage</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">
                   {stats.overallPercent.toFixed(2)}
                 </td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">100</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">100</td>
               </tr>
               <tr>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">No. of Subjects Failed</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">{stats.failCount}</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">
+                <td className="border border-[#111] px-2 py-1 text-xs">No. of Subjects Failed</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">{stats.failCount}</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">
                   {stats.rows.length}
                 </td>
               </tr>
               <tr>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">Overall Grade</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-bold">{stats.overallGrade}</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">-</td>
+                <td className="border border-[#111] px-2 py-1 text-xs">Overall Grade</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-bold">{stats.overallGrade}</td>
+                <td className="border border-[#111] px-2 py-1 text-xs">-</td>
               </tr>
               <tr>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">Overall Rank</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">
+                <td className="border border-[#111] px-2 py-1 text-xs">Overall Rank</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">
                   {data.rank || '-'}
                 </td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">
                   {data.totalStudents || '-'}
                 </td>
               </tr>
               <tr>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">Performance Level</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-semibold">{stats.perf}</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">-</td>
+                <td className="border border-[#111] px-2 py-1 text-xs">Performance Level</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-semibold">{stats.perf}</td>
+                <td className="border border-[#111] px-2 py-1 text-xs">-</td>
               </tr>
               <tr>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">Average Percentage</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">
+                <td className="border border-[#111] px-2 py-1 text-xs">Average Percentage</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">
                   {stats.overallPercent.toFixed(2)}
                 </td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">-</td>
+                <td className="border border-[#111] px-2 py-1 text-xs">-</td>
               </tr>
               <tr>
-                <td className="border border-[#111] px-2 py-1.5 text-xs">GPA</td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">
+                <td className="border border-[#111] px-2 py-1 text-xs">GPA</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">
                   {stats.gpa.toFixed(2)}
                 </td>
-                <td className="border border-[#111] px-2 py-1.5 text-xs font-mono-num">5.00</td>
+                <td className="border border-[#111] px-2 py-1 text-xs font-mono-num">5.00</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <div className="flex flex-col">
-          <div className="px-2.5 py-2 border-b-2 border-[#111] bg-[#f3f4f6] text-xs font-extrabold text-center">
+          <div className="px-2.5 py-1.5 border-b-2 border-[#111] bg-[#f3f4f6] text-xs font-extrabold text-center">
             REMARKS AND ACKNOWLEDGEMENT
           </div>
-          <div className="flex-1 min-h-[210px] p-3 text-xs leading-relaxed flex flex-col justify-between">
+          <div className="flex-1 min-h-[180px] p-3 text-xs leading-relaxed flex flex-col justify-between">
             <div>{remarkText}</div>
-            <div className="grid grid-cols-2 gap-5 mt-14 pt-4">
-              <div className="text-center border-t border-[#111] pt-2 font-medium">Guardian</div>
-              <div className="text-center border-t border-[#111] pt-2 font-medium">
+            <div className="grid grid-cols-2 gap-5 mt-12 pt-4">
+              <div className="text-center border-t border-[#111] pt-1.5 font-medium">Guardian</div>
+              <div className="text-center border-t border-[#111] pt-1.5 font-medium">
                 {data.teacher || 'Class Teacher'}
               </div>
             </div>

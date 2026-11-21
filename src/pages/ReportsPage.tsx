@@ -502,9 +502,9 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
             {/* Global Academic Year Selector */}
-            <div className="flex items-center gap-1.5 bg-neutral-50 border border-neutral-200 rounded-lg px-2.5 py-1.5">
+            <div className="flex items-center gap-1.5 bg-neutral-50 border border-neutral-200 rounded-lg px-2.5 py-2 flex-1 sm:flex-none">
               <CalendarClock className="w-3.5 h-3.5 text-[#DC1726] shrink-0" />
               <span className="text-[11px] font-semibold text-neutral-500 hidden sm:inline">
                 Academic Year:
@@ -514,7 +514,7 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
                 onChange={(e) => updateFilter('sessionId', e.target.value)}
                 disabled={metaLoading}
                 aria-label="Academic Year"
-                className="bg-transparent text-xs font-bold text-neutral-900 focus:outline-none cursor-pointer pr-1"
+                className="bg-transparent text-xs font-bold text-neutral-900 focus:outline-none cursor-pointer pr-1 w-full sm:w-auto"
               >
                 <option value="all">All Academic Years</option>
                 {(meta?.sessions || []).map((s) => (
@@ -529,7 +529,7 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
             <button
               type="button"
               onClick={() => setRefreshTick((t) => t + 1)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors cursor-pointer shrink-0"
               title="Refresh live database metrics"
             >
               <RefreshCw className="w-3.5 h-3.5" />
@@ -539,7 +539,7 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
             <button
               type="button"
               onClick={() => handleSelectCategory('annual_complete')}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-[#B81220] transition-colors shadow-xs cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-[#B81220] transition-colors shadow-xs cursor-pointer w-full sm:w-auto"
             >
               <BookOpen className="w-3.5 h-3.5" />
               Generate Complete Annual Report
@@ -660,8 +660,8 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
                 </select>
               </div>
 
-              {/* Clickable Report Tabs Grid */}
-              <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+              {/* Clickable Report Tabs Grid (Tablet & Desktop; Mobile uses native select above for clean UX) */}
+              <div className="hidden sm:flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
                 {currentCategoryConfig.reports.map((rep) => {
                   const active = rep.id === currentReportDef?.id;
                   return (

@@ -26,6 +26,7 @@ import {
 } from './ResultGradeCard.tsx';
 import { OFFICIAL_LOGO_URL } from './MadrasaLogo.tsx';
 import { PrintModal } from './PrintModal.tsx';
+import { ScaledA4Viewport } from './ScaledA4Viewport.tsx';
 
 interface SubjectRowState {
   uid: string;
@@ -1349,10 +1350,10 @@ export const CreateResultBuilder: React.FC<CreateResultBuilderProps> = ({
         </aside>
 
         {/* Right Live Printable Result Card Preview */}
-        <main className="rounded-2xl border border-white/15 bg-white/[0.08] p-3 sm:p-5 overflow-x-auto">
-          <div className="min-w-[680px]">
+        <main className="rounded-2xl border border-white/15 bg-white/[0.08] p-2.5 sm:p-5">
+          <ScaledA4Viewport>
             <ResultGradeCard data={liveCardData} cardRef={cardRef} />
-          </div>
+          </ScaledA4Viewport>
         </main>
       </div>
 

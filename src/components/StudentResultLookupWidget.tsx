@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { MadrasaSettings } from '../types.ts';
 import { PrintModal } from './PrintModal.tsx';
+import { ScaledA4Viewport } from './ScaledA4Viewport.tsx';
 import { CaptchaChallengeData, SecurityCaptchaBox } from './SecurityCaptchaBox.tsx';
 import { formatHttpErrorMessage, safeReadJson } from '../lib/imageUpload.ts';
 import {
@@ -433,15 +434,15 @@ export const StudentResultLookupWidget: React.FC<StudentResultLookupWidgetProps>
                   </div>
                 </div>
 
-                <div className="p-2 sm:p-6 bg-white overflow-x-auto">
-                  <div className="min-w-[680px]">
+                <div className="p-2.5 sm:p-5 bg-neutral-100/80">
+                  <ScaledA4Viewport>
                     <ResultGradeCard
                       data={cardData}
                       cardRef={(el) => {
                         cardRefs.current[String(r.id)] = el;
                       }}
                     />
-                  </div>
+                  </ScaledA4Viewport>
                 </div>
               </div>
             );

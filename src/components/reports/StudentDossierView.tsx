@@ -579,7 +579,7 @@ export const StudentDossierView: React.FC<StudentDossierViewProps> = ({
             onClose={() => setPrintOpen(false)}
           >
             <div className="space-y-4 text-xs">
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 border border-neutral-300 rounded p-3">
+              <div className="grid grid-cols-3 gap-2 border border-neutral-300 rounded p-3">
                 <div><strong>Student:</strong> {dossier.student.fullName}</div>
                 <div><strong>Admission No:</strong> {dossier.student.admissionNumber}</div>
                 <div><strong>Father:</strong> {dossier.student.fatherName}</div>

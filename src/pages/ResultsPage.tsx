@@ -22,6 +22,7 @@ import {
 import { apiRequest } from '../lib/api.ts';
 import { MadrasaSettings, User } from '../types.ts';
 import { PrintModal } from '../components/PrintModal.tsx';
+import { ScaledA4Viewport } from '../components/ScaledA4Viewport.tsx';
 import { CreateResultBuilder } from '../components/CreateResultBuilder.tsx';
 import {
   ResultGradeCard,
@@ -1299,15 +1300,15 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ user, settings, onSett
                       </button>
                     </div>
                   </div>
-                  <div className="p-2 sm:p-5 bg-white overflow-x-auto">
-                    <div className="min-w-[680px]">
+                  <div className="p-2.5 sm:p-5 bg-neutral-100/80">
+                    <ScaledA4Viewport>
                       <ResultGradeCard
                         data={inlineCardData}
                         cardRef={(el) => {
                           inlineCardRefs.current[String(r.id)] = el;
                         }}
                       />
-                    </div>
+                    </ScaledA4Viewport>
                   </div>
                 </div>
               );

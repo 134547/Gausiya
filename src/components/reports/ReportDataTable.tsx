@@ -177,12 +177,12 @@ export const ReportDataTable: React.FC<ReportDataTableProps> = ({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto">
             <button
               type="button"
               disabled={loading || !dataset}
               onClick={() => setPrintOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 disabled:opacity-50 whitespace-nowrap cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5 text-[#DC1726]" /> Print Preview
             </button>
@@ -190,7 +190,7 @@ export const ReportDataTable: React.FC<ReportDataTableProps> = ({
               type="button"
               disabled={loading || !dataset || pdfBusy}
               onClick={handleDownloadPdf}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-50 whitespace-nowrap cursor-pointer"
             >
               {pdfBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
               <span>{pdfBusy ? 'Generating...' : 'Download PDF'}</span>
@@ -206,7 +206,7 @@ export const ReportDataTable: React.FC<ReportDataTableProps> = ({
                   dataset.title.slice(0, 30)
                 )
               }
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 disabled:opacity-50 whitespace-nowrap cursor-pointer"
             >
               <FileSpreadsheet className="w-3.5 h-3.5" /> Excel (.xlsx)
             </button>
@@ -220,7 +220,7 @@ export const ReportDataTable: React.FC<ReportDataTableProps> = ({
                   `${dataset.title}_${new Date().toISOString().slice(0, 10)}`
                 )
               }
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-[#171717] hover:bg-neutral-50 disabled:opacity-50 whitespace-nowrap cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" /> CSV
             </button>
@@ -357,7 +357,89 @@ export const ReportDataTable: React.FC<ReportDataTableProps> = ({
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Phone-Friendly Card List (< md) */}
+        <div className="md:hidden divide-y divide-neutral-100">
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="p-3.5 space-y-2">
+                <div className="h-4 bg-neutral-100 rounded animate-pulse w-2/3" />
+                <div className="h-3 bg-neutral-100 rounded animate-pulse w-full" />
+              </div>
+            ))
+          ) : paginatedRows.length === 0 ? (
+            <div className="px-4 py-10 text-center text-[#737373]">
+              <div className="font-semibold text-[#171717] mb-1 text-sm">No Records Found</div>
+              <p className="text-xs">
+                No database records match the selected academic year, date range, or filters.
+              </p>
+            </div>
+          ) : (
+            paginatedRows.map((row, idx) => {
+              const primaryCol = columns[0];
+              const secondaryCol = columns[1];
+              const restCols = columns.slice(2);
+              const primaryVal = primaryCol ? String(row[primaryCol] ?? '—') : `Record ${idx + 1}`;
+              const secondaryVal = secondaryCol ? String(row[secondaryCol] ?? '') : '';
+              return (
+                <div key={idx} className="p-3.5 bg-white space-y-2.5">
+                  <div className="flex items-start justify-between gap-2 pb-2 border-b border-neutral-100">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+                        {primaryCol}
+                      </div>
+                      <div className="text-sm font-bold text-[#171717] break-words">
+                        {primaryVal}
+                      </div>
+                    </div>
+                    {secondaryCol && secondaryVal && (
+                      <div className="text-right shrink-0 max-w-[45%]">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+                          {secondaryCol}
+                        </div>
+                        <div className="text-xs font-semibold text-[#DC1726] font-mono-num truncate">
+                          {secondaryVal}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {restCols.length > 0 && (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                      {restCols.map((col) => {
+                        const val = String(row[col] ?? '—');
+                        const isPass =
+                          val === 'PASS' ||
+                          val === 'APPROVED' ||
+                          val === 'ACTIVE' ||
+                          val === 'PUBLISHED';
+                        const isFail =
+                          val === 'FAIL' || val === 'REJECTED' || val === 'ABSENT';
+                        return (
+                          <div key={col} className="min-w-0">
+                            <div className="text-[10px] text-neutral-500 truncate">{col}</div>
+                            <div
+                              className={`text-xs font-mono-num break-words ${
+                                isPass
+                                  ? 'text-emerald-700 font-bold'
+                                  : isFail
+                                  ? 'text-[#DC1726] font-bold'
+                                  : 'text-[#171717] font-medium'
+                              }`}
+                            >
+                              {val}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Tablet & Desktop Full Interactive Table (md+) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs text-start">
             <thead className="bg-neutral-50 border-b border-neutral-200 text-[#525252] text-[11px] font-semibold">
               <tr>
@@ -482,7 +564,7 @@ export const ReportDataTable: React.FC<ReportDataTableProps> = ({
         >
           <div className="space-y-4">
             {dataset.summaryCards.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div className="grid grid-cols-4 gap-2 text-xs">
                 {dataset.summaryCards.map((c, idx) => (
                   <div key={idx} className="border border-neutral-300 rounded p-2">
                     <div className="text-[10px] text-[#737373]">{c.label}</div>
@@ -491,38 +573,46 @@ export const ReportDataTable: React.FC<ReportDataTableProps> = ({
                 ))}
               </div>
             )}
-            <div className="overflow-x-auto">
-              <table className="w-full text-[11px] border-collapse border border-neutral-300">
-                <thead className="bg-neutral-100">
+            <table
+              className={`w-full border-collapse border border-neutral-300 table-fixed ${
+                columns.length > 7 ? 'text-[9.5px]' : 'text-[10.5px]'
+              }`}
+            >
+              <thead className="bg-neutral-100">
+                <tr>
+                  {columns.map((col) => (
+                    <th
+                      key={col}
+                      className="border border-neutral-300 px-1.5 py-1.5 text-start font-semibold break-words"
+                    >
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAndSorted.length === 0 ? (
                   <tr>
-                    {columns.map((col) => (
-                      <th key={col} className="border border-neutral-300 px-2 py-1.5 text-start font-semibold">
-                        {col}
-                      </th>
-                    ))}
+                    <td colSpan={Math.max(1, columns.length)} className="border border-neutral-300 px-3 py-6 text-center text-[#737373]">
+                      No Records Found
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {filteredAndSorted.length === 0 ? (
-                    <tr>
-                      <td colSpan={Math.max(1, columns.length)} className="border border-neutral-300 px-3 py-6 text-center text-[#737373]">
-                        No Records Found
-                      </td>
+                ) : (
+                  filteredAndSorted.map((row, idx) => (
+                    <tr key={idx}>
+                      {columns.map((col) => (
+                        <td
+                          key={col}
+                          className="border border-neutral-300 px-1.5 py-1 font-mono-num break-words"
+                        >
+                          {String(row[col] ?? '—')}
+                        </td>
+                      ))}
                     </tr>
-                  ) : (
-                    filteredAndSorted.map((row, idx) => (
-                      <tr key={idx}>
-                        {columns.map((col) => (
-                          <td key={col} className="border border-neutral-300 px-2 py-1.5 font-mono-num">
-                            {String(row[col] ?? '—')}
-                          </td>
-                        ))}
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </PrintModal>
       )}

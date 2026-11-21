@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Download, Loader2, Printer, X } from 'lucide-react';
+import { Download, Loader2, Maximize2, Minimize2, Printer, X } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { MadrasaSettings } from '../types.ts';
 import { MadrasaLogo } from './MadrasaLogo.tsx';
+import { A4_CANVAS_WIDTH_PX, ScaledA4Viewport } from './ScaledA4Viewport.tsx';
 
 interface PrintModalProps {
   open: boolean;
@@ -78,18 +79,31 @@ async function resolveExternalImagesForCapture(rootEl: HTMLElement): Promise<() 
 async function addElementPagesToPdf(pdf: jsPDF, el: HTMLElement, isFirstDocPage: boolean) {
   const restoreImages = await resolveExternalImagesForCapture(el);
   try {
+    const captureWidth = Math.max(el.offsetWidth || A4_CANVAS_WIDTH_PX, A4_CANVAS_WIDTH_PX);
+    const captureHeight = el.scrollHeight || el.offsetHeight;
+    const captureOpts = {
+      pixelRatio: 2,
+      backgroundColor: '#ffffff',
+      width: captureWidth,
+      height: captureHeight,
+      style: {
+        transform: 'none',
+        margin: '0',
+        width: `${captureWidth}px`,
+        maxWidth: `${captureWidth}px`,
+      },
+    };
+
     let dataUrl: string;
     try {
       dataUrl = await toPng(el, {
-        pixelRatio: 2,
-        backgroundColor: '#ffffff',
+        ...captureOpts,
         cacheBust: true,
       });
     } catch {
       // Retry without font embedding if an external stylesheet blocks CSS rule inspection
       dataUrl = await toPng(el, {
-        pixelRatio: 2,
-        backgroundColor: '#ffffff',
+        ...captureOpts,
         skipFonts: true,
       });
     }
@@ -97,7 +111,7 @@ async function addElementPagesToPdf(pdf: jsPDF, el: HTMLElement, isFirstDocPage:
     const imgProps = pdf.getImageProperties(dataUrl);
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 10;
+    const margin = 8;
     const usableWidth = pageWidth - margin * 2;
     const usableHeight = pageHeight - margin * 2;
     const totalRenderedHeight = (imgProps.height * usableWidth) / imgProps.width;
@@ -106,6 +120,23 @@ async function addElementPagesToPdf(pdf: jsPDF, el: HTMLElement, isFirstDocPage:
       pdf.addPage();
     }
 
+    // If single-page document (e.g., Grade Card, Admission Form, ID Card) fits cleanly or is within 10%
+    // of a single A4 height, scale proportionally onto 1 crisp A4 page instead of spilling a footer strip onto Page 2.
+    if (totalRenderedHeight <= usableHeight) {
+      pdf.addImage(dataUrl, 'PNG', margin, margin, usableWidth, totalRenderedHeight, undefined, 'FAST');
+      return;
+    }
+
+    if (totalRenderedHeight <= usableHeight * 1.12) {
+      const fitScale = usableHeight / totalRenderedHeight;
+      const fittedWidth = usableWidth * fitScale;
+      const fittedHeight = usableHeight;
+      const xOffset = margin + (usableWidth - fittedWidth) / 2;
+      pdf.addImage(dataUrl, 'PNG', xOffset, margin, fittedWidth, fittedHeight, undefined, 'FAST');
+      return;
+    }
+
+    // Multi-page document pagination
     let heightLeft = totalRenderedHeight;
     let yPosition = margin;
 
@@ -139,12 +170,14 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [statusNotice, setStatusNotice] = useState('');
   const [errorNotice, setErrorNotice] = useState('');
+  const [zoomMode, setZoomMode] = useState<'fit' | 'actual'>('fit');
   const [pdfDownloadLink, setPdfDownloadLink] = useState<{ url: string; name: string } | null>(null);
 
   useEffect(() => {
     if (!open) {
       setStatusNotice('');
       setErrorNotice('');
+      setZoomMode('fit');
       setPdfDownloadLink((prev) => {
         if (prev?.url) URL.revokeObjectURL(prev.url);
         return null;
@@ -211,8 +244,8 @@ export const PrintModal: React.FC<PrintModalProps> = ({
 
       setStatusNotice(
         triggeredFromBlockedPrint
-          ? `Direct print popup is blocked in this preview window, so "${fileName}" was generated as PDF.`
-          : `Saved "${fileName}" to your downloads.`
+          ? `Direct print popup is blocked in this preview window, so "${fileName}" was generated as A4 PDF.`
+          : `Saved "${fileName}" in crisp A4 format.`
       );
     } catch (err: any) {
       setErrorNotice(err?.message || 'Could not generate PDF. Please try again.');
@@ -270,47 +303,70 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   };
 
   const modalContent = (
-    <div className="print-modal-portal fixed inset-0 z-50 bg-black/60 overflow-y-auto p-3 sm:p-6">
-      <div className="mx-auto max-w-5xl bg-white rounded-xl shadow-2xl border border-neutral-200 overflow-hidden print-sheet">
-        <div className="px-6 py-4 bg-neutral-50 border-b border-neutral-200 no-print space-y-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-base font-semibold text-[#171717]">{title}</h3>
-              {subtitle && <p className="text-xs text-[#737373]">{subtitle}</p>}
+    <div className="print-modal-portal fixed inset-0 z-50 bg-black/65 overflow-y-auto p-0 sm:p-5">
+      <div className="mx-auto max-w-[880px] min-h-full sm:min-h-0 bg-neutral-100 sm:rounded-2xl shadow-2xl border-0 sm:border border-neutral-200 overflow-hidden print-sheet flex flex-col">
+        {/* Sticky Mobile-Friendly App Toolbar */}
+        <div className="sticky top-0 z-20 px-3 sm:px-5 py-3 bg-white border-b border-neutral-200 no-print space-y-2.5 shadow-xs">
+          <div className="flex items-start sm:items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm sm:text-base font-bold text-[#171717] truncate">{title}</h3>
+              {subtitle && <p className="text-[11px] sm:text-xs text-[#737373] truncate">{subtitle}</p>}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {headerActions}
-              <button
-                type="button"
-                disabled={generatingPdf}
-                onClick={() => handleDownloadPdf(false)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#141E30] text-white text-sm font-medium hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-60"
-              >
-                {generatingPdf ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Download className="w-4 h-4" />
-                )}
-                <span>{generatingPdf ? 'Preparing PDF...' : 'Download PDF'}</span>
-              </button>
-              <button
-                type="button"
-                disabled={generatingPdf}
-                onClick={handlePrint}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#DC1726] text-white text-sm font-medium hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-60"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Print</span>
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="p-2 rounded-lg text-[#737373] hover:text-[#171717] hover:bg-neutral-200 transition-colors cursor-pointer"
-                aria-label="Close print preview"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-lg text-[#737373] hover:text-[#171717] hover:bg-neutral-100 transition-colors cursor-pointer shrink-0"
+              aria-label="Close print preview"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <button
+              type="button"
+              disabled={generatingPdf}
+              onClick={() => handleDownloadPdf(false)}
+              className="inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg bg-[#141E30] text-white text-xs sm:text-sm font-semibold hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-60 flex-1 sm:flex-none"
+            >
+              {generatingPdf ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              <span>{generatingPdf ? 'Preparing PDF...' : 'Download A4 PDF'}</span>
+            </button>
+            <button
+              type="button"
+              disabled={generatingPdf}
+              onClick={handlePrint}
+              className="inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg bg-[#DC1726] text-white text-xs sm:text-sm font-semibold hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-60 flex-1 sm:flex-none"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Print</span>
+            </button>
+
+            {headerActions}
+
+            {/* Mobile/Tablet A4 Fit vs 100% Zoom Toggle */}
+            <button
+              type="button"
+              onClick={() => setZoomMode((m) => (m === 'fit' ? 'actual' : 'fit'))}
+              className="lg:hidden inline-flex items-center gap-1 px-2.5 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-xs font-semibold text-neutral-700 hover:bg-neutral-100 cursor-pointer"
+              title="Toggle Fit to Phone Screen vs 100% Zoom"
+            >
+              {zoomMode === 'fit' ? (
+                <>
+                  <Maximize2 className="w-3.5 h-3.5" />
+                  <span>100%</span>
+                </>
+              ) : (
+                <>
+                  <Minimize2 className="w-3.5 h-3.5" />
+                  <span>Fit</span>
+                </>
+              )}
+            </button>
           </div>
 
           {statusNotice && (
@@ -334,83 +390,101 @@ export const PrintModal: React.FC<PrintModalProps> = ({
           )}
         </div>
 
-        <div ref={page1Ref} className="p-6 sm:p-8 bg-white text-[#171717] print:p-0">
-          {standalone ? (
-            children
-          ) : (
-            <>
-              {/* Official Institutional Header */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-5 mb-6 border-b-2 border-[#171717]">
-                <div className="flex items-center gap-4">
-                  <MadrasaLogo logoUrl={settings?.logo_url} size={64} />
+        {/* Native Paper Viewer Desk Backdrop */}
+        <div className="flex-1 p-2.5 sm:p-6 space-y-5 bg-[#E5E7EB] print:p-0 print:bg-white print:space-y-0">
+          <ScaledA4Viewport
+            sheetRef={page1Ref}
+            sheetWidth={A4_CANVAS_WIDTH_PX}
+            showZoomToggle={false}
+            zoomMode={zoomMode}
+            onZoomModeChange={setZoomMode}
+            sheetClassName={`${
+              standalone ? 'p-4' : 'p-7'
+            } shadow-md rounded-sm border border-neutral-200 print:shadow-none print:border-0 print:rounded-none print:p-0`}
+          >
+            {standalone ? (
+              children
+            ) : (
+              <>
+                {/* Official Institutional Header — Always Horizontal A4 Proportions */}
+                <div className="flex flex-row items-center justify-between gap-4 pb-4 mb-5 border-b-2 border-[#171717]">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <MadrasaLogo logoUrl={settings?.logo_url} size={60} />
+                    <div className="min-w-0">
+                      <h1 className="text-lg font-bold text-[#171717] leading-tight">
+                        {settings?.name || 'Madrasa Gausiya Razvia'}
+                      </h1>
+                      <p className="text-[11px] text-[#525252] mt-0.5 leading-snug">
+                        {settings?.address ||
+                          'Islamnagar, Ramgarh, (P.S.) Ramgarh, (P.O.) Ramgarh, Palamu, Jharkhand, India, 822110'}
+                      </p>
+                      <p className="text-[11px] text-[#525252] font-mono-num mt-0.5">
+                        {settings?.phone || '+91 62027 36648'} ·{' '}
+                        {settings?.website || 'https://gausiya-madarsa.vercel.app'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="urdu-text text-lg font-bold text-[#DC1726]">
+                      {settings?.name_urdu || 'مدرسہ غوثیہ رضویہ'}
+                    </p>
+                    <p className="urdu-text text-xs text-[#525252]">
+                      {settings?.address_urdu || 'اسلام نگر، رام گڑھ، پلاموں، جھارکھنڈ، انڈیا'}
+                    </p>
+                    <p className="text-[11px] font-semibold text-[#171717] mt-1 font-mono-num">
+                      Issued: {new Date().toLocaleDateString('en-IN')}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mb-4 text-center">
+                  <span className="inline-block px-4 py-1 border border-neutral-300 rounded-md text-sm font-bold tracking-wide text-[#171717] bg-neutral-50">
+                    {title}
+                  </span>
+                </div>
+
+                {children}
+
+                {/* Official Signature Footer */}
+                <div className="mt-8 pt-5 border-t border-neutral-200 grid grid-cols-3 gap-6 text-center text-xs text-[#525252]">
                   <div>
-                    <h1 className="text-xl font-bold text-[#171717]">
-                      {settings?.name || 'Madrasa Gausiya Razvia'}
-                    </h1>
-                    <p className="text-xs text-[#737373] mt-0.5">
-                      {settings?.address ||
-                        'Islamnagar, Ramgarh, (P.S.) Ramgarh, (P.O.) Ramgarh, Palamu, Jharkhand, India, 822110'}
-                    </p>
-                    <p className="text-xs text-[#737373] font-mono-num mt-0.5">
-                      {settings?.phone || '+91 62027 36648'} ·{' '}
-                      {settings?.website || 'https://gausiya.zite.so'}
-                    </p>
+                    <div className="h-9" />
+                    <div className="border-t border-neutral-400 pt-1.5 font-semibold text-[#171717]">
+                      Class Teacher / Clerk
+                    </div>
+                  </div>
+                  <div>
+                    <div className="h-9" />
+                    <div className="border-t border-neutral-400 pt-1.5 font-semibold text-[#171717]">
+                      Nazim-e-Talimat
+                    </div>
+                  </div>
+                  <div>
+                    <div className="h-9" />
+                    <div className="border-t border-neutral-400 pt-1.5 font-semibold text-[#171717]">
+                      Principal / Sadr-e-Madrasa
+                    </div>
                   </div>
                 </div>
-                <div className="text-center sm:text-right">
-                  <p className="urdu-text text-lg font-bold text-[#DC1726]">
-                    {settings?.name_urdu || 'مدرسہ غوثیہ رضویہ'}
-                  </p>
-                  <p className="urdu-text text-xs text-[#737373]">
-                    {settings?.address_urdu || 'اسلام نگر، رام گڑھ، پلاموں، جھارکھنڈ، انڈیا'}
-                  </p>
-                  <p className="text-xs font-medium text-[#171717] mt-1 font-mono-num">
-                    Issued: {new Date().toLocaleDateString('en-IN')}
-                  </p>
-                </div>
-              </div>
+              </>
+            )}
+          </ScaledA4Viewport>
 
-              <div className="mb-5 text-center">
-                <span className="inline-block px-4 py-1 border border-neutral-300 rounded-md text-sm font-semibold tracking-wide text-[#171717] bg-neutral-50">
-                  {title}
-                </span>
-              </div>
-
-              {children}
-
-              {/* Official Signature Footer */}
-              <div className="mt-10 pt-6 border-t border-neutral-200 grid grid-cols-3 gap-6 text-center text-xs text-[#737373]">
-                <div>
-                  <div className="h-10" />
-                  <div className="border-t border-neutral-400 pt-1.5 font-medium text-[#171717]">
-                    Class Teacher / Clerk
-                  </div>
-                </div>
-                <div>
-                  <div className="h-10" />
-                  <div className="border-t border-neutral-400 pt-1.5 font-medium text-[#171717]">
-                    Nazim-e-Talimat
-                  </div>
-                </div>
-                <div>
-                  <div className="h-10" />
-                  <div className="border-t border-neutral-400 pt-1.5 font-medium text-[#171717]">
-                    Principal / Sadr-e-Madrasa
-                  </div>
-                </div>
-              </div>
-            </>
+          {extraPages && (
+            <div className="print:break-before-page">
+              <ScaledA4Viewport
+                sheetRef={page2Ref}
+                sheetWidth={A4_CANVAS_WIDTH_PX}
+                showZoomToggle={false}
+                zoomMode={zoomMode}
+                onZoomModeChange={setZoomMode}
+                sheetClassName="p-6 shadow-md rounded-sm border border-neutral-200 print:shadow-none print:border-0 print:rounded-none print:p-0"
+              >
+                {extraPages}
+              </ScaledA4Viewport>
+            </div>
           )}
         </div>
-
-        {extraPages && (
-          <div
-            ref={page2Ref}
-            className="p-6 sm:p-8 bg-white text-[#171717] border-t-4 border-dashed border-neutral-200 print:border-t-0 print:p-0 print:break-before-page"
-          >
-            {extraPages}
-          </div>
-        )}
       </div>
     </div>
   );
