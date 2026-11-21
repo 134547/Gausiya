@@ -341,7 +341,17 @@ export const ResultGradeCard: React.FC<ResultGradeCardProps> = ({ data, cardRef 
     };
   }, [data.photo]);
 
-  const examHeadline = `${(data.className || '-').toUpperCase()} ${(data.examSession || 'ANNUAL EXAMINATION').toUpperCase()}`;
+  const rawExamSession = (data.examSession || 'ANNUAL EXAMINATION').trim();
+  const cleanClassPrefix = (data.className || '').trim();
+  let examCategoryOnly = rawExamSession;
+  if (cleanClassPrefix) {
+    const escapedClass = cleanClassPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const stripped = rawExamSession
+      .replace(new RegExp(`^${escapedClass}\\s*[-–—:·]?\\s*`, 'i'), '')
+      .trim();
+    if (stripped) examCategoryOnly = stripped;
+  }
+  const examHeadline = examCategoryOnly.toUpperCase();
   const logoSrc = (data.logoUrl || '').trim() || OFFICIAL_LOGO_URL;
 
   return (

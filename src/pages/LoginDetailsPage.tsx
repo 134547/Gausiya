@@ -206,7 +206,89 @@ export const LoginDetailsPage: React.FC = () => {
           </div>
 
           <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
-            <div className="overflow-x-auto">
+            {/* Phone App User Cards (< md) */}
+            <div className="md:hidden divide-y divide-neutral-100">
+              {filteredUsers.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[#737373]">No users found.</div>
+              ) : (
+                filteredUsers.map((u) => (
+                  <div key={u.id} className="p-3.5 space-y-2.5 bg-white">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-bold text-sm text-[#171717] truncate">{u.full_name}</div>
+                        <div className="text-[11px] font-mono-num text-[#737373] truncate">
+                          @{u.username} · {u.user_code}
+                        </div>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase shrink-0 border ${
+                          u.status === 'active'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : u.status === 'pending'
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-red-50 text-[#DC1726] border-red-200'
+                        }`}
+                      >
+                        {u.status}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs bg-neutral-50/80 rounded-lg p-2.5 border border-neutral-100">
+                      <div className="min-w-0">
+                        <span className="text-[10px] text-neutral-500 block">Contact</span>
+                        <span className="text-[#171717] truncate block">{u.email || '-'}</span>
+                        {u.mobile && <span className="font-mono-num text-[11px] text-[#737373] block">{u.mobile}</span>}
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-neutral-500 block mb-0.5">Assigned Role</span>
+                        <select
+                          aria-label={`Role for ${u.full_name}`}
+                          value={u.role_id || ''}
+                          onChange={(e) => handleQuickRoleChange(u, e.target.value)}
+                          className="w-full px-2 py-1 text-[11px] rounded-md border border-neutral-200 bg-white font-medium text-[#171717]"
+                        >
+                          {roles.map((r) => (
+                            <option key={r.id} value={r.id}>{r.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button type="button" onClick={() => setViewUser(u)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-neutral-100 text-[#171717] text-[11px] font-semibold">
+                        <Eye className="w-3.5 h-3.5" /> Details
+                      </button>
+                      <button type="button" onClick={() => { setResetTarget(u); setNewPassword(''); }} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-50 text-[#0EA5E9] text-[11px] font-semibold">
+                        <KeyRound className="w-3.5 h-3.5" /> Reset Pass
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingId(u.id);
+                          setForm({ full_name: u.full_name, username: u.username, email: u.email, mobile: u.mobile, password: '', role_id: String(u.role_id || roles[0]?.id || ''), status: u.status });
+                          setFormOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 text-[#F59E0B] text-[11px] font-semibold"
+                      >
+                        <Pencil className="w-3.5 h-3.5" /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleStatus(u)}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold ${
+                          u.status === 'active' ? 'bg-red-50 text-[#DC1726]' : 'bg-emerald-50 text-[#10B981]'
+                        }`}
+                      >
+                        {u.status === 'active' ? <><UserX className="w-3.5 h-3.5" /> Disable</> : <><UserCheck className="w-3.5 h-3.5" /> Activate</>}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Tablet & Desktop Table View (md+) */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
                   <tr>

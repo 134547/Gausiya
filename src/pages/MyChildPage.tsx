@@ -965,44 +965,80 @@ export const MyChildPage: React.FC<MyChildPageProps> = ({
                   {attendanceList.length === 0 ? (
                     <p className="text-xs text-[#737373] py-4 text-center">No attendance records found.</p>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead className="bg-neutral-50 border-y border-neutral-200 text-[#737373]">
-                          <tr>
-                            <th className="px-3 py-2 text-start">Date</th>
-                            <th className="px-3 py-2 text-start">Class</th>
-                            <th className="px-3 py-2 text-start">Status</th>
-                            <th className="px-3 py-2 text-start">Remark</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-neutral-100">
-                          {attendanceList.map((row: any) => {
-                            const cls =
-                              row.status === 'present'
-                                ? 'bg-emerald-50 text-[#10B981] border-emerald-200'
-                                : row.status === 'absent'
-                                  ? 'bg-red-50 text-[#DC1726] border-red-200'
-                                  : row.status === 'late'
-                                    ? 'bg-amber-50 text-[#F59E0B] border-amber-200'
-                                    : 'bg-sky-50 text-[#0EA5E9] border-sky-200';
-                            return (
-                              <tr key={row.id}>
-                                <td className="px-3 py-2 font-mono-num font-semibold text-[#171717]">
+                    <>
+                      {/* Phone App Card List (< md) */}
+                      <div className="md:hidden space-y-2">
+                        {attendanceList.map((row: any) => {
+                          const cls =
+                            row.status === 'present'
+                              ? 'bg-emerald-50 text-[#10B981] border-emerald-200'
+                              : row.status === 'absent'
+                                ? 'bg-red-50 text-[#DC1726] border-red-200'
+                                : row.status === 'late'
+                                  ? 'bg-amber-50 text-[#F59E0B] border-amber-200'
+                                  : 'bg-sky-50 text-[#0EA5E9] border-sky-200';
+                          return (
+                            <div
+                              key={`m-att-${row.id}`}
+                              className="flex items-center justify-between gap-3 p-3 rounded-xl border border-neutral-200 bg-neutral-50/50"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-mono-num text-xs font-bold text-[#171717]">
                                   {row.attendance_date}
-                                </td>
-                                <td className="px-3 py-2 text-[#525252]">{row.class_name}</td>
-                                <td className="px-3 py-2">
-                                  <span className={`px-2 py-0.5 rounded border text-[10px] font-bold uppercase ${cls}`}>
-                                    {row.status}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2 text-[#737373]">{row.remark || '—'}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                                </div>
+                                <div className="text-[11px] text-[#525252] truncate">
+                                  {row.class_name}
+                                  {row.remark ? ` · ${row.remark}` : ''}
+                                </div>
+                              </div>
+                              <span className={`shrink-0 px-2.5 py-1 rounded-md border text-[10px] font-bold uppercase ${cls}`}>
+                                {row.status}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Tablet & Desktop Table (md+) */}
+                      <div className="hidden md:block overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead className="bg-neutral-50 border-y border-neutral-200 text-[#737373]">
+                            <tr>
+                              <th className="px-3 py-2 text-start">Date</th>
+                              <th className="px-3 py-2 text-start">Class</th>
+                              <th className="px-3 py-2 text-start">Status</th>
+                              <th className="px-3 py-2 text-start">Remark</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-neutral-100">
+                            {attendanceList.map((row: any) => {
+                              const cls =
+                                row.status === 'present'
+                                  ? 'bg-emerald-50 text-[#10B981] border-emerald-200'
+                                  : row.status === 'absent'
+                                    ? 'bg-red-50 text-[#DC1726] border-red-200'
+                                    : row.status === 'late'
+                                      ? 'bg-amber-50 text-[#F59E0B] border-amber-200'
+                                      : 'bg-sky-50 text-[#0EA5E9] border-sky-200';
+                              return (
+                                <tr key={row.id}>
+                                  <td className="px-3 py-2 font-mono-num font-semibold text-[#171717]">
+                                    {row.attendance_date}
+                                  </td>
+                                  <td className="px-3 py-2 text-[#525252]">{row.class_name}</td>
+                                  <td className="px-3 py-2">
+                                    <span className={`px-2 py-0.5 rounded border text-[10px] font-bold uppercase ${cls}`}>
+                                      {row.status}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 text-[#737373]">{row.remark || '—'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
                   )}
                 </div>
               )}

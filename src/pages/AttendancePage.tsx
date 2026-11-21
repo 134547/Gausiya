@@ -370,7 +370,81 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }
             </div>
           )}
 
-          <div className="overflow-x-auto border border-neutral-200 rounded-lg">
+          {/* Phone Thumb-Friendly Attendance Cards (< md) */}
+          <div className="md:hidden divide-y divide-neutral-100 border border-neutral-200 rounded-xl overflow-hidden">
+            {records.length === 0 ? (
+              <div className="p-6 text-center text-xs text-[#737373]">
+                No active students enrolled in {selectedClassName}.
+              </div>
+            ) : (
+              records.map((r, idx) => (
+                <div key={r.student_id} className={`p-3.5 space-y-2.5 ${isSheetLocked ? 'bg-neutral-50/50' : 'bg-white'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-bold text-sm text-[#171717] truncate">{r.full_name}</div>
+                      <div className="text-[11px] text-[#737373]">
+                        S/o {r.father_name} · <span className="font-mono-num">{r.student_code}</span>
+                      </div>
+                    </div>
+                    {isSheetLocked && r.status === 'unmarked' && (
+                      <span className="text-[10px] font-semibold text-neutral-400 shrink-0">Not Marked</span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {([
+                      ['present', 'bg-[#10B981] text-white border-[#10B981]'],
+                      ['absent', 'bg-[#DC1726] text-white border-[#DC1726]'],
+                      ['late', 'bg-[#F59E0B] text-white border-[#F59E0B]'],
+                      ['leave', 'bg-[#0EA5E9] text-white border-[#0EA5E9]'],
+                    ] as const).map(([st, activeCls]) => {
+                      const isSelected = r.status === st;
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          disabled={isSheetLocked}
+                          onClick={() => {
+                            if (isSheetLocked) return;
+                            const next = [...records];
+                            next[idx].status = st;
+                            setRecords(next);
+                          }}
+                          className={`py-2 rounded-lg text-[11px] font-semibold capitalize border transition-colors ${
+                            isSelected
+                              ? activeCls
+                              : isSheetLocked
+                                ? 'bg-neutral-100 text-neutral-400 border-neutral-200 opacity-50'
+                                : 'bg-white text-[#737373] border-neutral-200'
+                          } ${isSheetLocked ? 'cursor-not-allowed' : ''}`}
+                        >
+                          {st}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    type="text"
+                    value={r.remark || ''}
+                    disabled={isSheetLocked}
+                    readOnly={isSheetLocked}
+                    onChange={(e) => {
+                      if (isSheetLocked) return;
+                      const next = [...records];
+                      next[idx].remark = e.target.value;
+                      setRecords(next);
+                    }}
+                    placeholder={isSheetLocked ? '-' : 'Optional remark...'}
+                    className={`w-full px-3 py-1.5 text-xs rounded-lg border border-neutral-200 ${
+                      isSheetLocked ? 'bg-neutral-100/70 text-neutral-600 cursor-not-allowed' : 'bg-white'
+                    }`}
+                  />
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Tablet & Desktop Attendance Table (md+) */}
+          <div className="hidden md:block overflow-x-auto border border-neutral-200 rounded-lg">
             <table className="w-full text-xs">
               <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
                 <tr>
@@ -457,9 +531,35 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ user, settings }
 
       {tab === 'reports' && canMark && (
         <div className="space-y-6">
-          <div className="bg-white rounded-xl border border-neutral-200 p-5 shadow-xs">
+          <div className="bg-white rounded-xl border border-neutral-200 p-4 sm:p-5 shadow-xs">
             <h3 className="text-sm font-bold text-[#171717] mb-3">Student-Wise Attendance Summary</h3>
-            <div className="overflow-x-auto">
+            {/* Phone Summary Cards */}
+            <div className="md:hidden divide-y divide-neutral-100 border border-neutral-200 rounded-xl overflow-hidden">
+              {studentWise.map((s) => {
+                const pct = s.total_days > 0 ? Math.round(((s.present + s.late) / s.total_days) * 100) : 0;
+                return (
+                  <div key={s.student_id} className="p-3 bg-white space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-bold text-sm text-[#171717] truncate">{s.full_name}</div>
+                        <div className="text-[11px] text-[#737373] font-mono-num">{s.student_code} · {s.class_name}</div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-md bg-neutral-100 font-mono-num font-bold text-xs text-[#171717]">
+                        {pct}%
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5 text-center text-[11px] bg-neutral-50 rounded-lg p-1.5">
+                      <div><span className="text-[9px] text-neutral-500 block">Present</span><strong className="font-mono-num text-[#10B981]">{s.present}</strong></div>
+                      <div><span className="text-[9px] text-neutral-500 block">Absent</span><strong className="font-mono-num text-[#DC1726]">{s.absent}</strong></div>
+                      <div><span className="text-[9px] text-neutral-500 block">Late</span><strong className="font-mono-num text-[#F59E0B]">{s.late}</strong></div>
+                      <div><span className="text-[9px] text-neutral-500 block">Leave</span><strong className="font-mono-num text-[#0EA5E9]">{s.on_leave}</strong></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Desktop Summary Table */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
                   <tr>

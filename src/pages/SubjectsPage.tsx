@@ -100,12 +100,62 @@ export const SubjectsPage: React.FC<SubjectsPageProps> = ({ user }) => {
         </div>
       )}
 
-      {/* Subjects Master Table */}
+      {/* Subjects Master Catalog */}
       <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-neutral-100 bg-neutral-50 text-xs font-bold text-[#171717]">
+        <div className="px-4 sm:px-5 py-3.5 border-b border-neutral-100 bg-neutral-50 text-xs font-bold text-[#171717]">
           Master Subjects Catalog
         </div>
-        <div className="overflow-x-auto">
+
+        {/* Phone App Card List (< md) */}
+        <div className="md:hidden divide-y divide-neutral-100">
+          {subjects.length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-[#737373]">No subjects added yet.</div>
+          ) : (
+            subjects.map((s) => (
+              <div key={`m-sub-${s.id}`} className="p-3.5 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-bold text-sm text-[#171717]">{s.name}</div>
+                    <div className="text-[11px] font-mono-num text-[#737373]">{s.code}</div>
+                  </div>
+                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-neutral-100 border border-neutral-200 font-mono-num text-[11px] font-bold text-[#171717]">
+                    {s.passing_marks} / {s.total_marks}
+                  </span>
+                </div>
+                <div className="text-[11px] text-[#525252] bg-neutral-50 rounded-lg px-2.5 py-1.5 border border-neutral-100">
+                  <span className="text-[#737373]">Classes: </span>
+                  <span className="font-medium text-[#171717]">{s.assigned_classes || 'None'}</span>
+                  {s.description && <p className="text-[#737373] mt-0.5">{s.description}</p>}
+                </div>
+                {isAdmin && (
+                  <div className="flex items-center gap-1.5 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(s.id);
+                        setForm({ name: s.name, code: s.code, total_marks: s.total_marks, passing_marks: s.passing_marks, description: s.description || '', class_id: '', teacher_id: '' });
+                        setFormOpen(true);
+                      }}
+                      className="flex-1 inline-flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 text-[#D97706] border border-amber-200 text-[11px] font-semibold"
+                    >
+                      <Pencil className="w-3.5 h-3.5" /> Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget(s)}
+                      className="inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 text-[#DC1726] border border-red-200 text-[11px] font-semibold"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Tablet & Desktop Table (md+) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="border-b border-neutral-200 text-[#737373]">
               <tr>
@@ -152,12 +202,59 @@ export const SubjectsPage: React.FC<SubjectsPageProps> = ({ user }) => {
         </div>
       </div>
 
-      {/* Class-Subject Mapping Table */}
+      {/* Class-Subject Mapping */}
       <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-neutral-100 bg-neutral-50 text-xs font-bold text-[#171717]">
+        <div className="px-4 sm:px-5 py-3.5 border-b border-neutral-100 bg-neutral-50 text-xs font-bold text-[#171717]">
           Class-Wise Subject &amp; Teacher Curriculum
         </div>
-        <div className="overflow-x-auto">
+
+        {/* Phone App Card List (< md) */}
+        <div className="md:hidden divide-y divide-neutral-100">
+          {classSubjects.length === 0 ? (
+            <div className="px-4 py-8 text-center text-xs text-[#737373]">No class-subject mappings yet.</div>
+          ) : (
+            classSubjects.map((cs) => (
+              <div key={`m-cs-${cs.id}`} className="p-3.5 flex items-center justify-between gap-3">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2 py-0.5 rounded bg-red-50 text-[#DC1726] text-[10px] font-bold">
+                      {cs.class_name}
+                    </span>
+                    <span className="font-bold text-xs text-[#171717] truncate">
+                      {cs.subject_name} <span className="text-[#737373] font-mono-num">({cs.subject_code})</span>
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[#737373]">
+                    Teacher: <span className="font-medium text-[#171717]">{cs.teacher_name}</span> · Marks:{' '}
+                    <span className="font-mono-num font-semibold text-[#171717]">{cs.passing_marks}/{cs.total_marks}</span>
+                  </div>
+                </div>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setErr('');
+                      try {
+                        await apiRequest(`/api/subjects/assign/${cs.id}`, { method: 'DELETE' });
+                        setMsg('Class-subject assignment removed.');
+                        load();
+                      } catch (e: any) {
+                        setErr(e.message);
+                      }
+                    }}
+                    className="shrink-0 p-2 rounded-lg bg-red-50 text-[#DC1726] border border-red-200"
+                    title="Remove assignment"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Tablet & Desktop Table (md+) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="border-b border-neutral-200 text-[#737373]">
               <tr>

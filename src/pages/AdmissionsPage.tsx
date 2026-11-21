@@ -720,9 +720,104 @@ export const AdmissionsPage: React.FC<AdmissionsPageProps> = ({ settings, user, 
             </form>
           </div>
 
-          {/* Admissions Table */}
+          {/* Admissions List: Phone App Cards (< md) + Tablet/Desktop Table (md+) */}
           <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
-            <div className="overflow-x-auto">
+            {/* Phone App Card View */}
+            <div className="md:hidden divide-y divide-neutral-100">
+              {loading ? (
+                <div className="p-8 text-center text-xs text-[#737373]">Loading admissions...</div>
+              ) : admissions.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[#737373]">No admission applications found.</div>
+              ) : (
+                admissions.map((adm) => (
+                  <div key={adm.id} className="p-3.5 space-y-2.5 bg-white">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-bold text-sm text-[#171717] truncate">{adm.student_name}</div>
+                        <div className="text-[11px] font-mono-num text-[#737373]">
+                          {adm.admission_no}
+                          {adm.official_admission_no ? ` · ${adm.official_admission_no}` : ''}
+                        </div>
+                        {adm.username && (
+                          <div className="font-mono-num text-[11px] text-[#0EA5E9]">@{adm.username}</div>
+                        )}
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase shrink-0 border ${
+                          adm.status === 'approved'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : adm.status === 'rejected'
+                              ? 'bg-red-50 text-[#DC1726] border-red-200'
+                              : 'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}
+                      >
+                        {adm.status}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs bg-neutral-50/80 rounded-lg p-2.5 border border-neutral-100">
+                      <div className="min-w-0">
+                        <span className="text-[10px] text-neutral-500 block">Guardian</span>
+                        <span className="font-medium text-[#171717] truncate block">{adm.guardian_name || adm.father_name || '-'}</span>
+                        <span className="text-[11px] font-mono-num text-[#737373] block">{adm.guardian_mobile || '-'}</span>
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[10px] text-neutral-500 block">Class &amp; Date</span>
+                        <span className="font-semibold text-[#171717] block">{adm.class_name || '-'}</span>
+                        <span className="text-[11px] font-mono-num text-[#737373] block">{adm.admission_date || '-'}</span>
+                      </div>
+                    </div>
+
+                    {adm.status === 'rejected' && adm.rejection_reason && (
+                      <div className="text-[11px] text-[#DC1726] bg-red-50/60 px-2.5 py-1.5 rounded-lg border border-red-100">
+                        Reason: {adm.rejection_reason}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                      {adm.status === 'pending' && canManageAdmissionToggle && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={actionBusyId === adm.id}
+                            onClick={() => handleApprove(adm.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold disabled:opacity-50"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" /> Approve
+                          </button>
+                          <button
+                            type="button"
+                            disabled={actionBusyId === adm.id}
+                            onClick={() => openRejectModal(adm)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-50 text-[#DC1726] border border-red-200 text-[11px] font-semibold disabled:opacity-50"
+                          >
+                            <XCircle className="w-3.5 h-3.5" /> Reject
+                          </button>
+                        </>
+                      )}
+                      <button type="button" onClick={() => setViewItem(adm)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-50 text-[#0EA5E9] text-[11px] font-semibold">
+                        <Eye className="w-3.5 h-3.5" /> View
+                      </button>
+                      <button type="button" onClick={() => openStudentDetails(adm)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 text-[#141E30] text-[11px] font-semibold">
+                        <GraduationCap className="w-3.5 h-3.5" /> Student
+                      </button>
+                      <button type="button" onClick={() => openPrint(adm, 'combined')} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-neutral-100 text-[#171717] text-[11px] font-semibold">
+                        <Printer className="w-3.5 h-3.5" /> Print
+                      </button>
+                      <button type="button" onClick={() => openEdit(adm)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 text-[#F59E0B] text-[11px] font-semibold">
+                        <Pencil className="w-3.5 h-3.5" /> Edit
+                      </button>
+                      <button type="button" onClick={() => setDeleteTarget(adm)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-50 text-[#DC1726] text-[11px] font-semibold">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Tablet & Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
                   <tr>

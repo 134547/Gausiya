@@ -377,9 +377,145 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ user, settings }) =>
         )}
       </div>
 
-      {/* Students Table */}
+      {/* Students List: Phone App Cards (< md) + Tablet/Desktop Table (md+) */}
       <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Phone App Card View */}
+        <div className="md:hidden divide-y divide-neutral-100">
+          {loading ? (
+            <div className="p-8 text-center text-xs text-[#737373]">Loading students...</div>
+          ) : students.length === 0 ? (
+            <div className="p-8 text-center text-xs text-[#737373]">No students found.</div>
+          ) : (
+            students.map((st) => (
+              <div key={st.id} className="p-3.5 space-y-2.5 bg-white">
+                <div className="flex items-start justify-between gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {st.photo_url ? (
+                      <img src={st.photo_url} alt={st.full_name} className="w-10 h-10 rounded-full object-cover border border-neutral-200 shrink-0" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-[#171717] text-white flex items-center justify-center text-xs font-bold shrink-0">
+                        {st.full_name.charAt(0)}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="font-bold text-sm text-[#171717] truncate">{st.full_name}</div>
+                      <div className="text-[11px] text-[#737373] font-mono-num truncate">
+                        {st.student_code}{st.admission_no ? ` · ${st.admission_no}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <span
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase shrink-0 ${
+                      st.status === 'active'
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : 'bg-neutral-100 text-neutral-600 border border-neutral-200'
+                    }`}
+                  >
+                    {st.status}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs bg-neutral-50/80 rounded-lg p-2.5 border border-neutral-100">
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-neutral-500 block">Class</span>
+                    <span className="font-semibold text-[#171717] truncate block">{st.class_name || '-'}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-neutral-500 block">Father Name</span>
+                    <span className="font-medium text-[#171717] truncate block">{st.father_name || '-'}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-neutral-500 block">Mobile</span>
+                    <span className="font-mono-num text-[#171717] truncate block">{st.mobile || '-'}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-neutral-500 block">Portal Login</span>
+                    {st.login_username ? (
+                      <span className="font-mono-num text-[11px] font-semibold text-emerald-700 truncate block">@{st.login_username}</span>
+                    ) : (
+                      <span className="text-[11px] text-amber-600 block">No login</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <button type="button" onClick={() => openProfile(st.id)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-50 text-[#0EA5E9] text-[11px] font-semibold">
+                    <Eye className="w-3.5 h-3.5" /> View
+                  </button>
+                  <button type="button" onClick={() => { setPrintStudent(st); setPrintMode('id_card'); }} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 text-[#10B981] text-[11px] font-semibold">
+                    <CreditCard className="w-3.5 h-3.5" /> ID
+                  </button>
+                  <button type="button" onClick={() => { setPrintStudent(st); setPrintMode('admission'); }} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-50 text-[#DC1726] text-[11px] font-semibold">
+                    <FileText className="w-3.5 h-3.5" /> Form
+                  </button>
+                  <button type="button" onClick={() => { setPrintStudent(st); setPrintMode('profile'); }} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-neutral-100 text-[#171717] text-[11px] font-semibold">
+                    <Printer className="w-3.5 h-3.5" /> Print
+                  </button>
+                  {isAdmin && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPromoteTarget(st);
+                          setPromoteForm({ to_class_id: String(st.class_id || ''), to_session_id: String(st.academic_session_id || ''), action_type: 'promote', remarks: '' });
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-teal-50 text-[#14B8A6] text-[11px] font-semibold"
+                      >
+                        <ArrowUpRight className="w-3.5 h-3.5" /> Promote
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingId(st.id);
+                          setEditingHasLogin(Boolean(st.has_login || st.login_username));
+                          setShowPassword(false);
+                          setErr('');
+                          setForm({
+                            full_name: st.full_name || '',
+                            father_name: st.father_name || '',
+                            mother_name: st.mother_name || '',
+                            dob: st.dob || '',
+                            gender: st.gender || 'Male',
+                            religion: st.religion || 'Islam',
+                            address: st.address || '',
+                            village: st.village || '',
+                            district: st.district || 'Palamu',
+                            state: st.state || 'Jharkhand',
+                            pin_code: st.pin_code || '',
+                            mobile: st.mobile || '',
+                            guardian_name: st.guardian_name || st.father_name || '',
+                            guardian_relationship: st.guardian_relationship || 'Father',
+                            guardian_mobile: st.guardian_mobile || st.mobile || '',
+                            class_id: st.class_id ? String(st.class_id) : '',
+                            admission_no: st.admission_no || '',
+                            admission_date: st.admission_date || '',
+                            photo_url: st.photo_url || '',
+                            status: st.status || 'active',
+                            previous_school: st.previous_school || '',
+                            previous_class: st.previous_class || '',
+                            remarks: st.remarks || '',
+                            username: st.login_username || '',
+                            password: '',
+                          });
+                          setFormOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 text-[#F59E0B] text-[11px] font-semibold"
+                      >
+                        <Pencil className="w-3.5 h-3.5" /> Edit
+                      </button>
+                      <button type="button" onClick={() => setDeleteTarget(st)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-50 text-[#DC1726] text-[11px] font-semibold">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Tablet & Desktop Table View */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
               <tr>

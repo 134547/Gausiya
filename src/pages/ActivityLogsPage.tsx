@@ -74,7 +74,39 @@ export const ActivityLogsPage: React.FC = () => {
       </div>
 
       <div className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Phone App Audit Cards (< md) */}
+        <div className="md:hidden divide-y divide-neutral-100">
+          {loading ? (
+            <div className="p-8 text-center text-xs text-[#737373]">Loading audit logs...</div>
+          ) : logs.length === 0 ? (
+            <div className="p-8 text-center text-xs text-[#737373]">No audit log entries match your filter.</div>
+          ) : (
+            logs.map((log) => (
+              <div key={log.id} className="p-3.5 space-y-1.5 bg-white">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="font-mono-num font-bold text-xs text-[#DC1726]">{log.action}</span>
+                    <span className="text-[11px] text-neutral-500 capitalize"> · {String(log.module || '').replace('_', ' ')}</span>
+                  </div>
+                  <span className="text-[10px] font-mono-num text-[#737373] shrink-0">
+                    {new Date(log.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+                <div className="flex items-start gap-1.5 text-xs text-[#171717]">
+                  <Activity className="w-3.5 h-3.5 text-[#14B8A6] shrink-0 mt-0.5" />
+                  <span className="break-words">{log.details}</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-[#737373] pt-1 border-t border-neutral-100">
+                  <span className="font-semibold text-[#171717]">{log.username} <span className="font-normal text-[#737373]">({log.role_name})</span></span>
+                  <span className="font-mono-num">{new Date(log.created_at).toLocaleTimeString()}</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Tablet & Desktop Audit Table (md+) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs text-start">
             <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373] uppercase text-[11px]">
               <tr>
