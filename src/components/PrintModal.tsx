@@ -399,74 +399,118 @@ export const PrintModal: React.FC<PrintModalProps> = ({
             zoomMode={zoomMode}
             onZoomModeChange={setZoomMode}
             sheetClassName={`${
-              standalone ? 'p-4' : 'p-7'
+              standalone ? 'p-4' : 'p-5'
             } shadow-md rounded-sm border border-neutral-200 print:shadow-none print:border-0 print:rounded-none print:p-0`}
           >
             {standalone ? (
               children
             ) : (
-              <>
-                {/* Official Institutional Header — Always Horizontal A4 Proportions */}
-                <div className="flex flex-row items-center justify-between gap-4 pb-4 mb-5 border-b-2 border-[#171717]">
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <MadrasaLogo logoUrl={settings?.logo_url} size={60} />
-                    <div className="min-w-0">
-                      <h1 className="text-lg font-bold text-[#171717] leading-tight">
-                        {settings?.name || 'Madrasa Gausiya Razvia'}
-                      </h1>
-                      <p className="text-[11px] text-[#525252] mt-0.5 leading-snug">
-                        {settings?.address ||
-                          'Islamnagar, Ramgarh, (P.S.) Ramgarh, (P.O.) Ramgarh, Palamu, Jharkhand, India, 822110'}
-                      </p>
-                      <p className="text-[11px] text-[#525252] font-mono-num mt-0.5">
-                        {settings?.phone || '+91 62027 36648'} ·{' '}
-                        {settings?.website || 'https://gausiya-madarsa.vercel.app'}
-                      </p>
+              <div className="flex flex-col">
+                {/* Formal Double-Bordered Institutional Document Frame (Everything inside Margin) */}
+                <div className="border-[1.5px] border-[#1E293B] p-[3px] bg-white">
+                  <div className="border border-[#CBD5E1] px-6 py-5 bg-white min-h-[930px] flex flex-col justify-between">
+                    <div>
+                      {/* Executive Dual-Tone Accent Rule */}
+                      <div className="h-[3.5px] w-full flex overflow-hidden rounded-xs mb-4">
+                        <div className="w-[72%] bg-[#141E30]" />
+                        <div className="w-[28%] bg-[#DC1726]" />
+                      </div>
+
+                      {/* Official Institutional Letterhead (Clean — Contact Info sits outside bottom margin) */}
+                      <div className="flex flex-row items-center justify-between gap-4 pb-4 border-b border-[#CBD5E1]">
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          <MadrasaLogo logoUrl={settings?.logo_url} size={62} />
+                          <div className="min-w-0">
+                            <div className="text-[9.5px] font-bold uppercase tracking-[0.14em] text-[#DC1726]">
+                              Official Institutional Record
+                            </div>
+                            <h1 className="text-[19px] font-extrabold uppercase tracking-[0.02em] text-[#0F172A] leading-tight mt-0.5">
+                              {settings?.name || 'Madrasa Gausiya Razvia'}
+                            </h1>
+                            <p className="text-[10.5px] text-[#475569] mt-0.5 leading-snug max-w-[390px]">
+                              {settings?.address ||
+                                'Islamnagar, Ramgarh, (P.S.) Ramgarh, (P.O.) Ramgarh, Palamu, Jharkhand, India, 822110'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <p className="urdu-text text-[20px] font-bold text-[#DC1726] leading-snug" dir="rtl">
+                            {settings?.name_urdu || 'مدرسہ غوثیہ رضویہ'}
+                          </p>
+                          <p className="urdu-text text-[11.5px] text-[#475569] leading-snug" dir="rtl">
+                            {settings?.address_urdu || 'اسلام نگر، رام گڑھ، پلاموں، جھارکھنڈ، انڈیا'}
+                          </p>
+                          <p className="text-[10.5px] font-semibold text-[#1E293B] mt-1.5 font-mono-num">
+                            Date: {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Executive Report Title Banner */}
+                      <div className="my-4 py-2.5 px-4 bg-[#F8FAFC] border-y border-[#1E293B]/25 text-center">
+                        <h2 className="text-[13.5px] font-extrabold uppercase tracking-[0.06em] text-[#0F172A]">
+                          {title}
+                        </h2>
+                        {subtitle && (
+                          <p className="text-[10.5px] font-medium text-[#475569] mt-0.5">
+                            {subtitle}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Main Report Body */}
+                      <div className="mt-2">{children}</div>
                     </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="urdu-text text-lg font-bold text-[#DC1726]">
-                      {settings?.name_urdu || 'مدرسہ غوثیہ رضویہ'}
-                    </p>
-                    <p className="urdu-text text-xs text-[#525252]">
-                      {settings?.address_urdu || 'اسلام نگر، رام گڑھ، پلاموں، جھارکھنڈ، انڈیا'}
-                    </p>
-                    <p className="text-[11px] font-semibold text-[#171717] mt-1 font-mono-num">
-                      Issued: {new Date().toLocaleDateString('en-IN')}
-                    </p>
+
+                    {/* Official Authorization & Signature Block (Inside Bottom of Margin Frame) */}
+                    <div className="mt-8 pt-4 border-t border-[#E2E8F0]">
+                      <div className="grid grid-cols-3 gap-8 text-center text-[11px] text-[#475569]">
+                        <div>
+                          <div className="h-10" />
+                          <div className="border-t border-[#64748B] pt-1.5 font-bold text-[#0F172A]">
+                            Prepared By / Clerk
+                          </div>
+                          <div className="text-[9.5px] text-[#64748B] mt-0.5">Records Department</div>
+                        </div>
+                        <div>
+                          <div className="h-10 flex items-center justify-center">
+                            <span className="text-[9px] uppercase tracking-widest text-[#94A3B8] border border-dashed border-[#CBD5E1] px-2.5 py-1 rounded">
+                              Official Seal
+                            </span>
+                          </div>
+                          <div className="border-t border-[#64748B] pt-1.5 font-bold text-[#0F172A]">
+                            Nazim-e-Talimat
+                          </div>
+                          <div className="text-[9.5px] text-[#64748B] mt-0.5">Academic Affairs</div>
+                        </div>
+                        <div>
+                          <div className="h-10" />
+                          <div className="border-t border-[#64748B] pt-1.5 font-bold text-[#0F172A]">
+                            Principal / Sadr-e-Madrasa
+                          </div>
+                          <div className="text-[9.5px] text-[#64748B] mt-0.5">Authorized Signatory</div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="mb-4 text-center">
-                  <span className="inline-block px-4 py-1 border border-neutral-300 rounded-md text-sm font-bold tracking-wide text-[#171717] bg-neutral-50">
-                    {title}
+                {/* OUTSIDE THE BOTTOM MARGIN BORDER: Phone Number & Official Website Link */}
+                <div className="mt-2 px-1 flex items-center justify-between gap-4 text-[10px] text-[#334155]">
+                  <span className="font-mono-num">
+                    <strong className="font-bold text-[#0F172A]">Phone:</strong>{' '}
+                    {settings?.phone || '+91 62027 36648'}
+                  </span>
+                  <span className="font-mono-num text-center">
+                    <strong className="font-bold text-[#0F172A]">Website:</strong>{' '}
+                    {settings?.website || 'https://gausiya-madarsa.vercel.app'}
+                  </span>
+                  <span className="text-right text-[#64748B]">
+                    {settings?.email ? settings.email : 'Official ERP Document'}
                   </span>
                 </div>
-
-                {children}
-
-                {/* Official Signature Footer */}
-                <div className="mt-8 pt-5 border-t border-neutral-200 grid grid-cols-3 gap-6 text-center text-xs text-[#525252]">
-                  <div>
-                    <div className="h-9" />
-                    <div className="border-t border-neutral-400 pt-1.5 font-semibold text-[#171717]">
-                      Class Teacher / Clerk
-                    </div>
-                  </div>
-                  <div>
-                    <div className="h-9" />
-                    <div className="border-t border-neutral-400 pt-1.5 font-semibold text-[#171717]">
-                      Nazim-e-Talimat
-                    </div>
-                  </div>
-                  <div>
-                    <div className="h-9" />
-                    <div className="border-t border-neutral-400 pt-1.5 font-semibold text-[#171717]">
-                      Principal / Sadr-e-Madrasa
-                    </div>
-                  </div>
-                </div>
-              </>
+              </div>
             )}
           </ScaledA4Viewport>
 

@@ -8,18 +8,25 @@ import {
   CalendarClock,
   CalendarDays,
   CalendarRange,
+  Check,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   FileBarChart,
   GraduationCap,
   History,
   LayoutDashboard,
+  ListFilter,
+  Menu,
   RefreshCw,
   RotateCcw,
+  Search,
   ShieldCheck,
   SlidersHorizontal,
   UserCheck,
   Users,
   Wallet,
+  X,
 } from 'lucide-react';
 import { apiRequest } from '../lib/api.ts';
 import { MadrasaSettings, User } from '../types.ts';
@@ -135,6 +142,9 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
   const [activeCategory, setActiveCategory] = useState<ReportCategoryId>('dashboard');
   const [activeReportId, setActiveReportId] = useState<string>('complete_student_list');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [mobileModulesOpen, setMobileModulesOpen] = useState(false);
+  const [subReportPickerOpen, setSubReportPickerOpen] = useState(false);
+  const [subReportSearch, setSubReportSearch] = useState('');
 
   const [filters, setFilters] = useState<FilterState>({
     sessionId: '',
@@ -228,6 +238,9 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
   const handleSelectCategory = useCallback(
     (catId: ReportCategoryId, explicitReportId?: string) => {
       setActiveCategory(catId);
+      setMobileModulesOpen(false);
+      setSubReportPickerOpen(false);
+      setSubReportSearch('');
       const cat = REPORT_CATEGORIES.find((c) => c.id === catId);
       if (explicitReportId) {
         setActiveReportId(explicitReportId);
@@ -471,40 +484,69 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
 
   const isTeacherScoped = meta?.capabilities?.isTeacherScoped || user?.role_slug === 'teacher';
 
+  const ActiveCategoryIcon =
+    CATEGORY_ICONS[currentCategoryConfig?.id || 'dashboard'] || LayoutDashboard;
+
+  const currentReportIdx = useMemo(() => {
+    if (!currentCategoryConfig || !currentReportDef) return 0;
+    const idx = currentCategoryConfig.reports.findIndex((r) => r.id === currentReportDef.id);
+    return idx >= 0 ? idx : 0;
+  }, [currentCategoryConfig, currentReportDef]);
+
+  const filteredSubReports = useMemo(() => {
+    const list = currentCategoryConfig?.reports || [];
+    const q = subReportSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (r) =>
+        r.label.toLowerCase().includes(q) ||
+        r.description.toLowerCase().includes(q)
+    );
+  }, [currentCategoryConfig, subReportSearch]);
+
   return (
-    <div className="space-y-4">
-      {/* Top Executive ERP Header */}
-      <div className="bg-white rounded-xl border border-neutral-200 p-4 sm:p-5 shadow-xs">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-xl bg-red-50 border border-red-100 text-[#DC1726] flex items-center justify-center shrink-0">
+    <div className="space-y-3 sm:space-y-4">
+      {/* Top Executive ERP Header (Compact App Header on Phone, Full Executive Bar on Desktop) */}
+      <div className="bg-white rounded-xl border border-neutral-200 p-3 sm:p-4 lg:p-5 shadow-xs">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div className="flex items-center sm:items-start gap-2.5 sm:gap-3 min-w-0">
+            {/* Phone & Tablet 3-Line Report Modules Menu Trigger (inside Reports) */}
+            <button
+              type="button"
+              onClick={() => setMobileModulesOpen(true)}
+              aria-label="Open Report Modules menu"
+              className="lg:hidden min-w-[38px] min-h-[38px] rounded-xl border border-neutral-200 bg-neutral-50 text-[#171717] hover:bg-neutral-100 active:scale-95 transition-transform flex items-center justify-center shrink-0 cursor-pointer"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+
+            <div className="hidden sm:flex w-10 h-10 rounded-xl bg-red-50 border border-red-100 text-[#DC1726] items-center justify-center shrink-0">
               <FileBarChart className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-lg sm:text-xl font-bold text-neutral-900 tracking-tight">
-                  Reports & Analytics ERP
+
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <h1 className="text-base sm:text-lg lg:text-xl font-bold text-neutral-900 tracking-tight truncate">
+                  Reports &amp; Analytics ERP
                 </h1>
                 <span
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold border ${
-                    isTeacherScoped
-                      ? 'bg-amber-50 text-amber-800 border-amber-200'
-                      : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  className={`inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-semibold ${
+                    isTeacherScoped ? 'text-amber-700' : 'text-emerald-700'
                   }`}
                 >
-                  <ShieldCheck className="w-3 h-3" />
+                  <ShieldCheck className="w-3 h-3 shrink-0" />
                   {isTeacherScoped ? 'Assigned Classes Scope' : 'Full Institutional Scope'}
                 </span>
               </div>
-              <p className="text-xs text-neutral-500 mt-0.5">
-                {settings?.name || 'Madrasa Gausiya Razvia'} — Live institutional records, multi-period analytics & official A4 PDF / Excel / CSV reporting
+              <p className="text-[11px] sm:text-xs text-neutral-500 mt-0.5 line-clamp-1 sm:line-clamp-none">
+                {settings?.name || 'Madrasa Gausiya Razvia'} — Live institutional records, multi-period analytics &amp; official A4 PDF / Excel / CSV reporting
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
             {/* Global Academic Year Selector */}
-            <div className="flex items-center gap-1.5 bg-neutral-50 border border-neutral-200 rounded-lg px-2.5 py-2 flex-1 sm:flex-none">
+            <div className="flex items-center gap-1.5 bg-neutral-50 border border-neutral-200 rounded-lg px-2.5 py-1.5 sm:py-2 flex-1 sm:flex-none min-w-0">
               <CalendarClock className="w-3.5 h-3.5 text-[#DC1726] shrink-0" />
               <span className="text-[11px] font-semibold text-neutral-500 hidden sm:inline">
                 Academic Year:
@@ -514,7 +556,7 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
                 onChange={(e) => updateFilter('sessionId', e.target.value)}
                 disabled={metaLoading}
                 aria-label="Academic Year"
-                className="bg-transparent text-xs font-bold text-neutral-900 focus:outline-none cursor-pointer pr-1 w-full sm:w-auto"
+                className="bg-transparent text-xs font-bold text-neutral-900 focus:outline-none cursor-pointer pr-1 w-full sm:w-auto truncate"
               >
                 <option value="all">All Academic Years</option>
                 {(meta?.sessions || []).map((s) => (
@@ -529,7 +571,7 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
             <button
               type="button"
               onClick={() => setRefreshTick((t) => t + 1)}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors cursor-pointer shrink-0"
+              className="inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors cursor-pointer shrink-0"
               title="Refresh live database metrics"
             >
               <RefreshCw className="w-3.5 h-3.5" />
@@ -539,10 +581,10 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
             <button
               type="button"
               onClick={() => handleSelectCategory('annual_complete')}
-              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-[#B81220] transition-colors shadow-xs cursor-pointer w-full sm:w-auto"
+              className="inline-flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-[#B81220] transition-colors shadow-xs cursor-pointer w-full sm:w-auto"
             >
               <BookOpen className="w-3.5 h-3.5" />
-              Generate Complete Annual Report
+              <span>Generate Complete Annual Report</span>
             </button>
           </div>
         </div>
@@ -554,30 +596,103 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
         </div>
       )}
 
-      {/* Mobile & Tablet Horizontal 15-Category Navigation Bar (< lg) */}
-      <div className="lg:hidden bg-white rounded-xl border border-neutral-200 p-2 shadow-xs">
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
-          {visibleCategories.map((cat) => {
-            const Icon = CATEGORY_ICONS[cat.id];
-            const isActive = cat.id === activeCategory;
-            return (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => handleSelectCategory(cat.id)}
-                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors shrink-0 cursor-pointer ${
-                  isActive
-                    ? 'bg-[#DC1726] text-white shadow-xs'
-                    : 'bg-neutral-50 text-neutral-700 hover:bg-neutral-100 border border-neutral-200/80'
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5 shrink-0" />
-                {cat.shortLabel}
-              </button>
-            );
-          })}
-        </div>
+      {/* Mobile & Tablet Active Module Bar with Quick 3-Line Menu Trigger (< lg) */}
+      <div className="lg:hidden bg-white rounded-xl border border-neutral-200 px-3 py-2.5 shadow-xs flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setMobileModulesOpen(true)}
+          className="flex items-center gap-2.5 min-w-0 flex-1 text-start cursor-pointer"
+        >
+          <span className="w-8 h-8 rounded-lg bg-[#DC1726] text-white flex items-center justify-center shrink-0">
+            <ActiveCategoryIcon className="w-4 h-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 leading-none">
+              Report Module ({visibleCategories.length})
+            </div>
+            <div className="text-xs font-bold text-neutral-900 truncate mt-0.5">
+              {currentCategoryConfig?.label || 'Reports Dashboard'}
+            </div>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMobileModulesOpen(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-xs font-bold text-neutral-800 hover:bg-neutral-100 shrink-0 cursor-pointer"
+        >
+          <Menu className="w-3.5 h-3.5 text-[#DC1726]" />
+          <span>Modules</span>
+        </button>
       </div>
+
+      {/* Slide-Over Drawer for All 15 Report Modules on Phone & Tablet (< lg) */}
+      {mobileModulesOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 flex">
+          <div
+            className="fixed inset-0 bg-black/50 backdrop-blur-[1px]"
+            onClick={() => setMobileModulesOpen(false)}
+          />
+          <div className="relative z-10 w-[84vw] max-w-[310px] h-full bg-white shadow-2xl flex flex-col overflow-hidden">
+            <div className="px-4 py-3.5 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#DC1726]">
+                  Report Modules ({visibleCategories.length})
+                </p>
+                <p className="text-[11px] text-neutral-500 mt-0.5">
+                  Select a reporting department
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileModulesOpen(false)}
+                className="p-2 rounded-lg border border-neutral-200 bg-white text-neutral-600 hover:text-neutral-900"
+                aria-label="Close report modules menu"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <nav className="flex-1 overflow-y-auto p-2.5 space-y-1">
+              {visibleCategories.map((cat) => {
+                const Icon = CATEGORY_ICONS[cat.id];
+                const isActive = cat.id === activeCategory;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => handleSelectCategory(cat.id)}
+                    className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs font-semibold transition-colors cursor-pointer ${
+                      isActive
+                        ? 'bg-[#DC1726] text-white shadow-xs'
+                        : 'text-neutral-700 hover:bg-neutral-100'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2.5 min-w-0">
+                      <Icon
+                        className={`w-4 h-4 shrink-0 ${
+                          isActive ? 'text-white' : 'text-neutral-400'
+                        }`}
+                      />
+                      <span className="truncate">{cat.label}</span>
+                    </span>
+                    {cat.reports.length > 0 && (
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold tabular-nums shrink-0 ${
+                          isActive
+                            ? 'bg-white/20 text-white'
+                            : 'bg-neutral-100 text-neutral-500'
+                        }`}
+                      >
+                        {cat.reports.length}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        </div>
+      )}
 
       {/* Main ERP Two-Column Layout: 15-Category Left Sidebar (lg+) + Workspace */}
       <div className="flex flex-col lg:flex-row items-start gap-4">
@@ -629,39 +744,88 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
         </aside>
 
         {/* Main Workspace Column */}
-        <div className="flex-1 min-w-0 w-full space-y-4">
-          {/* Category Report Selector (when category contains multiple reports) */}
+        <div className="flex-1 min-w-0 w-full space-y-3 sm:space-y-4">
+          {/* Executive Sub-Report Selector Bar (Clean, Non-Cluttered on Phone & Window) */}
           {currentCategoryConfig && currentCategoryConfig.reports.length > 0 && (
-            <div className="bg-white rounded-xl border border-neutral-200 p-3.5 sm:p-4 shadow-xs space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-bold text-neutral-900">
-                    {currentCategoryConfig.label}
+            <div className="bg-white rounded-xl border border-neutral-200 p-3 sm:p-4 shadow-xs space-y-2.5">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-500">
+                    <span className="text-[#DC1726] font-bold">{currentCategoryConfig.label}</span>
+                    <span>·</span>
+                    <span className="font-mono-num">
+                      Report {currentReportIdx + 1} of {currentCategoryConfig.reports.length}
+                    </span>
+                  </div>
+                  <h2 className="text-sm sm:text-base font-bold text-neutral-900 truncate mt-0.5">
+                    {currentReportDef?.label || currentCategoryConfig.label}
                   </h2>
-                  {currentReportDef && (
-                    <p className="text-xs text-neutral-500 mt-0.5">
+                  {currentReportDef?.description && (
+                    <p className="text-[11px] sm:text-xs text-neutral-500 mt-0.5 line-clamp-1">
                       {currentReportDef.description}
                     </p>
                   )}
                 </div>
 
-                {/* Compact dropdown selector for rapid jumping on mobile/desktop */}
-                <select
-                  value={currentReportDef?.id || ''}
-                  onChange={(e) => setActiveReportId(e.target.value)}
-                  aria-label="Select Report"
-                  className="sm:max-w-xs w-full px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-xs font-semibold text-neutral-800 focus:outline-none focus:border-[#DC1726]"
-                >
-                  {currentCategoryConfig.reports.map((rep) => (
-                    <option key={rep.id} value={rep.id}>
-                      {rep.label}
-                    </option>
-                  ))}
-                </select>
+                {/* Clean Controls: Prev / Next + Quick Select + Browse All Modal Button */}
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 w-full md:w-auto">
+                  <div className="inline-flex items-center rounded-lg border border-neutral-200 bg-white overflow-hidden shrink-0">
+                    <button
+                      type="button"
+                      disabled={currentReportIdx <= 0}
+                      onClick={() => {
+                        const prev = currentCategoryConfig.reports[currentReportIdx - 1];
+                        if (prev) setActiveReportId(prev.id);
+                      }}
+                      title="Previous Report"
+                      className="p-2 text-neutral-700 hover:bg-neutral-50 disabled:opacity-35 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={currentReportIdx >= currentCategoryConfig.reports.length - 1}
+                      onClick={() => {
+                        const next = currentCategoryConfig.reports[currentReportIdx + 1];
+                        if (next) setActiveReportId(next.id);
+                      }}
+                      title="Next Report"
+                      className="p-2 border-s border-neutral-200 text-neutral-700 hover:bg-neutral-50 disabled:opacity-35 cursor-pointer"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <select
+                    value={currentReportDef?.id || ''}
+                    onChange={(e) => setActiveReportId(e.target.value)}
+                    aria-label="Select Sub-Report"
+                    className="flex-1 md:w-56 lg:w-64 min-w-0 px-2.5 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-xs font-semibold text-neutral-800 focus:outline-none focus:border-[#DC1726] truncate cursor-pointer"
+                  >
+                    {currentCategoryConfig.reports.map((rep) => (
+                      <option key={rep.id} value={rep.id}>
+                        {rep.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubReportSearch('');
+                      setSubReportPickerOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#171717] text-white text-xs font-semibold hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                    title={`Browse all ${currentCategoryConfig.reports.length} ${currentCategoryConfig.label}`}
+                  >
+                    <ListFilter className="w-3.5 h-3.5" />
+                    <span>All ({currentCategoryConfig.reports.length})</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Clickable Report Tabs Grid (Tablet & Desktop; Mobile uses native select above for clean UX) */}
-              <div className="hidden sm:flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+              {/* Clean Single-Row Scrollable Quick Switcher Strip (md+ only, no multi-row clutter) */}
+              <div className="hidden md:flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1 border-t border-neutral-100">
                 {currentCategoryConfig.reports.map((rep) => {
                   const active = rep.id === currentReportDef?.id;
                   return (
@@ -669,16 +833,105 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ user, settings }) => {
                       key={rep.id}
                       type="button"
                       onClick={() => setActiveReportId(rep.id)}
-                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer border ${
+                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer border ${
                         active
                           ? 'bg-neutral-900 text-white border-neutral-900'
-                          : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:bg-neutral-100'
+                          : 'bg-neutral-50 text-neutral-700 border-neutral-200/80 hover:bg-neutral-100'
                       }`}
                     >
                       {rep.label}
                     </button>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {/* Searchable Sub-Report Directory Modal / Sheet (Works seamlessly on Phone & Desktop) */}
+          {subReportPickerOpen && currentCategoryConfig && (
+            <div
+              className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[1px] flex items-end sm:items-center justify-center p-0 sm:p-4"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setSubReportPickerOpen(false);
+              }}
+            >
+              <div className="w-full sm:max-w-2xl max-h-[85vh] bg-white rounded-t-2xl sm:rounded-2xl border border-neutral-200 shadow-2xl flex flex-col overflow-hidden">
+                <div className="px-4 py-3.5 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-neutral-900">
+                      {currentCategoryConfig.label} ({currentCategoryConfig.reports.length})
+                    </h3>
+                    <p className="text-[11px] text-neutral-500">
+                      Search or pick any report below to load live database records
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSubReportPickerOpen(false)}
+                    className="p-2 rounded-lg border border-neutral-200 bg-white text-neutral-600 hover:text-neutral-900 cursor-pointer"
+                    aria-label="Close report picker"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-3 border-b border-neutral-100">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-neutral-400 absolute start-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={subReportSearch}
+                      onChange={(e) => setSubReportSearch(e.target.value)}
+                      placeholder={`Search ${currentCategoryConfig.reports.length} ${currentCategoryConfig.label.toLowerCase()}...`}
+                      className="w-full ps-8 pe-3 py-2 rounded-lg border border-neutral-200 text-xs focus:outline-none focus:border-[#DC1726]"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {filteredSubReports.length === 0 ? (
+                    <div className="sm:col-span-2 py-8 text-center text-xs text-neutral-500">
+                      No matching reports found.
+                    </div>
+                  ) : (
+                    filteredSubReports.map((rep) => {
+                      const active = rep.id === currentReportDef?.id;
+                      return (
+                        <button
+                          key={rep.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveReportId(rep.id);
+                            setSubReportPickerOpen(false);
+                          }}
+                          className={`p-3 rounded-xl border text-start transition-colors flex items-start justify-between gap-2 cursor-pointer ${
+                            active
+                              ? 'bg-red-50/70 border-[#DC1726] text-neutral-900'
+                              : 'bg-white border-neutral-200 hover:bg-neutral-50 text-neutral-800'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div
+                              className={`text-xs font-bold leading-snug ${
+                                active ? 'text-[#DC1726]' : 'text-neutral-900'
+                              }`}
+                            >
+                              {rep.label}
+                            </div>
+                            <div className="text-[11px] text-neutral-500 mt-0.5 line-clamp-2">
+                              {rep.description}
+                            </div>
+                          </div>
+                          {active && (
+                            <span className="w-5 h-5 rounded-full bg-[#DC1726] text-white flex items-center justify-center shrink-0 mt-0.5">
+                              <Check className="w-3 h-3" />
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             </div>
           )}

@@ -79,14 +79,14 @@ export const AnnualCompleteReportView: React.FC<AnnualCompleteReportViewProps> =
   return (
     <div className="space-y-4">
       {/* Hero Banner / One-Click Annual Generator */}
-      <div className="bg-white rounded-xl border border-neutral-200 p-5 space-y-4">
+      <div className="bg-white rounded-xl border border-neutral-200 p-4 sm:p-5 space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#DC1726]">
-              <BookOpen className="w-4 h-4" />
+              <BookOpen className="w-4 h-4 shrink-0" />
               <span>One-Click Complete Madarsa Annual Report (21 Official Sections)</span>
             </div>
-            <h2 className="text-lg font-extrabold text-[#171717]">
+            <h2 className="text-base sm:text-lg font-extrabold text-[#171717]">
               Annual Institutional Report — {annual?.academicYear || 'Loading...'}
             </h2>
             <p className="text-xs text-[#737373]">
@@ -96,12 +96,12 @@ export const AnnualCompleteReportView: React.FC<AnnualCompleteReportViewProps> =
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 shrink-0 w-full lg:w-auto">
             <button
               type="button"
               onClick={onRegenerate}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold hover:bg-neutral-50 cursor-pointer disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold hover:bg-neutral-50 cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
             </button>
@@ -109,23 +109,23 @@ export const AnnualCompleteReportView: React.FC<AnnualCompleteReportViewProps> =
               type="button"
               disabled={loading || !annual}
               onClick={() => setPrintOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg border border-neutral-200 bg-white text-xs font-semibold hover:bg-neutral-50 cursor-pointer disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold hover:bg-neutral-50 cursor-pointer disabled:opacity-50"
             >
-              <Printer className="w-3.5 h-3.5 text-[#DC1726]" /> Print Full Book
+              <Printer className="w-3.5 h-3.5 text-[#DC1726]" /> Print Book
             </button>
             <button
               type="button"
               disabled={loading || !annual}
               onClick={handleDownloadAllExcel}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 cursor-pointer disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 cursor-pointer disabled:opacity-50"
             >
-              <FileSpreadsheet className="w-3.5 h-3.5" /> All 21 Sheets (.xlsx)
+              <FileSpreadsheet className="w-3.5 h-3.5" /> 21 Sheets (.xlsx)
             </button>
             <button
               type="button"
               disabled={loading || !annual || downloadingAllPdf}
               onClick={handleDownloadCombinedPdf}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#DC1726] text-white text-xs font-bold hover:bg-red-700 shadow-xs cursor-pointer disabled:opacity-50"
+              className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[#DC1726] text-white text-xs font-bold hover:bg-red-700 shadow-xs cursor-pointer disabled:opacity-50"
             >
               {downloadingAllPdf ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -133,28 +133,48 @@ export const AnnualCompleteReportView: React.FC<AnnualCompleteReportViewProps> =
                 <FileText className="w-4 h-4" />
               )}
               <span>
-                {downloadingAllPdf ? 'Building Multi-Page PDF...' : 'GENERATE COMPLETE ANNUAL PDF'}
+                {downloadingAllPdf ? 'Building PDF...' : 'GENERATE COMPLETE ANNUAL PDF'}
               </span>
             </button>
           </div>
         </div>
 
-        {/* Quick Section Index */}
+        {/* Quick Section Index (Clean Select on Phone, Single-Row Scroll Strip on Desktop) */}
         {annual && (
           <div className="pt-3 border-t border-neutral-100">
-            <div className="text-[11px] font-semibold text-[#737373] mb-2">
-              Jump to Section (21 Sections):
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {annual.sections.map((sec) => (
-                <a
-                  key={sec.id}
-                  href={`#${sec.id}`}
-                  className="px-2.5 py-1 rounded-md border border-neutral-200 bg-neutral-50 hover:bg-red-50 hover:border-red-200 hover:text-[#DC1726] text-[11px] font-medium text-[#171717] transition-colors"
-                >
-                  {sec.number}. {sec.title}
-                </a>
-              ))}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+              <span className="text-[11px] font-semibold text-[#737373] shrink-0">
+                Jump to Section (21):
+              </span>
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (!id) return;
+                  const el = document.getElementById(id);
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+                aria-label="Jump to Annual Report Section"
+                className="sm:hidden w-full px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-xs font-semibold text-[#171717]"
+              >
+                <option value="">Select any section (1–21)...</option>
+                {annual.sections.map((sec) => (
+                  <option key={sec.id} value={sec.id}>
+                    {sec.number}. {sec.title}
+                  </option>
+                ))}
+              </select>
+              <div className="hidden sm:flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 flex-1">
+                {annual.sections.map((sec) => (
+                  <a
+                    key={sec.id}
+                    href={`#${sec.id}`}
+                    className="px-2.5 py-1 rounded-md border border-neutral-200 bg-neutral-50 hover:bg-red-50 hover:border-red-200 hover:text-[#DC1726] text-[11px] font-medium text-[#171717] transition-colors whitespace-nowrap shrink-0"
+                  >
+                    {sec.number}. {sec.title}
+                  </a>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -176,8 +196,8 @@ export const AnnualCompleteReportView: React.FC<AnnualCompleteReportViewProps> =
                   id={sec.id}
                   className="bg-white rounded-xl border border-neutral-200 overflow-hidden scroll-mt-24"
                 >
-                  <div className="px-4 py-3 bg-neutral-50 border-b border-neutral-200 flex flex-wrap items-center justify-between gap-2">
-                    <div>
+                  <div className="px-3.5 sm:px-4 py-3 bg-neutral-50 border-b border-neutral-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="min-w-0">
                       <h3 className="text-sm font-bold text-[#171717]">
                         {sec.number}. {sec.title}
                       </h3>
@@ -225,36 +245,73 @@ export const AnnualCompleteReportView: React.FC<AnnualCompleteReportViewProps> =
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto">
-                    {sec.rows.length === 0 ? (
-                      <div className="px-4 py-6 text-center text-xs text-[#737373]">
-                        No Records Found for this section in {annual.academicYear}.
+                  {sec.rows.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-xs text-[#737373]">
+                      No Records Found for this section in {annual.academicYear}.
+                    </div>
+                  ) : (
+                    <>
+                      {/* Phone App Card List (< md) */}
+                      <div className="md:hidden divide-y divide-neutral-100">
+                        {sec.rows.map((r, idx) => {
+                          const primaryCol = cols[0];
+                          const restCols = cols.slice(1);
+                          return (
+                            <div key={`m-sec-${sec.id}-${idx}`} className="p-3 space-y-1.5">
+                              {primaryCol && (
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+                                    {primaryCol}
+                                  </span>
+                                  <span className="text-xs font-bold text-[#171717] text-end">
+                                    {String(r[primaryCol] ?? '—')}
+                                  </span>
+                                </div>
+                              )}
+                              {restCols.length > 0 && (
+                                <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-1 border-t border-neutral-100 text-[11px]">
+                                  {restCols.map((c) => (
+                                    <div key={c} className="min-w-0">
+                                      <div className="text-[10px] text-neutral-500 truncate">{c}</div>
+                                      <div className="font-mono-num font-semibold text-[#171717] truncate">
+                                        {String(r[c] ?? '—')}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    ) : (
-                      <table className="w-full text-xs">
-                        <thead className="bg-white border-b border-neutral-200 text-[#525252] text-[11px]">
-                          <tr>
-                            {cols.map((c) => (
-                              <th key={c} className="px-3.5 py-2.5 text-start font-semibold whitespace-nowrap">
-                                {c}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-neutral-100">
-                          {sec.rows.map((r, idx) => (
-                            <tr key={idx} className="hover:bg-neutral-50/60">
+
+                      {/* Tablet & Desktop Table (md+) */}
+                      <div className="hidden md:block overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead className="bg-white border-b border-neutral-200 text-[#525252] text-[11px]">
+                            <tr>
                               {cols.map((c) => (
-                                <td key={c} className="px-3.5 py-2 font-mono-num whitespace-nowrap text-[#171717]">
-                                  {String(r[c] ?? '—')}
-                                </td>
+                                <th key={c} className="px-3.5 py-2.5 text-start font-semibold whitespace-nowrap">
+                                  {c}
+                                </th>
                               ))}
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
+                          </thead>
+                          <tbody className="divide-y divide-neutral-100">
+                            {sec.rows.map((r, idx) => (
+                              <tr key={idx} className="hover:bg-neutral-50/60">
+                                {cols.map((c) => (
+                                  <td key={c} className="px-3.5 py-2 font-mono-num whitespace-nowrap text-[#171717]">
+                                    {String(r[c] ?? '—')}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
                 </section>
               );
             })}

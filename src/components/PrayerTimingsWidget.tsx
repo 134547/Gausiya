@@ -560,10 +560,19 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user, 
     form.ramzan_timetable_name
   );
 
+  const compactRemaining = useMemo(() => {
+    const raw = String(upcomingNamaz.remainingLabel || '').trim();
+    const hm = raw.match(/(\d+h\s*\d+m)/i);
+    if (hm) return hm[1].replace(/\s+/g, ' ');
+    const mins = raw.match(/(\d+m)/i);
+    if (mins) return mins[1];
+    return raw;
+  }, [upcomingNamaz.remainingLabel]);
+
   return (
     <>
-      {/* TopBar "Namaz's Time" Widget right beside Notification Bell */}
-      <div className="inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-50/90 text-emerald-950 overflow-hidden shrink-0 shadow-[0_1px_2px_rgba(6,95,70,0.06)]">
+      {/* Sleek Compact "Namaz's Time" Widget across Phone, Tablet, Desktop & Public Pages */}
+      <div className="inline-flex items-center h-7 rounded-md border border-emerald-200/90 bg-emerald-50/90 text-emerald-950 overflow-hidden shrink-0 shadow-[0_1px_1.5px_rgba(6,95,70,0.05)] max-w-full">
         <button
           type="button"
           onClick={() => {
@@ -573,31 +582,27 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user, 
             void fetchPrayerSettings();
           }}
           title={`Namaz's Time (${location.areaName}) — Next Namaz: ${upcomingNamaz.name} ${upcomingNamaz.namazFormatted} (${upcomingNamaz.remainingLabel} left) | Live Time: ${liveLocationTime}`}
-          className={`inline-flex items-center hover:bg-emerald-100/80 transition-colors cursor-pointer ${
-            compact ? 'gap-1.5 px-2 py-1.5' : 'gap-1.5 sm:gap-2 px-2.5 py-1.5'
+          className={`inline-flex items-center h-full hover:bg-emerald-100/80 transition-colors cursor-pointer ${
+            compact ? 'gap-1 px-1.5 sm:px-2' : 'gap-1.5 px-2'
           }`}
         >
-          <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-700 shrink-0" />
-          <div
-            className={`flex items-center leading-none whitespace-nowrap ${
-              compact ? 'gap-1 text-[11px]' : 'gap-1.5 text-[11px] sm:text-xs'
-            }`}
-          >
-            <span className="font-extrabold text-emerald-950 tracking-tight">
+          <Moon className="w-3 h-3 text-emerald-700 shrink-0" />
+          <div className="flex items-center gap-1 leading-none whitespace-nowrap text-[10px] sm:text-[11px]">
+            <span className="font-bold text-emerald-950 tracking-tight">
               Namaz&apos;s Time
             </span>
-            <span className="text-emerald-300">|</span>
-            <span className="font-bold text-emerald-900">{upcomingNamaz.name}</span>
-            <span className="font-mono-num font-extrabold text-emerald-700">
+            <span className="text-emerald-300 text-[9px]">|</span>
+            <span className="font-semibold text-emerald-900">{upcomingNamaz.name}</span>
+            <span className="font-mono-num font-bold text-emerald-700">
               {upcomingNamaz.namazFormatted}
             </span>
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-600/15 font-mono-num font-bold text-emerald-900 text-[10px] sm:text-[11px]">
-              {upcomingNamaz.remainingLabel} left
+            <span className="inline-flex items-center px-1 py-0.5 rounded bg-emerald-600/12 font-mono-num font-semibold text-emerald-900 text-[9px] sm:text-[10px]">
+              {compactRemaining} left
             </span>
           </div>
         </button>
 
-        {/* Direct Location ON / OFF toggle right on TopBar */}
+        {/* Compact Location ON / OFF toggle */}
         <button
           type="button"
           onClick={handleToggleGps}
@@ -608,20 +613,18 @@ export const PrayerTimingsWidget: React.FC<PrayerTimingsWidgetProps> = ({ user, 
               ? `Live Location ON (${location.areaName}) — Click to turn OFF`
               : 'Turn Location ON for automatic real-time area Namaz timings'
           }
-          className={`inline-flex items-center gap-1 px-2 py-1.5 border-s border-emerald-200 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-60 ${
+          className={`inline-flex items-center justify-center gap-0.5 h-full px-1.5 border-s border-emerald-200/90 text-[9px] sm:text-[10px] font-bold transition-colors cursor-pointer disabled:opacity-60 ${
             location.gpsEnabled
               ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-              : 'bg-white/80 text-neutral-600 hover:bg-emerald-100 hover:text-emerald-900'
+              : 'bg-white/85 text-neutral-600 hover:bg-emerald-100 hover:text-emerald-900'
           }`}
         >
           {locating ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+            <Loader2 className="w-3 h-3 animate-spin shrink-0" />
           ) : (
-            <LocateFixed className="w-3.5 h-3.5 shrink-0" />
+            <LocateFixed className="w-3 h-3 shrink-0" />
           )}
-          <span className={compact ? 'inline' : 'hidden sm:inline'}>
-            {locating ? '...' : location.gpsEnabled ? 'ON' : 'OFF'}
-          </span>
+          <span>{locating ? '..' : location.gpsEnabled ? 'ON' : 'OFF'}</span>
         </button>
       </div>
 

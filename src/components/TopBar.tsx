@@ -256,8 +256,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
       </div>
 
-      {/* Phone Dedicated Namaz's Time Strip (zero crowding, always readable without opening) */}
-      <div className="md:hidden border-t border-emerald-100/80 bg-emerald-50/40 px-3 py-1.5 flex items-center justify-center overflow-x-auto no-scrollbar">
+      {/* Phone Compact Namaz's Time Strip */}
+      <div className="md:hidden border-t border-emerald-100/80 bg-emerald-50/35 px-2 py-1 flex items-center justify-center">
         <PrayerTimingsWidget user={user} compact />
       </div>
     </header>

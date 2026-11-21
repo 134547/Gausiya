@@ -149,11 +149,11 @@ export const ComparisonAnalyticsView: React.FC<ComparisonAnalyticsViewProps> = (
             </p>
           </div>
           {result && (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={() => setPrintOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 text-xs font-semibold hover:bg-neutral-50 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 text-xs font-semibold hover:bg-neutral-50 cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5 text-[#DC1726]" /> Print
               </button>
@@ -161,7 +161,7 @@ export const ComparisonAnalyticsView: React.FC<ComparisonAnalyticsViewProps> = (
                 type="button"
                 disabled={pdfBusy}
                 onClick={handleDownloadPdf}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 cursor-pointer"
               >
                 {pdfBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />} PDF
               </button>
@@ -173,7 +173,7 @@ export const ComparisonAnalyticsView: React.FC<ComparisonAnalyticsViewProps> = (
                     `Comparison_${result.left.label}_vs_${result.right.label}`
                   )
                 }
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 cursor-pointer"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
               </button>
@@ -185,7 +185,7 @@ export const ComparisonAnalyticsView: React.FC<ComparisonAnalyticsViewProps> = (
                     `Comparison_${result.left.label}_vs_${result.right.label}`
                   )
                 }
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 text-xs font-semibold hover:bg-neutral-50 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-200 text-xs font-semibold hover:bg-neutral-50 cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" /> CSV
               </button>
@@ -194,7 +194,7 @@ export const ComparisonAnalyticsView: React.FC<ComparisonAnalyticsViewProps> = (
         </div>
 
         {/* Comparison Mode Tabs */}
-        <div className="flex flex-wrap gap-1.5 p-1 bg-neutral-100 rounded-lg">
+        <div className="flex items-center gap-1.5 p-1 bg-neutral-100 rounded-lg overflow-x-auto no-scrollbar">
           {(
             [
               { id: 'month_vs_month', label: 'Month vs Month' },
@@ -208,7 +208,7 @@ export const ComparisonAnalyticsView: React.FC<ComparisonAnalyticsViewProps> = (
               key={tab.id}
               type="button"
               onClick={() => switchMode(tab.id)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 mode === tab.id ? 'bg-white text-[#171717] shadow-xs' : 'text-[#737373] hover:text-[#171717]'
               }`}
             >
@@ -332,9 +332,50 @@ export const ComparisonAnalyticsView: React.FC<ComparisonAnalyticsViewProps> = (
               </div>
             </div>
 
-            {/* Side-by-Side Comparison Table */}
+            {/* Side-by-Side Comparison: Phone Cards (< md) + Desktop Table (md+) */}
             <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden">
-              <div className="overflow-x-auto">
+              {/* Phone App Comparison Cards (< md) */}
+              <div className="md:hidden divide-y divide-neutral-100">
+                {(result.comparisonRows || []).map((row: any, idx: number) => {
+                  const entries = Object.entries(row);
+                  const [firstKey, firstVal] = entries[0] || ['Metric', '—'];
+                  const rest = entries.slice(1);
+                  return (
+                    <div key={`m-cmp-${idx}`} className="p-3 space-y-2">
+                      <div className="text-xs font-bold text-[#171717]">
+                        {String(firstVal ?? '—')}
+                        <span className="sr-only">{firstKey}</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-[11px]">
+                        {rest.map(([k, v]) => {
+                          const str = String(v ?? '—');
+                          const isChange = k === 'Change';
+                          const num = parseFloat(str);
+                          const valClass =
+                            isChange && Number.isFinite(num)
+                              ? num > 0
+                                ? 'text-emerald-700 font-bold'
+                                : num < 0
+                                ? 'text-[#DC1726] font-bold'
+                                : 'text-[#737373]'
+                              : 'text-[#171717] font-semibold';
+                          return (
+                            <div key={k} className="bg-neutral-50 rounded-lg border border-neutral-100 px-2 py-1.5 min-w-0">
+                              <div className="text-[9px] text-neutral-500 truncate">{k}</div>
+                              <div className={`font-mono-num truncate ${valClass}`}>
+                                {isChange && Number.isFinite(num) && num > 0 ? `+${str}` : str}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Tablet & Desktop Table (md+) */}
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead className="bg-neutral-50 border-b border-neutral-200 text-[#525252]">
                     <tr>

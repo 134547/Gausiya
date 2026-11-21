@@ -201,11 +201,11 @@ export const StudentDossierView: React.FC<StudentDossierViewProps> = ({
             </p>
           </div>
           {dossier && (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={() => setPrintOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold hover:bg-neutral-50 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold hover:bg-neutral-50 cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5 text-[#DC1726]" /> Print
               </button>
@@ -213,7 +213,7 @@ export const StudentDossierView: React.FC<StudentDossierViewProps> = ({
                 type="button"
                 disabled={pdfBusy}
                 onClick={handleDownloadPdf}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#DC1726] text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-50 cursor-pointer"
               >
                 {pdfBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
                 <span>Download PDF</span>
@@ -221,7 +221,7 @@ export const StudentDossierView: React.FC<StudentDossierViewProps> = ({
               <button
                 type="button"
                 onClick={handleExportExcel}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 cursor-pointer"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
               </button>
@@ -243,7 +243,7 @@ export const StudentDossierView: React.FC<StudentDossierViewProps> = ({
                     `Student_${dossier.student.admissionNumber}_Results`
                   )
                 }
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold hover:bg-neutral-50 cursor-pointer"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-semibold hover:bg-neutral-50 cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" /> CSV
               </button>
@@ -541,32 +541,51 @@ export const StudentDossierView: React.FC<StudentDossierViewProps> = ({
             {dossier.promotions.length === 0 ? (
               <div className="py-4 text-xs text-[#737373]">No promotion or transfer records logged yet.</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
-                    <tr>
-                      <th className="px-3 py-2 text-start">Date</th>
-                      <th className="px-3 py-2 text-start">Action</th>
-                      <th className="px-3 py-2 text-start">From Class</th>
-                      <th className="px-3 py-2 text-start">To Class</th>
-                      <th className="px-3 py-2 text-start">Session</th>
-                      <th className="px-3 py-2 text-start">Remarks</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-100">
-                    {dossier.promotions.map((p: any) => (
-                      <tr key={p.id}>
-                        <td className="px-3 py-2 font-mono-num">{p.date}</td>
-                        <td className="px-3 py-2 uppercase font-semibold">{p.actionType}</td>
-                        <td className="px-3 py-2">{p.fromClass}</td>
-                        <td className="px-3 py-2">{p.toClass}</td>
-                        <td className="px-3 py-2 font-mono-num">{p.fromSession} → {p.toSession}</td>
-                        <td className="px-3 py-2 text-[#737373]">{p.remarks || '—'}</td>
+              <>
+                <div className="md:hidden space-y-2">
+                  {dossier.promotions.map((p: any) => (
+                    <div key={`m-promo-${p.id}`} className="p-3 rounded-lg border border-neutral-200 bg-neutral-50/50 text-xs space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold uppercase text-[#DC1726]">{p.actionType}</span>
+                        <span className="font-mono-num text-[11px] text-[#737373]">{p.date}</span>
+                      </div>
+                      <div className="font-semibold text-[#171717]">
+                        {p.fromClass} → {p.toClass}
+                      </div>
+                      <div className="text-[11px] text-[#737373] font-mono-num">
+                        Session: {p.fromSession} → {p.toSession}
+                      </div>
+                      {p.remarks && <div className="text-[11px] text-[#525252]">{p.remarks}</div>}
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-neutral-50 border-b border-neutral-200 text-[#737373]">
+                      <tr>
+                        <th className="px-3 py-2 text-start">Date</th>
+                        <th className="px-3 py-2 text-start">Action</th>
+                        <th className="px-3 py-2 text-start">From Class</th>
+                        <th className="px-3 py-2 text-start">To Class</th>
+                        <th className="px-3 py-2 text-start">Session</th>
+                        <th className="px-3 py-2 text-start">Remarks</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100">
+                      {dossier.promotions.map((p: any) => (
+                        <tr key={p.id}>
+                          <td className="px-3 py-2 font-mono-num">{p.date}</td>
+                          <td className="px-3 py-2 uppercase font-semibold">{p.actionType}</td>
+                          <td className="px-3 py-2">{p.fromClass}</td>
+                          <td className="px-3 py-2">{p.toClass}</td>
+                          <td className="px-3 py-2 font-mono-num">{p.fromSession} → {p.toSession}</td>
+                          <td className="px-3 py-2 text-[#737373]">{p.remarks || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </div>
 
