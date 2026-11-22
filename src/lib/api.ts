@@ -286,6 +286,65 @@ export async function uploadFile(
   bucket = 'madrasa-assets'
 ): Promise<{ url: string; storedRef?: string; name: string; mimetype: string; size: number }> {
   const preparedFile = await compressImageForUpload(file);
+
+  // For larger files (3.5 MB – 10 MB, e.g. videos or PDFs), use direct signed upload to Supabase Storage
+  // so serverless payload limits (like Vercel's 4.5 MB body cap) never reject valid <= 10 MB uploads.
+  if (preparedFile.size > 3.5 * 1024 * 1024) {
+    try {
+      const signedMeta = await apiRequest<{
+        signedUrl: string;
+        token?: string;
+        bucket: string;
+        path: string;
+        storedRef: string;
+        resolvedUrl?: string;
+      }>('/api/upload/signed-url', {
+        method: 'POST',
+        body: JSON.stringify({
+          bucket,
+          name: preparedFile.name,
+          mimetype: preparedFile.type || 'application/octet-stream',
+          size: preparedFile.size,
+        }),
+      });
+
+      if (signedMeta?.signedUrl) {
+        const putRes = await fetch(signedMeta.signedUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': preparedFile.type || 'application/octet-stream',
+            'x-upsert': 'false',
+          },
+          body: preparedFile,
+        });
+
+        if (putRes.ok) {
+          let resolvedUrl = signedMeta.resolvedUrl || '';
+          if (!resolvedUrl && signedMeta.storedRef) {
+            const resolved = await apiRequest<{ url: string }>('/api/upload/resolve-url', {
+              method: 'POST',
+              body: JSON.stringify({ storedRef: signedMeta.storedRef }),
+            });
+            resolvedUrl = resolved.url;
+          }
+          return {
+            url: resolvedUrl || signedMeta.storedRef,
+            storedRef: signedMeta.storedRef,
+            name: preparedFile.name,
+            mimetype: preparedFile.type || 'application/octet-stream',
+            size: preparedFile.size,
+          };
+        }
+      }
+    } catch (signedErr: any) {
+      // If the server explicitly rejected for size or file type (400/413), surface that error immediately
+      if (signedErr instanceof ApiError && (signedErr.status === 400 || signedErr.status === 413)) {
+        throw signedErr;
+      }
+      // Otherwise fall through to standard /api/upload multipart route
+    }
+  }
+
   const formData = new FormData();
   formData.append('file', preparedFile);
   const qs = bucket ? `?bucket=${encodeURIComponent(bucket)}` : '';

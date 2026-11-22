@@ -20,12 +20,16 @@ export function sanitizeFileName(raw: string, fallback = 'madrasa-file'): string
 
 function extensionFromMime(mime: string, fallbackUrl = ''): string {
   const clean = mime.split(';')[0].trim().toLowerCase();
+  if (clean === 'video/mp4') return 'mp4';
+  if (clean === 'video/webm') return 'webm';
+  if (clean === 'video/quicktime') return 'mov';
+  if (clean === 'video/ogg') return 'ogg';
   if (clean === 'image/png') return 'png';
   if (clean === 'image/webp') return 'webp';
   if (clean === 'image/gif') return 'gif';
   if (clean === 'image/svg+xml') return 'svg';
   if (clean === 'image/jpeg' || clean === 'image/jpg') return 'jpg';
-  const match = fallbackUrl.split('?')[0].match(/\.(png|jpe?g|webp|gif|svg)$/i);
+  const match = fallbackUrl.split('?')[0].match(/\.(mp4|webm|mov|m4v|ogg|png|jpe?g|webp|gif|svg)$/i);
   if (match) {
     return match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
   }
@@ -101,6 +105,31 @@ export async function resolveImageDataUrl(url: string): Promise<string> {
 }
 
 export async function downloadImageFile(url: string, baseName = 'madrasa-image'): Promise<void> {
+  if (/\.(mp4|webm|mov|m4v|ogg|ogv)(?:[?#].*)?$/i.test(url)) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const blob = await res.blob();
+        const ext = extensionFromMime(blob.type, url);
+        const fileName = `${sanitizeFileName(baseName, 'madrasa-video')}.${ext}`;
+        triggerBlobDownload(blob, fileName);
+        return;
+      }
+    } catch {
+      // fall through to anchor download
+    }
+    const ext = extensionFromMime('', url);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${sanitizeFileName(baseName, 'madrasa-video')}.${ext}`;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    return;
+  }
+
   const dataUrl = await resolveImageDataUrl(url);
   const blob = dataUrlToBlob(dataUrl);
   const ext = extensionFromMime(blob.type, url);

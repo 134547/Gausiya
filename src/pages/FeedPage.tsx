@@ -5,6 +5,7 @@ import {
   Download,
   Eye,
   FileUp,
+  Film,
   Heart,
   MessageSquare,
   Pencil,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import { apiRequest, uploadFile } from '../lib/api.ts';
 import { downloadFeedPostCard, downloadImageFile } from '../lib/download.ts';
+import { isVideoUrl } from '../lib/media.ts';
 import { User } from '../types.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 
@@ -36,6 +38,7 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
   const [viewImageIdx, setViewImageIdx] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
   const [err, setErr] = useState('');
 
   const viewPost = posts.find((p) => p.id === viewPostId) || null;
@@ -262,36 +265,56 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
 
                 {imgs.length > 0 && (
                   <div className={`grid gap-2 ${imgs.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
-                    {imgs.map((url, idx) => (
-                      <div key={idx} className="relative group rounded-lg overflow-hidden border border-neutral-200">
-                        <img
-                          src={url}
-                          alt={`Post media ${idx + 1}`}
-                          onClick={() => {
-                            setViewPostId(post.id);
-                            setViewImageIdx(idx);
-                          }}
-                          className="w-full max-h-72 object-cover cursor-pointer hover:opacity-95 transition-opacity"
-                        />
-                        <button
-                          type="button"
-                          disabled={downloadingKey === `img-${post.id}-${idx}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownloadImage(
-                              url,
-                              `${post.title || 'madrasa-photo'}-${idx + 1}`,
-                              `img-${post.id}-${idx}`
-                            );
-                          }}
-                          title="Download Image"
-                          className="absolute bottom-2 end-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-black/70 text-white text-[11px] font-semibold hover:bg-black/85 transition-colors cursor-pointer disabled:opacity-60"
-                        >
-                          <Download className="w-3 h-3" />
-                          <span>{downloadingKey === `img-${post.id}-${idx}` ? 'Saving...' : 'Download'}</span>
-                        </button>
-                      </div>
-                    ))}
+                    {imgs.map((url, idx) => {
+                      const isVid = isVideoUrl(url);
+                      return (
+                        <div key={idx} className="relative group rounded-lg overflow-hidden border border-neutral-200 bg-black/90">
+                          {isVid ? (
+                            <video
+                              src={url}
+                              controls
+                              playsInline
+                              preload="metadata"
+                              className="w-full max-h-80 object-contain bg-black"
+                            />
+                          ) : (
+                            <img
+                              src={url}
+                              alt={`Post media ${idx + 1}`}
+                              onClick={() => {
+                                setViewPostId(post.id);
+                                setViewImageIdx(idx);
+                              }}
+                              className="w-full max-h-72 object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                            />
+                          )}
+                          {isVid && (
+                            <span className="pointer-events-none absolute top-2 start-2 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 text-white text-[10px] font-semibold">
+                              <Film className="w-3 h-3" /> Video
+                            </span>
+                          )}
+                          {!isVid && (
+                            <button
+                              type="button"
+                              disabled={downloadingKey === `img-${post.id}-${idx}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownloadImage(
+                                  url,
+                                  `${post.title || 'madrasa-photo'}-${idx + 1}`,
+                                  `img-${post.id}-${idx}`
+                                );
+                              }}
+                              title="Download Image"
+                              className="absolute bottom-2 end-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-black/70 text-white text-[11px] font-semibold hover:bg-black/85 transition-colors cursor-pointer disabled:opacity-60"
+                            >
+                              <Download className="w-3 h-3" />
+                              <span>{downloadingKey === `img-${post.id}-${idx}` ? 'Saving...' : 'Download'}</span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -382,16 +405,19 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
                 <textarea rows={4} required value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-neutral-200" />
               </div>
               <div>
-                <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 cursor-pointer">
-                  <FileUp className="w-3.5 h-3.5" /> Attach Images ({form.images.length})
+                <label className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 hover:bg-neutral-100 cursor-pointer ${uploadingMedia ? 'opacity-60 pointer-events-none' : ''}`}>
+                  <FileUp className="w-3.5 h-3.5" />{' '}
+                  {uploadingMedia ? 'Uploading media...' : `Attach Photos / Videos (${form.images.length}) · Max 10 MB`}
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/*,video/mp4,video/webm,video/quicktime,video/ogg,.mp4,.webm,.mov,.m4v"
                     multiple
+                    disabled={uploadingMedia}
                     onChange={async (e) => {
                       const files = Array.from(e.target.files || []);
                       if (!files.length) return;
                       setErr('');
+                      setUploadingMedia(true);
                       try {
                         const urls: string[] = [];
                         for (const f of files) {
@@ -400,35 +426,51 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
                         }
                         setForm((prev) => ({ ...prev, images: [...prev.images, ...urls] }));
                       } catch (err: any) {
-                        setErr(err.message || 'Failed to upload image');
+                        setErr(err.message || 'Failed to upload media');
                       } finally {
+                        setUploadingMedia(false);
                         e.target.value = '';
                       }
                     }}
                     className="hidden"
                   />
                 </label>
+                <p className="mt-1 text-[10px] text-[#737373]">
+                  Supports JPG, PNG, WebP images and MP4/WebM/MOV videos (maximum 10 MB per video).
+                </p>
                 {form.images.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {form.images.map((url, idx) => (
-                      <div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-neutral-200">
-                        <img src={url} alt={`Attachment ${idx + 1}`} className="w-full h-full object-cover" />
-                        <button
-                          type="button"
-                          onClick={() => setForm((prev) => ({ ...prev, images: prev.images.filter((_, i) => i !== idx) }))}
-                          className="absolute top-0.5 end-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
-                          aria-label="Remove image"
-                        >
-                          <X className="w-2.5 h-2.5" />
-                        </button>
-                      </div>
-                    ))}
+                    {form.images.map((url, idx) => {
+                      const isVid = isVideoUrl(url);
+                      return (
+                        <div key={idx} className="relative w-20 h-20 rounded-lg overflow-hidden border border-neutral-200 bg-black">
+                          {isVid ? (
+                            <video src={url} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+                          ) : (
+                            <img src={url} alt={`Attachment ${idx + 1}`} className="w-full h-full object-cover" />
+                          )}
+                          {isVid && (
+                            <span className="absolute bottom-0.5 start-0.5 px-1 rounded bg-black/75 text-white text-[9px] font-bold">
+                              VID
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setForm((prev) => ({ ...prev, images: prev.images.filter((_, i) => i !== idx) }))}
+                            className="absolute top-0.5 end-0.5 w-4 h-4 rounded-full bg-black/75 text-white flex items-center justify-center"
+                            aria-label="Remove media"
+                          >
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setFormOpen(false)} className="px-4 py-2 rounded-lg bg-neutral-100">Cancel</button>
-                <button type="submit" className="px-5 py-2 rounded-lg bg-[#DC1726] text-white font-semibold">Publish</button>
+                <button type="submit" disabled={uploadingMedia} className="px-5 py-2 rounded-lg bg-[#DC1726] text-white font-semibold disabled:opacity-60">Publish</button>
               </div>
             </form>
           </div>
@@ -474,11 +516,21 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
                 {viewImgs.length > 0 && (
                   <div className="space-y-2.5">
                     <div className="relative rounded-xl border border-neutral-200 bg-neutral-950/95 overflow-hidden flex items-center justify-center">
-                      <img
-                        src={viewImgs[safeIdx]}
-                        alt={`Post media ${safeIdx + 1}`}
-                        className="w-full max-h-[60vh] object-contain"
-                      />
+                      {isVideoUrl(viewImgs[safeIdx]) ? (
+                        <video
+                          key={viewImgs[safeIdx]}
+                          src={viewImgs[safeIdx]}
+                          controls
+                          playsInline
+                          className="w-full max-h-[60vh] object-contain bg-black"
+                        />
+                      ) : (
+                        <img
+                          src={viewImgs[safeIdx]}
+                          alt={`Post media ${safeIdx + 1}`}
+                          className="w-full max-h-[60vh] object-contain"
+                        />
+                      )}
                       {viewImgs.length > 1 && (
                         <>
                           <button
@@ -487,7 +539,7 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
                               setViewImageIdx((prev) => (prev - 1 + viewImgs.length) % viewImgs.length)
                             }
                             className="absolute start-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80"
-                            aria-label="Previous image"
+                            aria-label="Previous media"
                           >
                             <ChevronLeft className="w-4 h-4" />
                           </button>
@@ -495,7 +547,7 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
                             type="button"
                             onClick={() => setViewImageIdx((prev) => (prev + 1) % viewImgs.length)}
                             className="absolute end-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80"
-                            aria-label="Next image"
+                            aria-label="Next media"
                           >
                             <ChevronRight className="w-4 h-4" />
                           </button>
@@ -512,11 +564,17 @@ export const FeedPage: React.FC<FeedPageProps> = ({ user }) => {
                             key={idx}
                             type="button"
                             onClick={() => setViewImageIdx(idx)}
-                            className={`w-14 h-14 rounded-lg overflow-hidden border-2 transition-all ${
+                            className={`relative w-14 h-14 rounded-lg overflow-hidden border-2 bg-black transition-all ${
                               idx === safeIdx ? 'border-[#DC1726]' : 'border-neutral-200 opacity-70 hover:opacity-100'
                             }`}
                           >
-                            <img src={u} alt={`Thumb ${idx + 1}`} className="w-full h-full object-cover" />
+                            {isVideoUrl(u) ? (
+                              <div className="w-full h-full flex items-center justify-center text-white">
+                                <Film className="w-5 h-5" />
+                              </div>
+                            ) : (
+                              <img src={u} alt={`Thumb ${idx + 1}`} className="w-full h-full object-cover" />
+                            )}
                           </button>
                         ))}
                       </div>

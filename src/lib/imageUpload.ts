@@ -35,7 +35,7 @@ export function formatHttpErrorMessage(
   }
 
   if (status === 413) {
-    return 'File is too large for upload (max 4 MB). Please select a smaller photo or wait for automatic compression.';
+    return 'File is too large for upload (max 10 MB for videos, PDFs & documents). Please choose a smaller file.';
   }
   if (status === 502 || status === 503 || status === 504) {
     return 'Server is temporarily busy or timed out. Please try again in a moment.';
@@ -52,7 +52,8 @@ export function formatHttpErrorMessage(
   return `${fallback} (${status})`;
 }
 
-const MAX_UPLOAD_BYTES = 3.8 * 1024 * 1024; // Stay safely under Vercel's 4.5MB serverless payload limit
+const MAX_IMAGE_DIRECT_BYTES = 3.8 * 1024 * 1024; // Target under 3.8 MB for compressed photos
+const MAX_MEDIA_DOC_BYTES = 10 * 1024 * 1024; // Strict 10 MB limit for videos & PDF/documents
 
 function loadImageElement(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -84,13 +85,45 @@ export async function compressImageForUpload(
 ): Promise<File> {
   const name = file.name || 'upload';
   const type = (file.type || '').toLowerCase();
-  const isSvgOrGif = type === 'image/svg+xml' || type === 'image/gif' || /\.(svg|gif)$/i.test(name);
+
+  if (type === 'image/svg+xml' || /\.svg$/i.test(name)) {
+    throw new Error('SVG files are not allowed. Upload JPG, PNG, WebP, MP4/WebM video (max 10 MB), or PDF/document (max 10 MB).');
+  }
+
+  const isGif = type === 'image/gif' || /\.gif$/i.test(name);
+  const isVideo =
+    type.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogg|ogv)$/i.test(name);
+  const isDoc =
+    type === 'application/pdf' ||
+    type === 'application/msword' ||
+    type.includes('officedocument') ||
+    type === 'text/plain' ||
+    type === 'text/csv' ||
+    /\.(pdf|docx?|xlsx?|pptx?|txt|csv)$/i.test(name);
   const isImage =
     type.startsWith('image/') || /\.(png|jpe?g|webp|bmp|avif|jfif|heic|heif)$/i.test(name);
 
-  if (!isImage || isSvgOrGif) {
-    if (file.size > MAX_UPLOAD_BYTES) {
-      throw new Error('File is too large (max 3.8 MB). Please upload a smaller file.');
+  if (isVideo) {
+    if (file.size > MAX_MEDIA_DOC_BYTES) {
+      throw new Error('Video is too large. Maximum allowed size is 10 MB.');
+    }
+    return file;
+  }
+
+  if (isDoc) {
+    if (file.size > MAX_MEDIA_DOC_BYTES) {
+      throw new Error('PDF / document is too large. Maximum allowed size is 10 MB.');
+    }
+    return file;
+  }
+
+  if (!isImage) {
+    throw new Error('Unsupported file type. Only Images, Videos (up to 10 MB), and PDF/Documents (up to 10 MB) are allowed.');
+  }
+
+  if (isGif) {
+    if (file.size > MAX_MEDIA_DOC_BYTES) {
+      throw new Error('GIF is too large. Maximum allowed size is 10 MB.');
     }
     return file;
   }
@@ -115,7 +148,7 @@ export async function compressImageForUpload(
     const origW = img.naturalWidth || img.width;
     const origH = img.naturalHeight || img.height;
     if (!origW || !origH) {
-      if (file.size > MAX_UPLOAD_BYTES) {
+      if (file.size > MAX_IMAGE_DIRECT_BYTES) {
         throw new Error('Image is too large (max 3.8 MB). Please upload a smaller JPG or PNG image.');
       }
       return file;
@@ -166,8 +199,8 @@ export async function compressImageForUpload(
       }
     }
 
-    if (blob && (blob.size < file.size || file.size > MAX_UPLOAD_BYTES || scale < 1)) {
-      if (blob.size > MAX_UPLOAD_BYTES) {
+    if (blob && (blob.size < file.size || file.size > MAX_IMAGE_DIRECT_BYTES || scale < 1)) {
+      if (blob.size > MAX_IMAGE_DIRECT_BYTES) {
         throw new Error('Compressed image still exceeds 3.8 MB. Please select a smaller photo.');
       }
       return new File([blob], replaceFileExt(name, outputExt), {
@@ -176,13 +209,13 @@ export async function compressImageForUpload(
       });
     }
 
-    if (file.size > MAX_UPLOAD_BYTES) {
+    if (file.size > MAX_IMAGE_DIRECT_BYTES) {
       throw new Error('Image is too large (max 3.8 MB). Please upload a smaller JPG or PNG image.');
     }
     return file;
   } catch (err: any) {
     // If decoding failed (e.g. unsupported codec like HEIC on Chrome) but file is small enough, let server decide; otherwise block nicely
-    if (file.size > MAX_UPLOAD_BYTES) {
+    if (file.size > MAX_IMAGE_DIRECT_BYTES) {
       throw new Error(
         err?.message && err.message.includes('3.8 MB')
           ? err.message

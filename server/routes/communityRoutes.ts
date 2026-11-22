@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import {
   ALLOWED_BUCKETS,
+  createSignedUploadForSupabaseStorage,
   requireSupabaseAdmin,
   resolveStorageUrl,
   resolveStorageUrlsInRows,
@@ -19,18 +20,130 @@ import {
   requireAuth,
   requireRole,
 } from '../auth.ts';
-import { getChatsOpen, normalizeStorageRef, sanitizeOrTerm, setChatsOpen } from './publicRoutes.ts';
+import {
+  getChatsOpen,
+  getCornerAdConfig,
+  normalizeStorageRef,
+  sanitizeOrTerm,
+  saveCornerAdConfig,
+  setChatsOpen,
+} from './publicRoutes.ts';
 
 const router = Router();
 
+const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024; // Strict 10 MB maximum for videos & PDF/documents
+
+const ALLOWED_UPLOAD_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|avif|jfif|mp4|webm|mov|m4v|ogg|ogv|pdf|docx?|xlsx?|pptx?|txt|csv)$/i;
+const ALLOWED_UPLOAD_MIMES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+  'image/avif',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/x-m4v',
+  'video/ogg',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'text/csv',
+]);
+
+function isAllowedUploadFileMeta(originalName: string, mimetype: string): boolean {
+  const mime = String(mimetype || '').toLowerCase().trim();
+  const name = String(originalName || '').trim();
+  if (mime === 'image/svg+xml' || /\.svg$/i.test(name)) return false;
+  if (ALLOWED_UPLOAD_MIMES.has(mime)) return true;
+  if (ALLOWED_UPLOAD_EXT_RE.test(name)) return true;
+  return false;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_SIZE_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (isAllowedUploadFileMeta(file.originalname || '', file.mimetype || '')) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          'Unsupported file type. Only Images, Videos (MP4/WebM/MOV up to 10 MB), and PDF/Documents (up to 10 MB) are allowed.'
+        )
+      );
+    }
+  },
+});
+
+router.post('/upload/signed-url', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const { bucket: requestedBucket, name, mimetype, size } = req.body as {
+      bucket?: string;
+      name?: string;
+      mimetype?: string;
+      size?: number;
+    };
+    const fileName = String(name || 'file').trim();
+    const fileMime = String(mimetype || 'application/octet-stream').trim();
+    const fileSize = Number(size || 0);
+
+    if (!isAllowedUploadFileMeta(fileName, fileMime)) {
+      return res.status(400).json({
+        error:
+          'Unsupported file type. Only Images, Videos (MP4/WebM/MOV up to 10 MB), and PDF/Documents (up to 10 MB) are allowed.',
+      });
+    }
+    if (!Number.isFinite(fileSize) || fileSize <= 0) {
+      return res.status(400).json({ error: 'Invalid file size.' });
+    }
+    if (fileSize > MAX_UPLOAD_SIZE_BYTES) {
+      return res.status(413).json({
+        error: 'Uploaded file is too large. Maximum allowed size is 10 MB for videos, PDFs & documents.',
+        code: 'FILE_TOO_LARGE',
+      });
+    }
+
+    const bucket = ALLOWED_BUCKETS.has(String(requestedBucket || ''))
+      ? String(requestedBucket)
+      : 'madrasa-assets';
+    const signed = await createSignedUploadForSupabaseStorage(bucket, fileName, req.user!.id);
+    return res.json(signed);
+  } catch (err: any) {
+    const status = typeof err?.status === 'number' ? err.status : 500;
+    return res.status(status).json({ error: err?.message || 'Failed to prepare upload URL' });
+  }
+});
+
+router.post('/upload/resolve-url', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const storedRef = String((req.body as { storedRef?: string })?.storedRef || '').trim();
+    if (!storedRef) return res.status(400).json({ error: 'storedRef is required' });
+    const url = await resolveStorageUrl(storedRef);
+    return res.json({ url, storedRef });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to resolve file URL' });
+  }
 });
 
 router.post('/upload', requireAuth, upload.single('file'), async (req: AuthRequest, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    if (req.file.size > MAX_UPLOAD_SIZE_BYTES) {
+      return res.status(413).json({
+        error: 'Uploaded file is too large. Maximum allowed size is 10 MB for videos, PDFs & documents.',
+        code: 'FILE_TOO_LARGE',
+      });
+    }
 
     const requestedBucket = String((req.query.bucket as string) || (req.body?.bucket as string) || 'madrasa-assets');
     const bucket = ALLOWED_BUCKETS.has(requestedBucket) ? requestedBucket : 'madrasa-assets';
@@ -53,6 +166,26 @@ router.post('/upload', requireAuth, upload.single('file'), async (req: AuthReque
   } catch (err: any) {
     const status = typeof err?.status === 'number' ? err.status : 500;
     return res.status(status).json({ error: err?.message || 'Upload failed' });
+  }
+});
+
+// ==================== CORNER ADVERTISEMENT ADMIN CONFIG ====================
+router.get('/corner-ad', requireAuth, async (_req, res) => {
+  const admin = requireSupabaseAdmin(res);
+  if (!admin) return;
+  const ad = await getCornerAdConfig(admin);
+  return res.json({ ad });
+});
+
+router.put('/corner-ad', requireAuth, requireRole('super_admin', 'committee_member'), async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    const updated = await saveCornerAdConfig(admin, req.body || {}, req.user!.id);
+    await logActivity(req.user!, 'CORNER_AD_UPDATED', 'settings', 'corner_ad', `Updated corner advertisement: ${updated.title}`, req.ip);
+    return res.json({ ad: updated });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'Failed to save advertisement' });
   }
 });
 
@@ -704,6 +837,161 @@ router.get('/chats/lookup', requireAuth, async (req: AuthRequest, res) => {
 
 // 24-Hour WhatsApp-style Status Updates (stored in public.documents)
 const CHAT_STATUS_ENTITY_ID = '00000000-0000-0000-0000-000000000002';
+const STATUS_ALLOWED_REACTIONS = new Set(['❤️', '😂', '😮', '😢', '🙏', '👍', '🔥', '🎉', '🤲', '✨', '👏', '😍']);
+
+interface StatusViewEntry {
+  user_id: string;
+  name: string;
+  role: string;
+  photo_url?: string;
+  viewed_at: string;
+}
+
+interface StatusLikeEntry {
+  user_id: string;
+  name: string;
+  liked_at: string;
+}
+
+interface StatusReactionEntry {
+  user_id: string;
+  name: string;
+  emoji: string;
+  reacted_at: string;
+}
+
+interface StatusCommentEntry {
+  id: string;
+  user_id: string;
+  name: string;
+  role: string;
+  photo_url?: string;
+  text: string;
+  created_at: string;
+}
+
+interface StoredStatusPayload {
+  text: string;
+  image_url: string;
+  media_url: string;
+  media_type: 'text' | 'image' | 'video';
+  bg_color: string;
+  views: StatusViewEntry[];
+  likes: StatusLikeEntry[];
+  reactions: StatusReactionEntry[];
+  comments: StatusCommentEntry[];
+}
+
+function parseStatusPayload(raw: string | null | undefined): StoredStatusPayload {
+  let obj: any = {};
+  try {
+    obj = JSON.parse(raw || '{}');
+  } catch {
+    obj = { text: raw || '' };
+  }
+  const mediaRef = String(obj.media_url || obj.image_url || '').trim();
+  const inferredVideo = /\.(mp4|webm|mov|m4v|ogg|ogv)(?:[?#].*)?$/i.test(mediaRef);
+  const mediaType: 'text' | 'image' | 'video' = !mediaRef
+    ? 'text'
+    : obj.media_type === 'video' || inferredVideo
+      ? 'video'
+      : 'image';
+
+  return {
+    text: String(obj.text || ''),
+    image_url: mediaType === 'image' ? mediaRef : '',
+    media_url: mediaRef,
+    media_type: mediaType,
+    bg_color: String(obj.bg_color || '#008069'),
+    views: Array.isArray(obj.views) ? obj.views : [],
+    likes: Array.isArray(obj.likes) ? obj.likes : [],
+    reactions: Array.isArray(obj.reactions) ? obj.reactions : [],
+    comments: Array.isArray(obj.comments) ? obj.comments : [],
+  };
+}
+
+async function formatStatusForClient(
+  r: any,
+  currentUserId: string,
+  isSuperAdmin: boolean
+) {
+  const payload = parseStatusPayload(r.file_url);
+  const mediaUrl = payload.media_url ? await resolveStorageUrl(payload.media_url) : '';
+  const authorPhoto = r.profiles?.photo_url ? await resolveStorageUrl(r.profiles.photo_url) : '';
+  const isOwner = r.uploaded_by === currentUserId || isSuperAdmin;
+
+  const reactionCounts = new Map<string, { emoji: string; count: number; reactedByMe: boolean }>();
+  let myReaction = '';
+  for (const rx of payload.reactions) {
+    if (!rx?.emoji) continue;
+    const prev = reactionCounts.get(rx.emoji) || { emoji: rx.emoji, count: 0, reactedByMe: false };
+    prev.count += 1;
+    if (rx.user_id === currentUserId) {
+      prev.reactedByMe = true;
+      myReaction = rx.emoji;
+    }
+    reactionCounts.set(rx.emoji, prev);
+  }
+
+  const resolvedViews = isOwner
+    ? await Promise.all(
+        payload.views.map(async (v) => ({
+          ...v,
+          photo_url: v.photo_url ? await resolveStorageUrl(v.photo_url) : '',
+          liked: payload.likes.some((l) => l.user_id === v.user_id),
+          reaction: payload.reactions.find((rx) => rx.user_id === v.user_id)?.emoji || '',
+        }))
+      )
+    : [];
+
+  const resolvedComments = await Promise.all(
+    payload.comments.map(async (c) => ({
+      ...c,
+      photo_url: c.photo_url ? await resolveStorageUrl(c.photo_url) : '',
+    }))
+  );
+
+  const createdMs = new Date(r.created_at).getTime();
+  const expiresAt = new Date((Number.isNaN(createdMs) ? Date.now() : createdMs) + 24 * 60 * 60 * 1000).toISOString();
+
+  return {
+    id: r.id,
+    user_id: r.uploaded_by,
+    author_name: r.profiles?.full_name || 'Portal User',
+    author_username: r.profiles?.username || '',
+    author_role: r.profiles?.roles?.name || '',
+    author_photo: authorPhoto,
+    text: payload.text,
+    image_url: payload.media_type === 'image' ? mediaUrl : '',
+    media_url: mediaUrl,
+    media_type: payload.media_type,
+    bg_color: payload.bg_color,
+    created_at: r.created_at,
+    expires_at: expiresAt,
+    views_count: payload.views.length,
+    viewed_by_me: r.uploaded_by === currentUserId || payload.views.some((v) => v.user_id === currentUserId),
+    views: resolvedViews,
+    likes_count: payload.likes.length,
+    liked_by_me: payload.likes.some((l) => l.user_id === currentUserId),
+    reactions_summary: Array.from(reactionCounts.values()).sort((a, b) => b.count - a.count),
+    my_reaction: myReaction,
+    comments_count: payload.comments.length,
+    comments: resolvedComments,
+  };
+}
+
+async function fetchActiveStatusRow(admin: NonNullable<typeof supabaseAdmin>, id: string) {
+  const cutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data } = await admin
+    .from('documents')
+    .select('id, file_url, uploaded_by, created_at, profiles:uploaded_by(full_name, username, photo_url, roles(name))')
+    .eq('id', id)
+    .eq('entity_type', 'general')
+    .eq('title', 'CHAT_STATUS')
+    .gte('created_at', cutoffIso)
+    .maybeSingle();
+  return data;
+}
 
 router.get('/chats/statuses', requireAuth, async (req: AuthRequest, res) => {
   try {
@@ -722,29 +1010,10 @@ router.get('/chats/statuses', requireAuth, async (req: AuthRequest, res) => {
       .gte('created_at', cutoffIso)
       .order('created_at', { ascending: false });
 
-    const statuses: any[] = [];
-    for (const r of rows || []) {
-      let payload: any = {};
-      try {
-        payload = JSON.parse(r.file_url || '{}');
-      } catch {
-        payload = { text: r.file_url || '' };
-      }
-      const imageUrl = payload.image_url ? await resolveStorageUrl(payload.image_url) : '';
-      const authorPhoto = (r as any).profiles?.photo_url ? await resolveStorageUrl((r as any).profiles.photo_url) : '';
-      statuses.push({
-        id: r.id,
-        user_id: r.uploaded_by,
-        author_name: (r as any).profiles?.full_name || 'Portal User',
-        author_username: (r as any).profiles?.username || '',
-        author_role: (r as any).profiles?.roles?.name || '',
-        author_photo: authorPhoto,
-        text: payload.text || '',
-        image_url: imageUrl,
-        bg_color: payload.bg_color || '#008069',
-        created_at: r.created_at,
-      });
-    }
+    const isSuper = req.user!.role_slug === 'super_admin';
+    const statuses = await Promise.all(
+      (rows || []).map((r) => formatStatusForClient(r, req.user!.id, isSuper))
+    );
 
     return res.json({ statuses });
   } catch (err: any) {
@@ -760,23 +1029,38 @@ router.post('/chats/statuses', requireAuth, async (req: AuthRequest, res) => {
       return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
     }
 
-    const { text, image_url, bg_color } = req.body as {
+    const { text, image_url, media_url, media_type, bg_color } = req.body as {
       text?: string;
       image_url?: string;
+      media_url?: string;
+      media_type?: 'text' | 'image' | 'video';
       bg_color?: string;
     };
 
-    const cleanText = String(text || '').trim();
-    const cleanImage = normalizeStorageRef(image_url);
-    if (!cleanText && !cleanImage) {
-      return res.status(400).json({ error: 'Status text or photo is required.' });
+    const cleanText = String(text || '').trim().slice(0, 1200);
+    const cleanMedia = normalizeStorageRef(media_url || image_url);
+    if (!cleanText && !cleanMedia) {
+      return res.status(400).json({ error: 'Status text, photo, or video is required.' });
     }
 
-    const payloadJson = JSON.stringify({
+    const inferredVideo = /\.(mp4|webm|mov|m4v|ogg|ogv)(?:[?#].*)?$/i.test(cleanMedia);
+    const resolvedType: 'text' | 'image' | 'video' = !cleanMedia
+      ? 'text'
+      : media_type === 'video' || inferredVideo
+        ? 'video'
+        : 'image';
+
+    const payload: StoredStatusPayload = {
       text: cleanText,
-      image_url: cleanImage,
-      bg_color: bg_color || '#008069',
-    });
+      image_url: resolvedType === 'image' ? cleanMedia : '',
+      media_url: cleanMedia,
+      media_type: resolvedType,
+      bg_color: String(bg_color || '#008069').slice(0, 24),
+      views: [],
+      likes: [],
+      reactions: [],
+      comments: [],
+    };
 
     const { data: created, error } = await admin
       .from('documents')
@@ -784,7 +1068,7 @@ router.post('/chats/statuses', requireAuth, async (req: AuthRequest, res) => {
         entity_type: 'general',
         entity_id: CHAT_STATUS_ENTITY_ID,
         title: 'CHAT_STATUS',
-        file_url: payloadJson,
+        file_url: JSON.stringify(payload),
         file_type: 'chat_status',
         uploaded_by: req.user!.id,
       })
@@ -795,6 +1079,320 @@ router.post('/chats/statuses', requireAuth, async (req: AuthRequest, res) => {
     return res.status(201).json({ id: created.id });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Failed to post status' });
+  }
+});
+
+router.post('/chats/statuses/:id/view', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const row = await fetchActiveStatusRow(admin, req.params.id);
+    if (!row) return res.status(404).json({ error: 'Status not found or expired' });
+
+    const payload = parseStatusPayload(row.file_url);
+    const uid = req.user!.id;
+
+    // Owner viewing own status doesn't add themselves to the "Seen by" viewer list (just like real WhatsApp)
+    if (row.uploaded_by !== uid && !payload.views.some((v) => v.user_id === uid)) {
+      const { data: viewerProfile } = await admin
+        .from('profiles')
+        .select('full_name, photo_url, roles(name)')
+        .eq('id', uid)
+        .maybeSingle();
+
+      payload.views.unshift({
+        user_id: uid,
+        name: (viewerProfile as any)?.full_name || req.user!.full_name || 'Portal User',
+        role: (viewerProfile as any)?.roles?.name || req.user!.role_name || '',
+        photo_url: normalizeStorageRef((viewerProfile as any)?.photo_url),
+        viewed_at: new Date().toISOString(),
+      });
+
+      await admin.from('documents').update({ file_url: JSON.stringify(payload) }).eq('id', row.id);
+    }
+
+    const updated = await formatStatusForClient(
+      { ...row, file_url: JSON.stringify(payload) },
+      uid,
+      req.user!.role_slug === 'super_admin'
+    );
+    return res.json({ status: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to record view' });
+  }
+});
+
+router.post('/chats/statuses/:id/like', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const row = await fetchActiveStatusRow(admin, req.params.id);
+    if (!row) return res.status(404).json({ error: 'Status not found or expired' });
+
+    const payload = parseStatusPayload(row.file_url);
+    const uid = req.user!.id;
+    const existsIdx = payload.likes.findIndex((l) => l.user_id === uid);
+    let likedNow = false;
+
+    if (existsIdx >= 0) {
+      payload.likes.splice(existsIdx, 1);
+    } else {
+      likedNow = true;
+      payload.likes.unshift({
+        user_id: uid,
+        name: req.user!.full_name || 'Portal User',
+        liked_at: new Date().toISOString(),
+      });
+    }
+
+    await admin.from('documents').update({ file_url: JSON.stringify(payload) }).eq('id', row.id);
+
+    if (likedNow && row.uploaded_by && row.uploaded_by !== uid) {
+      await createNotification(
+        row.uploaded_by,
+        'message',
+        'Status Liked',
+        `${req.user!.full_name} liked your 24h status ❤️`,
+        'chats',
+        row.id
+      );
+    }
+
+    const updated = await formatStatusForClient(
+      { ...row, file_url: JSON.stringify(payload) },
+      uid,
+      req.user!.role_slug === 'super_admin'
+    );
+    return res.json({ status: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to update like' });
+  }
+});
+
+router.post('/chats/statuses/:id/react', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const emoji = String((req.body as { emoji?: string })?.emoji || '').trim();
+    if (!emoji || !STATUS_ALLOWED_REACTIONS.has(emoji)) {
+      return res.status(400).json({ error: 'Invalid reaction emoji.' });
+    }
+
+    const row = await fetchActiveStatusRow(admin, req.params.id);
+    if (!row) return res.status(404).json({ error: 'Status not found or expired' });
+
+    const payload = parseStatusPayload(row.file_url);
+    const uid = req.user!.id;
+    const existingIdx = payload.reactions.findIndex((r) => r.user_id === uid);
+    let addedNew = false;
+
+    if (existingIdx >= 0 && payload.reactions[existingIdx].emoji === emoji) {
+      payload.reactions.splice(existingIdx, 1);
+    } else if (existingIdx >= 0) {
+      payload.reactions[existingIdx] = {
+        user_id: uid,
+        name: req.user!.full_name || 'Portal User',
+        emoji,
+        reacted_at: new Date().toISOString(),
+      };
+      addedNew = true;
+    } else {
+      payload.reactions.unshift({
+        user_id: uid,
+        name: req.user!.full_name || 'Portal User',
+        emoji,
+        reacted_at: new Date().toISOString(),
+      });
+      addedNew = true;
+    }
+
+    await admin.from('documents').update({ file_url: JSON.stringify(payload) }).eq('id', row.id);
+
+    if (addedNew && row.uploaded_by && row.uploaded_by !== uid) {
+      await createNotification(
+        row.uploaded_by,
+        'message',
+        'Status Reaction',
+        `${req.user!.full_name} reacted ${emoji} to your status`,
+        'chats',
+        row.id
+      );
+    }
+
+    const updated = await formatStatusForClient(
+      { ...row, file_url: JSON.stringify(payload) },
+      uid,
+      req.user!.role_slug === 'super_admin'
+    );
+    return res.json({ status: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to react to status' });
+  }
+});
+
+router.post('/chats/statuses/:id/comment', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const cleanText = String((req.body as { text?: string })?.text || '').trim().slice(0, 500);
+    if (!cleanText) return res.status(400).json({ error: 'Comment text is required.' });
+
+    const row = await fetchActiveStatusRow(admin, req.params.id);
+    if (!row) return res.status(404).json({ error: 'Status not found or expired' });
+
+    const payload = parseStatusPayload(row.file_url);
+    const uid = req.user!.id;
+
+    const { data: commenterProfile } = await admin
+      .from('profiles')
+      .select('full_name, photo_url, roles(name)')
+      .eq('id', uid)
+      .maybeSingle();
+
+    payload.comments.push({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      user_id: uid,
+      name: (commenterProfile as any)?.full_name || req.user!.full_name || 'Portal User',
+      role: (commenterProfile as any)?.roles?.name || req.user!.role_name || '',
+      photo_url: normalizeStorageRef((commenterProfile as any)?.photo_url),
+      text: cleanText,
+      created_at: new Date().toISOString(),
+    });
+
+    await admin.from('documents').update({ file_url: JSON.stringify(payload) }).eq('id', row.id);
+
+    if (row.uploaded_by && row.uploaded_by !== uid) {
+      await createNotification(
+        row.uploaded_by,
+        'message',
+        'Status Comment',
+        `${req.user!.full_name} commented on your status: ${cleanText.slice(0, 60)}`,
+        'chats',
+        row.id
+      );
+    }
+
+    const updated = await formatStatusForClient(
+      { ...row, file_url: JSON.stringify(payload) },
+      uid,
+      req.user!.role_slug === 'super_admin'
+    );
+    return res.status(201).json({ status: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to post comment' });
+  }
+});
+
+router.post('/chats/statuses/:id/reply', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const admin = requireSupabaseAdmin(res);
+    if (!admin) return;
+    if (req.user!.role_slug !== 'super_admin' && !(await getChatsOpen(admin))) {
+      return res.status(403).json({ error: 'Chat is currently turned off by Super Admin.' });
+    }
+    const cleanReply = String((req.body as { text?: string })?.text || '').trim().slice(0, 1000);
+    if (!cleanReply) return res.status(400).json({ error: 'Reply text is required.' });
+
+    const row = await fetchActiveStatusRow(admin, req.params.id);
+    if (!row) return res.status(404).json({ error: 'Status not found or expired' });
+
+    const uid = req.user!.id;
+    const authorId = row.uploaded_by;
+    if (!authorId) return res.status(400).json({ error: 'Status author not found.' });
+    if (authorId === uid) {
+      return res.status(400).json({ error: 'Use Comments to add notes on your own status.' });
+    }
+
+    const blk = await isBlockedBetween(admin, uid, authorId);
+    if (blk.blockedByMe) {
+      return res.status(403).json({ error: 'You blocked this contact. Unblock them to reply.' });
+    }
+    if (blk.blockedByOther) {
+      return res.status(403).json({ error: 'You cannot send messages to this contact.' });
+    }
+
+    const payload = parseStatusPayload(row.file_url);
+    const previewLabel = payload.text
+      ? `"${payload.text.slice(0, 60)}${payload.text.length > 60 ? '...' : ''}"`
+      : payload.media_type === 'video'
+        ? '🎥 Video Status'
+        : '📷 Photo Status';
+    const fullMessage = `↪️ Replied to Status (${previewLabel}):\n${cleanReply}`;
+
+    // Find existing 1-on-1 private conversation or create a new one
+    let convId = '';
+    const [{ data: myConvs }, { data: otherConvs }] = await Promise.all([
+      admin.from('conversation_participants').select('conversation_id').eq('user_id', uid),
+      admin.from('conversation_participants').select('conversation_id').eq('user_id', authorId),
+    ]);
+    const otherSet = new Set((otherConvs || []).map((c) => c.conversation_id));
+    const sharedIds = (myConvs || []).map((c) => c.conversation_id).filter((id) => otherSet.has(id));
+    if (sharedIds.length) {
+      const { data: existingPriv } = await admin
+        .from('conversations')
+        .select('id')
+        .in('id', sharedIds)
+        .eq('type', 'private')
+        .limit(1)
+        .maybeSingle();
+      if (existingPriv?.id) convId = existingPriv.id;
+    }
+
+    if (!convId) {
+      const { data: createdConv, error: convErr } = await admin
+        .from('conversations')
+        .insert({ title: '', type: 'private', created_by: uid })
+        .select('id')
+        .single();
+      if (convErr || !createdConv) return res.status(500).json({ error: 'Failed to open chat for reply' });
+      convId = createdConv.id;
+      await admin.from('conversation_participants').insert([
+        { conversation_id: convId, user_id: uid, last_read_at: new Date().toISOString() },
+        { conversation_id: convId, user_id: authorId, last_read_at: new Date(0).toISOString() },
+      ]);
+    }
+
+    const { data: createdMsg, error: msgErr } = await admin
+      .from('messages')
+      .insert({
+        conversation_id: convId,
+        sender_id: uid,
+        content: fullMessage,
+      })
+      .select('id')
+      .single();
+
+    if (msgErr || !createdMsg) return res.status(400).json({ error: msgErr?.message || 'Failed to send reply' });
+
+    await Promise.all([
+      admin.from('conversations').update({ updated_at: new Date().toISOString() }).eq('id', convId),
+      admin.from('conversation_participants').update({ last_read_at: new Date().toISOString() }).eq('conversation_id', convId).eq('user_id', uid),
+    ]);
+
+    await createNotification(
+      authorId,
+      'message',
+      'Status Reply',
+      `${req.user!.full_name} replied to your status: ${cleanReply.slice(0, 70)}`,
+      'chats',
+      convId
+    );
+
+    return res.status(201).json({ conversation_id: convId, message_id: createdMsg.id });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to reply to status' });
   }
 });
 

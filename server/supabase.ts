@@ -127,6 +127,34 @@ export const PRIVATE_BUCKETS = new Set([
 
 export const ALLOWED_BUCKETS = new Set([...PUBLIC_BUCKETS, ...PRIVATE_BUCKETS]);
 
+async function uploadToBucketWithFallback(
+  requestedBucket: string,
+  buffer: Buffer,
+  objectPath: string,
+  mimetype: string
+): Promise<{ bucket: string }> {
+  if (!supabaseAdmin) throw new Error('Supabase storage is not configured');
+  const primary = ALLOWED_BUCKETS.has(requestedBucket) ? requestedBucket : 'madrasa-assets';
+  const candidates = Array.from(new Set([primary, 'madrasa-assets', 'chat-attachments']));
+  let lastError: string = 'Storage upload failed';
+
+  for (const b of candidates) {
+    const { error } = await supabaseAdmin.storage
+      .from(b)
+      .upload(objectPath, buffer, { contentType: mimetype || 'application/octet-stream', upsert: false });
+
+    if (!error) {
+      return { bucket: b };
+    }
+    lastError = error.message || 'Storage upload failed';
+    // Only retry another bucket if bucket rejected MIME type or bucket wasn't found
+    const retryable = /mime|type|not found|bucket|exceeded/i.test(lastError);
+    if (!retryable) break;
+  }
+
+  throw new Error(`Storage upload failed: ${lastError}`);
+}
+
 export async function uploadFileToSupabaseStorage(
   bucket: string,
   buffer: Buffer,
@@ -135,15 +163,10 @@ export async function uploadFileToSupabaseStorage(
   folder = 'general'
 ): Promise<{ storedRef: string; resolvedUrl: string; bucket: string; path: string }> {
   if (!supabaseAdmin) throw new Error('Supabase storage is not configured');
-  const targetBucket = ALLOWED_BUCKETS.has(bucket) ? bucket : 'madrasa-assets';
   const ext = path.extname(originalName).replace(/[^a-zA-Z0-9.]/g, '');
   const objectPath = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
 
-  const { error } = await supabaseAdmin.storage
-    .from(targetBucket)
-    .upload(objectPath, buffer, { contentType: mimetype || 'application/octet-stream', upsert: false });
-
-  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+  const { bucket: targetBucket } = await uploadToBucketWithFallback(bucket, buffer, objectPath, mimetype);
 
   if (PUBLIC_BUCKETS.has(targetBucket)) {
     const { data } = supabaseAdmin.storage.from(targetBucket).getPublicUrl(objectPath);
@@ -158,6 +181,49 @@ export async function uploadFileToSupabaseStorage(
     bucket: targetBucket,
     path: objectPath,
   };
+}
+
+export async function createSignedUploadForSupabaseStorage(
+  bucket: string,
+  originalName: string,
+  folder = 'general'
+): Promise<{ signedUrl: string; token: string; bucket: string; path: string; storedRef: string; resolvedUrl: string }> {
+  if (!supabaseAdmin) throw new Error('Supabase storage is not configured');
+  const primary = ALLOWED_BUCKETS.has(bucket) ? bucket : 'madrasa-assets';
+  const ext = path.extname(originalName).replace(/[^a-zA-Z0-9.]/g, '');
+  const objectPath = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+
+  const candidates = Array.from(new Set([primary, 'madrasa-assets', 'chat-attachments']));
+  let lastError = 'Signed upload URL generation failed';
+
+  for (const targetBucket of candidates) {
+    const { data, error } = await supabaseAdmin.storage.from(targetBucket).createSignedUploadUrl(objectPath);
+    if (!error && data?.signedUrl) {
+      if (PUBLIC_BUCKETS.has(targetBucket)) {
+        const pub = supabaseAdmin.storage.from(targetBucket).getPublicUrl(objectPath);
+        return {
+          signedUrl: data.signedUrl,
+          token: data.token,
+          bucket: targetBucket,
+          path: objectPath,
+          storedRef: pub.data.publicUrl,
+          resolvedUrl: pub.data.publicUrl,
+        };
+      }
+      const storedRef = `supabase://${targetBucket}/${objectPath}`;
+      return {
+        signedUrl: data.signedUrl,
+        token: data.token,
+        bucket: targetBucket,
+        path: objectPath,
+        storedRef,
+        resolvedUrl: '',
+      };
+    }
+    lastError = error?.message || lastError;
+  }
+
+  throw new Error(lastError);
 }
 
 const SIGNED_URL_CACHE_TTL_MS = 45 * 60 * 1000;

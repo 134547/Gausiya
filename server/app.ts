@@ -165,7 +165,7 @@ export async function createApiApp(): Promise<express.Express> {
     if (res.headersSent) return;
     if (err?.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({
-        error: 'Uploaded file is too large (max 4 MB). Please upload a smaller image.',
+        error: 'Uploaded file is too large. Maximum allowed size is 10 MB for videos, PDFs & documents.',
         code: 'FILE_TOO_LARGE',
       });
     }

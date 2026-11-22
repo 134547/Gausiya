@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Download,
   Eye,
+  Film,
   GraduationCap,
   Heart,
   Home,
@@ -31,7 +32,9 @@ import { MadrasaSettings } from '../types.ts';
 import { MadrasaLogo } from '../components/MadrasaLogo.tsx';
 import { PrayerTimingsWidget } from '../components/PrayerTimingsWidget.tsx';
 import { StudentResultLookupWidget } from '../components/StudentResultLookupWidget.tsx';
+import { CornerAdWidget } from '../components/CornerAdWidget.tsx';
 import { downloadFeedPostCard, downloadImageFile } from '../lib/download.ts';
+import { isVideoUrl } from '../lib/media.ts';
 
 export interface PublicHomeData {
   settings: MadrasaSettings | null;
@@ -700,15 +703,30 @@ export const HomePage: React.FC<HomePageProps> = ({
                 return (
                   <div key={post.id} className="bg-white rounded-xl border border-neutral-200 shadow-xs overflow-hidden">
                     {imgs[0] && (
-                      <img
-                        src={imgs[0]}
-                        alt={post.title || 'Madrasa update'}
-                        onClick={() => {
-                          setViewFeedPost({ ...post, parsedImages: imgs });
-                          setViewFeedImageIdx(0);
-                        }}
-                        className="w-full h-52 object-cover border-b border-neutral-100 cursor-pointer hover:opacity-95 transition-opacity"
-                      />
+                      isVideoUrl(imgs[0]) ? (
+                        <div className="relative bg-black border-b border-neutral-100">
+                          <video
+                            src={imgs[0]}
+                            controls
+                            playsInline
+                            preload="metadata"
+                            className="w-full max-h-72 object-contain bg-black"
+                          />
+                          <span className="pointer-events-none absolute top-2 start-2 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/70 text-white text-[10px] font-semibold">
+                            <Film className="w-3 h-3" /> Video
+                          </span>
+                        </div>
+                      ) : (
+                        <img
+                          src={imgs[0]}
+                          alt={post.title || 'Madrasa update'}
+                          onClick={() => {
+                            setViewFeedPost({ ...post, parsedImages: imgs });
+                            setViewFeedImageIdx(0);
+                          }}
+                          className="w-full h-52 object-cover border-b border-neutral-100 cursor-pointer hover:opacity-95 transition-opacity"
+                        />
+                      )
                     )}
                     <div className="p-5">
                       {post.title && (
@@ -1052,11 +1070,21 @@ export const HomePage: React.FC<HomePageProps> = ({
                 {imgs.length > 0 && (
                   <div className="space-y-2.5">
                     <div className="relative rounded-xl border border-neutral-200 bg-neutral-950/95 overflow-hidden flex items-center justify-center">
-                      <img
-                        src={imgs[safeIdx]}
-                        alt={viewFeedPost.title || `Feed photo ${safeIdx + 1}`}
-                        className="w-full max-h-[60vh] object-contain"
-                      />
+                      {isVideoUrl(imgs[safeIdx]) ? (
+                        <video
+                          key={imgs[safeIdx]}
+                          src={imgs[safeIdx]}
+                          controls
+                          playsInline
+                          className="w-full max-h-[60vh] object-contain bg-black"
+                        />
+                      ) : (
+                        <img
+                          src={imgs[safeIdx]}
+                          alt={viewFeedPost.title || `Feed photo ${safeIdx + 1}`}
+                          className="w-full max-h-[60vh] object-contain"
+                        />
+                      )}
                       {imgs.length > 1 && (
                         <>
                           <button
@@ -1065,7 +1093,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                               setViewFeedImageIdx((prev) => (prev - 1 + imgs.length) % imgs.length)
                             }
                             className="absolute start-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80"
-                            aria-label="Previous image"
+                            aria-label="Previous media"
                           >
                             <ChevronLeft className="w-4 h-4" />
                           </button>
@@ -1073,7 +1101,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                             type="button"
                             onClick={() => setViewFeedImageIdx((prev) => (prev + 1) % imgs.length)}
                             className="absolute end-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80"
-                            aria-label="Next image"
+                            aria-label="Next media"
                           >
                             <ChevronRight className="w-4 h-4" />
                           </button>
@@ -1090,11 +1118,17 @@ export const HomePage: React.FC<HomePageProps> = ({
                             key={idx}
                             type="button"
                             onClick={() => setViewFeedImageIdx(idx)}
-                            className={`w-14 h-14 rounded-lg overflow-hidden border-2 transition-all ${
+                            className={`w-14 h-14 rounded-lg overflow-hidden border-2 bg-black transition-all ${
                               idx === safeIdx ? 'border-[#DC1726]' : 'border-neutral-200 opacity-70 hover:opacity-100'
                             }`}
                           >
-                            <img src={u} alt={`Thumb ${idx + 1}`} className="w-full h-full object-cover" />
+                            {isVideoUrl(u) ? (
+                              <div className="w-full h-full flex items-center justify-center text-white">
+                                <Film className="w-5 h-5" />
+                              </div>
+                            ) : (
+                              <img src={u} alt={`Thumb ${idx + 1}`} className="w-full h-full object-cover" />
+                            )}
                           </button>
                         ))}
                       </div>
@@ -1181,6 +1215,9 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
         );
       })()}
+
+      {/* Dismissible Corner Advertisement Widget */}
+      <CornerAdWidget context="public" />
     </div>
   );
 };

@@ -8,6 +8,9 @@ import {
   Copy,
   Download,
   Eraser,
+  Eye,
+  Film,
+  Heart,
   Info,
   Lock,
   MessageCircle,
@@ -30,9 +33,11 @@ import {
 } from 'lucide-react';
 import { apiRequest, uploadFile } from '../lib/api.ts';
 import { downloadImageFile, sanitizeFileName } from '../lib/download.ts';
+import { isVideoUrl } from '../lib/media.ts';
 import { MadrasaSettings, User } from '../types.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { EmojiPickerPanel } from '../components/EmojiPickerPanel.tsx';
+import { WhatsAppStatusItem, WhatsAppStatusViewer } from '../components/WhatsAppStatusViewer.tsx';
 import { QUICK_REACTION_EMOJIS } from '../lib/chatEmojis.ts';
 
 interface ChatsPageProps {
@@ -44,8 +49,13 @@ interface ChatsPageProps {
 }
 
 function isImageAttachment(url: string, name: string): boolean {
+  if (isVideoUrl(url, name)) return false;
   const target = `${name || ''} ${url || ''}`.toLowerCase();
   return /\.(png|jpe?g|gif|webp|bmp|avif|jfif)(\?|$|\s)/i.test(target) || url.startsWith('data:image/');
+}
+
+function isVideoAttachment(url: string, name: string): boolean {
+  return isVideoUrl(url, name);
 }
 
 function formatChatTime(iso: string): string {
@@ -96,9 +106,16 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({
   const [initialMsg, setInitialMsg] = useState('');
 
   const [statusModalOpen, setStatusModalOpen] = useState(false);
-  const [statusForm, setStatusForm] = useState({ text: '', image_url: '', bg_color: '#008069' });
+  const [statusForm, setStatusForm] = useState<{
+    text: string;
+    image_url: string;
+    media_url: string;
+    media_type: 'text' | 'image' | 'video';
+    bg_color: string;
+  }>({ text: '', image_url: '', media_url: '', media_type: 'text', bg_color: '#008069' });
+  const [uploadingStatusMedia, setUploadingStatusMedia] = useState(false);
   const [postingStatus, setPostingStatus] = useState(false);
-  const [viewStatus, setViewStatus] = useState<any>(null);
+  const [viewerQueue, setViewerQueue] = useState<{ items: WhatsAppStatusItem[]; index: number } | null>(null);
 
   const [chatsOpen, setChatsOpen] = useState<boolean>(settings?.chats_open !== false);
   const [togglingChat, setTogglingChat] = useState(false);
@@ -733,8 +750,9 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({
 
   const handlePostStatus = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!statusForm.text.trim() && !statusForm.image_url) {
-      setErr('Write a status message or upload a photo.');
+    const mediaUrl = statusForm.media_url || statusForm.image_url;
+    if (!statusForm.text.trim() && !mediaUrl) {
+      setErr('Write a status message or upload a photo/video (max 10 MB).');
       return;
     }
     setPostingStatus(true);
@@ -742,12 +760,18 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({
     try {
       await apiRequest('/api/chats/statuses', {
         method: 'POST',
-        body: JSON.stringify(statusForm),
+        body: JSON.stringify({
+          text: statusForm.text,
+          image_url: statusForm.media_type === 'image' ? mediaUrl : '',
+          media_url: mediaUrl,
+          media_type: mediaUrl ? statusForm.media_type : 'text',
+          bg_color: statusForm.bg_color,
+        }),
       });
       setStatusModalOpen(false);
-      setStatusForm({ text: '', image_url: '', bg_color: '#008069' });
-      setMsg('Status posted (visible for 24 hours).');
-      await loadChats();
+      setStatusForm({ text: '', image_url: '', media_url: '', media_type: 'text', bg_color: '#008069' });
+      setMsg('Status posted! Visible for 24 hours with views, likes, reactions, comments & direct reply.');
+      await loadChats(undefined, true);
     } catch (e: any) {
       setErr(e.message || 'Failed to post status');
     } finally {
@@ -755,13 +779,31 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({
     }
   };
 
+  const handleStatusUpdated = (updated: WhatsAppStatusItem) => {
+    setStatuses((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
+    setViewerQueue((prev) =>
+      prev
+        ? {
+            ...prev,
+            items: prev.items.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)),
+          }
+        : null
+    );
+  };
+
   const handleDeleteStatus = async (statusId: string) => {
     setErr('');
     try {
       await apiRequest(`/api/chats/statuses/${statusId}`, { method: 'DELETE' });
-      setViewStatus(null);
+      setStatuses((prev) => prev.filter((s) => s.id !== statusId));
+      setViewerQueue((prev) => {
+        if (!prev) return null;
+        const remaining = prev.items.filter((s) => s.id !== statusId);
+        if (remaining.length === 0) return null;
+        return { items: remaining, index: Math.min(prev.index, remaining.length - 1) };
+      });
       setMsg('Status removed.');
-      await loadChats();
+      await loadChats(undefined, true);
     } catch (e: any) {
       setErr(e.message || 'Failed to delete status');
     }
@@ -1334,71 +1376,184 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({
               </>
             )}
 
-            {sidebarTab === 'status' && (
-              <div className="divide-y divide-neutral-100">
-                <div className="p-3.5 flex items-center justify-between gap-3 bg-neutral-50/70">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-[#008069] text-white flex items-center justify-center font-bold text-sm">
-                      {user.full_name.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-[#111B21]">My Status</div>
-                      <div className="text-[11px] text-[#667781]">Share text or photo update (24h)</div>
-                    </div>
-                  </div>
+            {sidebarTab === 'status' && (() => {
+              const myStatuses: WhatsAppStatusItem[] = statuses.filter((s) => s.user_id === user.id);
+              const myTotalViews = myStatuses.reduce((sum, s) => sum + (s.views_count || 0), 0);
+              const myTotalLikes = myStatuses.reduce((sum, s) => sum + (s.likes_count || 0), 0);
+
+              const othersGroupedMap = new Map<string, WhatsAppStatusItem[]>();
+              for (const st of statuses) {
+                if (st.user_id === user.id) continue;
+                const list = othersGroupedMap.get(st.user_id) || [];
+                list.push(st);
+                othersGroupedMap.set(st.user_id, list);
+              }
+              const otherGroups = Array.from(othersGroupedMap.values()).map((items) => {
+                // Show oldest first within a user's story reel (just like real WhatsApp), latest metadata for preview
+                const chronological = [...items].reverse();
+                const latest = items[0];
+                const hasUnseen = items.some((i) => !i.viewed_by_me);
+                return { userId: latest.user_id, latest, chronological, hasUnseen };
+              });
+              const recentGroups = otherGroups.filter((g) => g.hasUnseen);
+              const viewedGroups = otherGroups.filter((g) => !g.hasUnseen);
+
+              const renderGroupRow = (g: (typeof otherGroups)[number]) => {
+                const latest = g.latest;
+                const isVid = latest.media_type === 'video' || isVideoUrl(latest.media_url || latest.image_url);
+                const previewLine =
+                  latest.text ||
+                  (isVid ? '🎥 Video status' : latest.media_url || latest.image_url ? '📷 Photo status' : 'Status update');
+                return (
                   <button
+                    key={g.userId}
                     type="button"
-                    onClick={() => setStatusModalOpen(true)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#008069] text-white text-xs font-semibold hover:bg-[#006a57]"
+                    onClick={() => setViewerQueue({ items: g.chronological, index: 0 })}
+                    className="w-full text-start px-3.5 py-3 flex items-center gap-3 hover:bg-[#F5F6F6] transition-colors"
                   >
-                    <Plus className="w-3.5 h-3.5" /> Add
-                  </button>
-                </div>
-
-                {/* Personal Saved Channel Shortcut */}
-                <button
-                  type="button"
-                  onClick={handleQuickPersonalChannel}
-                  className="w-full text-start px-3.5 py-3 flex items-center gap-3 hover:bg-emerald-50/50 transition-colors"
-                >
-                  <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
-                    <Bookmark className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-bold text-[#111B21]">My Personal Channel (Saved Notes)</div>
-                    <div className="text-[11px] text-[#667781] truncate">Save messages, photos, and PDFs privately</div>
-                  </div>
-                </button>
-
-                {statuses.length === 0 ? (
-                  <div className="p-6 text-center text-xs text-[#667781]">
-                    No status updates in the last 24 hours.
-                  </div>
-                ) : (
-                  statuses.map((st) => (
-                    <button
-                      key={st.id}
-                      type="button"
-                      onClick={() => setViewStatus(st)}
-                      className="w-full text-start px-3.5 py-3 flex items-center gap-3 hover:bg-[#F5F6F6] transition-colors"
+                    <div
+                      className={`p-0.5 rounded-full border-2 shrink-0 ${
+                        g.hasUnseen ? 'border-[#25D366]' : 'border-neutral-300'
+                      }`}
                     >
-                      <div className="p-0.5 rounded-full border-2 border-[#25D366] shrink-0">
-                        {renderAvatar({ photo_url: st.author_photo, full_name: st.author_name }, 38)}
+                      {renderAvatar({ photo_url: latest.author_photo, full_name: latest.author_name }, 38)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-[#111B21] truncate flex items-center gap-1.5">
+                          <span className="truncate">{latest.author_name}</span>
+                          {g.chronological.length > 1 && (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-50 text-[#008069] font-mono-num shrink-0">
+                              {g.chronological.length}
+                            </span>
+                          )}
+                        </span>
+                        <span className="text-[10px] text-[#667781] font-mono-num shrink-0">
+                          {formatChatTime(latest.created_at)}
+                        </span>
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-bold text-[#111B21] truncate">{st.author_name}</span>
-                          <span className="text-[10px] text-[#667781] font-mono-num">{formatChatTime(st.created_at)}</span>
+                      <div className="text-[11px] text-[#667781] truncate mt-0.5">{previewLine}</div>
+                      <div className="flex items-center gap-2.5 mt-1 text-[10px] text-[#667781] font-mono-num">
+                        <span className="inline-flex items-center gap-0.5">
+                          <Heart className={`w-2.5 h-2.5 ${latest.liked_by_me ? 'text-red-500 fill-red-500' : ''}`} />{' '}
+                          {latest.likes_count || 0}
+                        </span>
+                        <span className="inline-flex items-center gap-0.5">
+                          <MessageCircle className="w-2.5 h-2.5" /> {latest.comments_count || 0}
+                        </span>
+                        {(latest.reactions_summary || []).slice(0, 3).map((rx) => (
+                          <span key={rx.emoji}>{rx.emoji}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </button>
+                );
+              };
+
+              return (
+                <div className="divide-y divide-neutral-100">
+                  {/* My Status */}
+                  <div className="p-3.5 flex items-center justify-between gap-2.5 bg-neutral-50/80">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (myStatuses.length > 0) {
+                          setViewerQueue({ items: [...myStatuses].reverse(), index: 0 });
+                        } else {
+                          setStatusModalOpen(true);
+                        }
+                      }}
+                      className="flex items-center gap-3 min-w-0 flex-1 text-start"
+                    >
+                      <div
+                        className={`relative p-0.5 rounded-full border-2 shrink-0 ${
+                          myStatuses.length > 0 ? 'border-[#00A884]' : 'border-dashed border-neutral-300'
+                        }`}
+                      >
+                        <div className="w-10 h-10 rounded-full bg-[#008069] text-white flex items-center justify-center font-bold text-sm">
+                          {user.full_name.charAt(0).toUpperCase()}
                         </div>
-                        <div className="text-[11px] text-[#667781] truncate">
-                          {st.text || (st.image_url ? '📷 Photo status' : '')}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-[#111B21] flex items-center gap-1.5">
+                          <span>My Status</span>
+                          {myStatuses.length > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-100 text-[#008069] font-mono-num">
+                              {myStatuses.length} active
+                            </span>
+                          )}
                         </div>
+                        {myStatuses.length > 0 ? (
+                          <div className="text-[11px] text-[#008069] flex items-center gap-2.5 font-medium mt-0.5">
+                            <span className="inline-flex items-center gap-0.5">
+                              <Eye className="w-3 h-3" /> {myTotalViews} views
+                            </span>
+                            <span className="inline-flex items-center gap-0.5">
+                              <Heart className="w-3 h-3" /> {myTotalLikes}
+                            </span>
+                            <span className="text-[#667781] truncate">Tap to view</span>
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-[#667781]">
+                            Add photo, video (10 MB), or text (24h)
+                          </div>
+                        )}
                       </div>
                     </button>
-                  ))
-                )}
-              </div>
-            )}
+                    <button
+                      type="button"
+                      onClick={() => setStatusModalOpen(true)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#008069] text-white text-xs font-semibold hover:bg-[#006a57] shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add
+                    </button>
+                  </div>
+
+                  {/* Personal Saved Channel Shortcut */}
+                  <button
+                    type="button"
+                    onClick={handleQuickPersonalChannel}
+                    className="w-full text-start px-3.5 py-3 flex items-center gap-3 hover:bg-emerald-50/50 transition-colors"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                      <Bookmark className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold text-[#111B21]">My Personal Channel (Saved Notes)</div>
+                      <div className="text-[11px] text-[#667781] truncate">Save messages, photos, videos & PDFs privately</div>
+                    </div>
+                  </button>
+
+                  {recentGroups.length > 0 && (
+                    <div>
+                      <div className="px-3.5 py-1.5 bg-neutral-50 text-[10px] font-bold uppercase tracking-wider text-[#008069]">
+                        Recent Updates ({recentGroups.length})
+                      </div>
+                      <div className="divide-y divide-neutral-100">
+                        {recentGroups.map(renderGroupRow)}
+                      </div>
+                    </div>
+                  )}
+
+                  {viewedGroups.length > 0 && (
+                    <div>
+                      <div className="px-3.5 py-1.5 bg-neutral-50 text-[10px] font-bold uppercase tracking-wider text-[#667781]">
+                        Viewed Updates ({viewedGroups.length})
+                      </div>
+                      <div className="divide-y divide-neutral-100">
+                        {viewedGroups.map(renderGroupRow)}
+                      </div>
+                    </div>
+                  )}
+
+                  {otherGroups.length === 0 && myStatuses.length === 0 && (
+                    <div className="p-6 text-center text-xs text-[#667781]">
+                      No status updates in the last 24 hours. Share a photo, video, or text status!
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {sidebarTab === 'contacts' && (
               <div>
@@ -1834,6 +1989,7 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({
                     const mine = m.sender_id === user.id;
                     const canDelete = mine || isSuperAdmin;
                     const isImg = m.attachment_url && isImageAttachment(m.attachment_url, m.attachment_name || '');
+                    const isVid = m.attachment_url && isVideoAttachment(m.attachment_url, m.attachment_name || '');
                     const reactions: Array<{ emoji: string; count: number; reactedByMe: boolean }> = Array.isArray(m.reactions)
                       ? m.reactions
                       : [];
@@ -1883,7 +2039,28 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({
                               </div>
                             )}
 
-                            {m.attachment_url && !isImg && (
+                            {m.attachment_url && isVid && (
+                              <div className="mt-1.5 space-y-1.5">
+                                <div className="rounded-lg overflow-hidden border border-black/15 bg-black">
+                                  <video
+                                    src={m.attachment_url}
+                                    controls
+                                    playsInline
+                                    preload="metadata"
+                                    className="max-h-64 w-full max-w-[280px] sm:max-w-[320px] object-contain bg-black"
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadAttachment(m.attachment_url, m.attachment_name || 'video.mp4')}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#008069] hover:underline"
+                                >
+                                  <Download className="w-3 h-3" /> Download Video
+                                </button>
+                              </div>
+                            )}
+
+                            {m.attachment_url && !isImg && !isVid && (
                               <div className="mt-1.5 flex flex-wrap items-center gap-2 bg-black/5 rounded-md px-2.5 py-1.5">
                                 <a
                                   href={m.attachment_url}
@@ -2137,11 +2314,12 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({
                         className={`p-2 rounded-full hover:bg-neutral-200/70 cursor-pointer shrink-0 text-[#54656F] ${
                           uploadingFile ? 'opacity-50 pointer-events-none' : ''
                         }`}
-                        title="Attach photo, PDF, or document"
+                        title="Attach photo, video (max 10 MB), or PDF/document (max 10 MB)"
                       >
                         <Paperclip className="w-5 h-5" />
                         <input
                           type="file"
+                          accept="image/*,video/mp4,video/webm,video/quicktime,video/ogg,.mp4,.webm,.mov,.m4v,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
                           disabled={uploadingFile}
                           onChange={async (e) => {
                             const f = e.target.files?.[0];
@@ -2164,10 +2342,14 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({
                     )}
 
                     <div className="flex-1 flex flex-col min-w-0">
-                      {uploadingFile && <div className="text-[11px] text-[#667781] mb-1">Uploading file...</div>}
+                      {uploadingFile && <div className="text-[11px] text-[#667781] mb-1">Uploading file (max 10 MB)...</div>}
                       {!editingMsg && attachment && (
                         <div className="text-[11px] text-[#008069] font-medium flex items-center gap-1.5 mb-1 bg-white px-2.5 py-1 rounded-md border border-emerald-200">
-                          <Paperclip className="w-3 h-3 shrink-0" />
+                          {isVideoAttachment(attachment.url, attachment.name) ? (
+                            <Film className="w-3.5 h-3.5 shrink-0 text-[#008069]" />
+                          ) : (
+                            <Paperclip className="w-3 h-3 shrink-0" />
+                          )}
                           <span className="truncate">{attachment.name}</span>
                           <button type="button" onClick={() => setAttachment(null)} className="ms-auto text-[#667781] hover:text-[#DC1726]">
                             <X className="w-3.5 h-3.5" />
@@ -2335,148 +2517,160 @@ export const ChatsPage: React.FC<ChatsPageProps> = ({
         </div>
       )}
 
-      {/* Post Status Modal */}
+      {/* Post 24-Hour WhatsApp Status Modal (Photo, Video up to 10 MB, or Colored Text) */}
       {statusModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <form onSubmit={handlePostStatus} className="max-w-md w-full bg-white rounded-xl border border-neutral-200 shadow-xl p-6 space-y-4 text-xs">
+        <div className="fixed inset-0 z-50 bg-black/55 flex items-center justify-center p-4 overflow-y-auto">
+          <form onSubmit={handlePostStatus} className="max-w-md w-full bg-white rounded-2xl border border-neutral-200 shadow-2xl p-5 sm:p-6 space-y-4 text-xs my-auto">
             <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-              <h3 className="text-base font-bold text-[#111B21]">Add 24-Hour Status</h3>
-              <button type="button" onClick={() => setStatusModalOpen(false)}>
+              <div>
+                <h3 className="text-base font-bold text-[#111B21]">Add 24-Hour Status</h3>
+                <p className="text-[10px] text-[#667781]">Auto-disappears after 24 hours · Supports Photo, Video (max 10 MB) & Text</p>
+              </div>
+              <button type="button" onClick={() => setStatusModalOpen(false)} className="p-1 rounded hover:bg-neutral-100">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
+            {/* Live Preview Box */}
+            {statusForm.media_url ? (
+              <div className="relative rounded-xl overflow-hidden bg-black border border-neutral-200">
+                {statusForm.media_type === 'video' ? (
+                  <video
+                    src={statusForm.media_url}
+                    controls
+                    muted
+                    playsInline
+                    className="w-full max-h-56 object-contain bg-black"
+                  />
+                ) : (
+                  <img
+                    src={statusForm.media_url}
+                    alt="Status preview"
+                    className="w-full max-h-56 object-contain bg-black"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setStatusForm((prev) => ({
+                      ...prev,
+                      image_url: '',
+                      media_url: '',
+                      media_type: 'text',
+                    }))
+                  }
+                  className="absolute top-2 end-2 px-2.5 py-1 rounded-full bg-black/75 text-white text-[10px] font-semibold hover:bg-red-600"
+                >
+                  Remove Media
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{ backgroundColor: statusForm.bg_color }}
+                className="rounded-xl p-5 min-h-[110px] flex items-center justify-center text-white text-center font-semibold text-sm transition-colors"
+              >
+                {statusForm.text.trim() || 'Your 24-hour status preview will appear here...'}
+              </div>
+            )}
+
             <div>
-              <label className="block font-medium mb-1">Status Text</label>
+              <label className="block font-medium mb-1">
+                {statusForm.media_url ? 'Caption (Optional)' : 'Status Text'}
+              </label>
               <textarea
                 rows={3}
                 value={statusForm.text}
                 onChange={(e) => setStatusForm({ ...statusForm, text: e.target.value })}
                 placeholder="Share a quick announcement, dua, or update..."
-                className="w-full px-3 py-2 rounded-lg border border-neutral-200"
+                className="w-full px-3 py-2 rounded-lg border border-neutral-200 focus:outline-none focus:border-[#008069]"
               />
             </div>
 
             <div>
-              <label className="block font-medium mb-1">Photo (Optional)</label>
-              <div className="flex items-center gap-2">
-                <label className="px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 cursor-pointer hover:bg-neutral-100 font-medium">
-                  Upload Photo
+              <label className="block font-medium mb-1">Photo or Video (Optional · Max 10 MB)</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 cursor-pointer hover:bg-neutral-100 font-medium ${uploadingStatusMedia ? 'opacity-60 pointer-events-none' : ''}`}>
+                  <Film className="w-3.5 h-3.5 text-[#008069]" />
+                  <span>{uploadingStatusMedia ? 'Uploading...' : 'Upload Photo / Video (Max 10 MB)'}</span>
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/*,video/mp4,video/webm,video/quicktime,video/ogg,.mp4,.webm,.mov,.m4v"
+                    disabled={uploadingStatusMedia}
                     className="hidden"
                     onChange={async (e) => {
                       const f = e.target.files?.[0];
                       if (!f) return;
+                      setErr('');
+                      setUploadingStatusMedia(true);
                       try {
                         const up = await uploadFile(f, 'chat-attachments');
-                        setStatusForm((prev) => ({ ...prev, image_url: up.url }));
+                        const vid = f.type.startsWith('video/') || isVideoUrl(up.url, up.name);
+                        setStatusForm((prev) => ({
+                          ...prev,
+                          image_url: vid ? '' : up.url,
+                          media_url: up.url,
+                          media_type: vid ? 'video' : 'image',
+                        }));
                       } catch (err: any) {
-                        setErr(err.message || 'Failed to upload status photo');
+                        setErr(err.message || 'Failed to upload status media');
                       } finally {
+                        setUploadingStatusMedia(false);
                         e.target.value = '';
                       }
                     }}
                   />
                 </label>
-                {statusForm.image_url && (
-                  <button
-                    type="button"
-                    onClick={() => setStatusForm({ ...statusForm, image_url: '' })}
-                    className="text-[#DC1726] underline"
-                  >
-                    Remove photo
-                  </button>
-                )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="font-medium">Background:</span>
-              {['#008069', '#1E3A8A', '#7C2D12', '#4C1D95', '#171717'].map((col) => (
-                <button
-                  key={col}
-                  type="button"
-                  onClick={() => setStatusForm({ ...statusForm, bg_color: col })}
-                  style={{ backgroundColor: col }}
-                  className={`w-6 h-6 rounded-full border-2 ${
-                    statusForm.bg_color === col ? 'border-black scale-110' : 'border-white'
-                  }`}
-                />
-              ))}
-            </div>
+            {!statusForm.media_url && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">Background:</span>
+                {['#008069', '#0B5345', '#1E3A8A', '#7C2D12', '#4C1D95', '#991B1B', '#171717'].map((col) => (
+                  <button
+                    key={col}
+                    type="button"
+                    onClick={() => setStatusForm({ ...statusForm, bg_color: col })}
+                    style={{ backgroundColor: col }}
+                    className={`w-6 h-6 rounded-full border-2 transition-transform ${
+                      statusForm.bg_color === col ? 'border-black scale-110' : 'border-white'
+                    }`}
+                  />
+                ))}
+              </div>
+            )}
 
-            <div className="flex justify-end gap-2 pt-1">
-              <button type="button" onClick={() => setStatusModalOpen(false)} className="px-4 py-2 rounded-lg bg-neutral-100">
+            <div className="flex justify-end gap-2 pt-1 border-t border-neutral-100">
+              <button type="button" onClick={() => setStatusModalOpen(false)} className="px-4 py-2 rounded-lg bg-neutral-100 font-medium">
                 Cancel
               </button>
               <button
                 type="submit"
-                disabled={postingStatus}
-                className="px-4 py-2 rounded-lg bg-[#008069] text-white font-semibold disabled:opacity-60"
+                disabled={postingStatus || uploadingStatusMedia}
+                className="px-4 py-2 rounded-lg bg-[#008069] hover:bg-[#006a57] text-white font-semibold disabled:opacity-60"
               >
-                {postingStatus ? 'Posting...' : 'Post Status'}
+                {postingStatus ? 'Posting...' : 'Post 24h Status'}
               </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* View Status Modal */}
-      {viewStatus && (
-        <div
-          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
-          onClick={() => setViewStatus(null)}
-        >
-          <div
-            style={{ backgroundColor: viewStatus.image_url ? '#111B21' : viewStatus.bg_color || '#008069' }}
-            className="max-w-md w-full rounded-2xl overflow-hidden shadow-2xl text-white p-5 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5">
-                {renderAvatar({ photo_url: viewStatus.author_photo, full_name: viewStatus.author_name }, 36)}
-                <div>
-                  <div className="text-xs font-bold">{viewStatus.author_name}</div>
-                  <div className="text-[10px] text-white/75 font-mono-num">
-                    {viewStatus.author_role} · {formatChatTime(viewStatus.created_at)}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {(viewStatus.user_id === user.id || isSuperAdmin) && (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteStatus(viewStatus.id)}
-                    className="p-1.5 rounded-lg bg-white/15 hover:bg-red-600"
-                    title="Delete Status"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
-                <button type="button" onClick={() => setViewStatus(null)} className="p-1.5 rounded-lg bg-white/15 hover:bg-white/25">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {viewStatus.image_url && (
-              <img
-                src={viewStatus.image_url}
-                alt="Status"
-                referrerPolicy="no-referrer"
-                className="max-h-[55vh] w-full object-contain rounded-xl bg-black/40"
-              />
-            )}
-
-            {viewStatus.text && (
-              <p className="text-sm font-medium text-center py-6 px-3 whitespace-pre-wrap leading-relaxed">
-                {viewStatus.text}
-              </p>
-            )}
-          </div>
-        </div>
+      {/* Full Real WhatsApp-Style 24-Hour Status Viewer */}
+      {viewerQueue && (
+        <WhatsAppStatusViewer
+          statuses={viewerQueue.items}
+          initialIndex={viewerQueue.index}
+          currentUserId={user.id}
+          isSuperAdmin={isSuperAdmin}
+          onClose={() => setViewerQueue(null)}
+          onStatusUpdated={handleStatusUpdated}
+          onDeleteStatus={handleDeleteStatus}
+          onOpenChatConversation={(convId) => {
+            setSidebarTab('chats');
+            loadChats(convId);
+          }}
+        />
       )}
 
       {/* Lightbox Image Modal */}

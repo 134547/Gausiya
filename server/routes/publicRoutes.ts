@@ -1119,4 +1119,150 @@ router.get('/prayer-timings/reverse-geocode', async (req, res) => {
   return res.json({ areaName, timeZone });
 });
 
+// ==================== CORNER ADVERTISEMENT / PROMO WIDGET ====================
+export interface CornerAdConfig {
+  enabled: boolean;
+  show_on_portal: boolean;
+  badge: string;
+  title: string;
+  description: string;
+  media_url: string;
+  media_type: 'none' | 'image' | 'video';
+  cta_label: string;
+  cta_url: string;
+  updated_at: string;
+}
+
+const CORNER_AD_ENTITY_ID = '00000000-0000-0000-0000-000000000009';
+const CORNER_AD_TITLE = 'CORNER_AD_CONFIG';
+
+export const DEFAULT_CORNER_AD: CornerAdConfig = {
+  enabled: true,
+  show_on_portal: true,
+  badge: 'Sponsored · Madrasa Notice',
+  title: 'Madrasa Gausiya Razvia Admissions & Updates',
+  description: 'Quality Islamic & Modern Education (Class 1–5) in Islamnagar, Ramgarh. Check live results & notices anytime.',
+  media_url: '',
+  media_type: 'none',
+  cta_label: 'Contact on WhatsApp',
+  cta_url: 'https://wa.me/917209629509',
+  updated_at: '2026-01-01T00:00:00.000Z',
+};
+
+export function sanitizeSafeCtaUrl(raw: unknown): string {
+  const val = String(raw || '').trim();
+  if (!val) return '';
+  if (val.startsWith('#') || val.startsWith('/')) return val.slice(0, 300);
+  try {
+    const parsed = new URL(val);
+    if (
+      parsed.protocol === 'https:' ||
+      parsed.protocol === 'http:' ||
+      parsed.protocol === 'mailto:' ||
+      parsed.protocol === 'tel:'
+    ) {
+      return val.slice(0, 500);
+    }
+  } catch {
+    // invalid URL
+  }
+  return '';
+}
+
+export async function getCornerAdConfig(admin: NonNullable<typeof supabaseAdmin>): Promise<CornerAdConfig> {
+  const { data: row } = await admin
+    .from('documents')
+    .select('file_url, created_at')
+    .eq('entity_type', 'general')
+    .eq('entity_id', CORNER_AD_ENTITY_ID)
+    .eq('title', CORNER_AD_TITLE)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!row?.file_url) return DEFAULT_CORNER_AD;
+  try {
+    const parsed = JSON.parse(row.file_url);
+    const resolvedMedia = parsed.media_url ? await resolveStorageUrl(parsed.media_url) : '';
+    return {
+      enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : true,
+      show_on_portal: typeof parsed.show_on_portal === 'boolean' ? parsed.show_on_portal : true,
+      badge: String(parsed.badge || DEFAULT_CORNER_AD.badge).slice(0, 60),
+      title: String(parsed.title || DEFAULT_CORNER_AD.title).slice(0, 120),
+      description: String(parsed.description || '').slice(0, 280),
+      media_url: resolvedMedia,
+      media_type:
+        parsed.media_type === 'video' || parsed.media_type === 'image'
+          ? parsed.media_type
+          : resolvedMedia
+            ? 'image'
+            : 'none',
+      cta_label: String(parsed.cta_label || '').slice(0, 40),
+      cta_url: sanitizeSafeCtaUrl(parsed.cta_url),
+      updated_at: String(parsed.updated_at || row.created_at || DEFAULT_CORNER_AD.updated_at),
+    };
+  } catch {
+    return DEFAULT_CORNER_AD;
+  }
+}
+
+export async function saveCornerAdConfig(
+  admin: NonNullable<typeof supabaseAdmin>,
+  input: Partial<CornerAdConfig>,
+  updatedBy: string
+): Promise<CornerAdConfig> {
+  const cleanMediaRef = normalizeStorageRef(input.media_url);
+  const mediaType: 'none' | 'image' | 'video' = !cleanMediaRef
+    ? 'none'
+    : input.media_type === 'video'
+      ? 'video'
+      : 'image';
+
+  const payload: CornerAdConfig = {
+    enabled: input.enabled !== false,
+    show_on_portal: input.show_on_portal !== false,
+    badge: String(input.badge || 'Advertisement').trim().slice(0, 60),
+    title: String(input.title || 'Madrasa Gausiya Razvia').trim().slice(0, 120),
+    description: String(input.description || '').trim().slice(0, 280),
+    media_url: cleanMediaRef,
+    media_type: mediaType,
+    cta_label: String(input.cta_label || '').trim().slice(0, 40),
+    cta_url: sanitizeSafeCtaUrl(input.cta_url),
+    updated_at: new Date().toISOString(),
+  };
+
+  await admin
+    .from('documents')
+    .delete()
+    .eq('entity_type', 'general')
+    .eq('entity_id', CORNER_AD_ENTITY_ID)
+    .eq('title', CORNER_AD_TITLE);
+
+  const { error } = await admin.from('documents').insert({
+    entity_type: 'general',
+    entity_id: CORNER_AD_ENTITY_ID,
+    title: CORNER_AD_TITLE,
+    file_url: JSON.stringify(payload),
+    file_type: 'corner_ad',
+    uploaded_by: updatedBy,
+  });
+
+  if (error) throw new Error(error.message);
+
+  return {
+    ...payload,
+    media_url: cleanMediaRef ? await resolveStorageUrl(cleanMediaRef) : '',
+  };
+}
+
+router.get('/corner-ad', async (_req, res) => {
+  try {
+    if (!supabaseAdmin) return res.json({ ad: DEFAULT_CORNER_AD });
+    const ad = await getCornerAdConfig(supabaseAdmin);
+    return res.json({ ad });
+  } catch {
+    return res.json({ ad: DEFAULT_CORNER_AD });
+  }
+});
+
 export default router;

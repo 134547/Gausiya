@@ -8,6 +8,7 @@ import { SIDEBAR_ITEMS, Sidebar } from './components/Sidebar.tsx';
 import { TopBar } from './components/TopBar.tsx';
 import { MobileBottomNav } from './components/MobileBottomNav.tsx';
 import { MadrasaLogo } from './components/MadrasaLogo.tsx';
+import { CornerAdWidget } from './components/CornerAdWidget.tsx';
 import { HomePage, PublicHomeData } from './pages/HomePage.tsx';
 
 const LoginPage = lazy(() => import('./components/LoginPage.tsx').then((m) => ({ default: m.LoginPage })));
@@ -700,6 +701,11 @@ export default function App() {
         lang={lang}
         onSelectModule={handleSelectModule}
         onLogout={handleLogout}
+      />
+
+      <CornerAdWidget
+        context="portal"
+        canManage={user.role_slug === 'super_admin' || user.role_slug === 'committee_member'}
       />
     </div>
   );
