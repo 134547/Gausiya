@@ -2,6 +2,7 @@ import 'dotenv/config';
 import path from 'node:path';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Response } from 'express';
+import { resolveTursoMediaUrl } from './turso.ts';
 
 export const SUPABASE_URL = (
   process.env.SUPABASE_URL ||
@@ -261,6 +262,9 @@ function parseSupabaseStorageRef(value: string): { bucket: string; objectPath: s
 
 export async function resolveStorageUrl(value: string | null | undefined): Promise<string> {
   if (!value) return '';
+  if (value.startsWith('turso://')) {
+    return resolveTursoMediaUrl(value);
+  }
   if (!value.startsWith('supabase://') || !supabaseAdmin) return value;
   const parsed = parseSupabaseStorageRef(value);
   if (!parsed) return value;
@@ -284,7 +288,7 @@ export async function resolveStorageUrlsInRows<T extends Record<string, any>>(
   rows: T[],
   fields: string[] = ['photo_url', 'attachment_url', 'featured_photo', 'logo_url']
 ): Promise<T[]> {
-  if (!rows.length || !supabaseAdmin) return rows;
+  if (!rows.length) return rows;
 
   const resolvedMap = new Map<string, string>();
   const pendingByBucket = new Map<string, Set<string>>();
@@ -292,8 +296,15 @@ export async function resolveStorageUrlsInRows<T extends Record<string, any>>(
   for (const row of rows) {
     for (const f of fields) {
       const val = row?.[f];
-      if (typeof val !== 'string' || !val.startsWith('supabase://')) continue;
+      if (typeof val !== 'string') continue;
       if (resolvedMap.has(val)) continue;
+
+      if (val.startsWith('turso://')) {
+        resolvedMap.set(val, resolveTursoMediaUrl(val));
+        continue;
+      }
+
+      if (!val.startsWith('supabase://') || !supabaseAdmin) continue;
 
       const parsed = parseSupabaseStorageRef(val);
       if (!parsed) continue;

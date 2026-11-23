@@ -286,63 +286,55 @@ export async function uploadFile(
   bucket = 'madrasa-assets'
 ): Promise<{ url: string; storedRef?: string; name: string; mimetype: string; size: number }> {
   const preparedFile = await compressImageForUpload(file);
+  const mime = (preparedFile.type || '').toLowerCase();
+  const fname = preparedFile.name || 'file';
 
-  // For larger files (3.5 MB – 10 MB, e.g. videos or PDFs), use direct signed upload to Supabase Storage
-  // so serverless payload limits (like Vercel's 4.5 MB body cap) never reject valid <= 10 MB uploads.
-  if (preparedFile.size > 3.5 * 1024 * 1024) {
-    try {
-      const signedMeta = await apiRequest<{
-        signedUrl: string;
-        token?: string;
-        bucket: string;
-        path: string;
-        storedRef: string;
-        resolvedUrl?: string;
-      }>('/api/upload/signed-url', {
+  const isVideo = mime.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogg|ogv)$/i.test(fname);
+  const isDoc =
+    mime === 'application/pdf' ||
+    mime === 'application/msword' ||
+    mime.includes('officedocument') ||
+    mime === 'text/plain' ||
+    mime === 'text/csv' ||
+    /\.(pdf|docx?|xlsx?|pptx?|txt|csv)$/i.test(fname);
+  const isLargeFile = preparedFile.size > 1.5 * 1024 * 1024;
+
+  // ALL Videos, PDFs, Documents, and Large Files (> 1.5 MB, up to 10 MB) upload directly into Turso in 512 KB chunks
+  // (also guarantees 10 MB uploads succeed reliably on Vercel Serverless without hitting 4.5 MB body caps).
+  if (isVideo || isDoc || isLargeFile) {
+    const init = await apiRequest<{
+      fileId: string;
+      chunkSize: number;
+      chunkCount: number;
+    }>('/api/upload/turso/init', {
+      method: 'POST',
+      body: JSON.stringify({
+        bucket,
+        name: fname,
+        mimetype: preparedFile.type || 'application/octet-stream',
+        size: preparedFile.size,
+      }),
+    });
+
+    const chunkSize = init.chunkSize || 512 * 1024;
+    const totalChunks = Math.max(1, Math.ceil(preparedFile.size / chunkSize));
+
+    for (let idx = 0; idx < totalChunks; idx++) {
+      const start = idx * chunkSize;
+      const end = Math.min(preparedFile.size, start + chunkSize);
+      const blobSlice = preparedFile.slice(start, end);
+      const chunkForm = new FormData();
+      chunkForm.append('chunk', blobSlice, `chunk-${idx}`);
+
+      await apiRequest(`/api/upload/turso/${encodeURIComponent(init.fileId)}/chunk?index=${idx}`, {
         method: 'POST',
-        body: JSON.stringify({
-          bucket,
-          name: preparedFile.name,
-          mimetype: preparedFile.type || 'application/octet-stream',
-          size: preparedFile.size,
-        }),
+        body: chunkForm,
       });
-
-      if (signedMeta?.signedUrl) {
-        const putRes = await fetch(signedMeta.signedUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': preparedFile.type || 'application/octet-stream',
-            'x-upsert': 'false',
-          },
-          body: preparedFile,
-        });
-
-        if (putRes.ok) {
-          let resolvedUrl = signedMeta.resolvedUrl || '';
-          if (!resolvedUrl && signedMeta.storedRef) {
-            const resolved = await apiRequest<{ url: string }>('/api/upload/resolve-url', {
-              method: 'POST',
-              body: JSON.stringify({ storedRef: signedMeta.storedRef }),
-            });
-            resolvedUrl = resolved.url;
-          }
-          return {
-            url: resolvedUrl || signedMeta.storedRef,
-            storedRef: signedMeta.storedRef,
-            name: preparedFile.name,
-            mimetype: preparedFile.type || 'application/octet-stream',
-            size: preparedFile.size,
-          };
-        }
-      }
-    } catch (signedErr: any) {
-      // If the server explicitly rejected for size or file type (400/413), surface that error immediately
-      if (signedErr instanceof ApiError && (signedErr.status === 400 || signedErr.status === 413)) {
-        throw signedErr;
-      }
-      // Otherwise fall through to standard /api/upload multipart route
     }
+
+    return apiRequest(`/api/upload/turso/${encodeURIComponent(init.fileId)}/complete`, {
+      method: 'POST',
+    });
   }
 
   const formData = new FormData();

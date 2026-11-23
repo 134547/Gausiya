@@ -15,6 +15,7 @@ export type NavModuleId =
   | 'classes'
   | 'subjects'
   | 'syllabus'
+  | 'schedules'
   | 'attendance'
   | 'examinations'
   | 'results'

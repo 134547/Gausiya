@@ -2,13 +2,19 @@ import { Router } from 'express';
 import multer from 'multer';
 import {
   ALLOWED_BUCKETS,
-  createSignedUploadForSupabaseStorage,
   requireSupabaseAdmin,
   resolveStorageUrl,
   resolveStorageUrlsInRows,
   supabaseAdmin,
 } from '../supabase.ts';
 import { saveUploadedAsset } from '../imgbb.ts';
+import {
+  TURSO_CHUNK_SIZE_BYTES,
+  finalizeTursoChunkedUpload,
+  initTursoChunkedUpload,
+  isTursoConfigured,
+  saveTursoUploadChunk,
+} from '../turso.ts';
 import {
   AuthRequest,
   createNotification,
@@ -83,10 +89,20 @@ const upload = multer({
   },
 });
 
-router.post('/upload/signed-url', requireAuth, async (req: AuthRequest, res) => {
+const chunkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: TURSO_CHUNK_SIZE_BYTES + 64 * 1024 },
+});
+
+// Turso Chunked Upload Flow for PDFs, Videos, Documents & Large Files (strict max 10 MB, 512 KB chunks)
+router.post('/upload/turso/init', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const admin = requireSupabaseAdmin(res);
-    if (!admin) return;
+    if (!isTursoConfigured()) {
+      return res.status(503).json({
+        error:
+          'Turso database is not configured yet. Please add TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in Secrets / .env.',
+      });
+    }
     const { bucket: requestedBucket, name, mimetype, size } = req.body as {
       bucket?: string;
       name?: string;
@@ -116,22 +132,59 @@ router.post('/upload/signed-url', requireAuth, async (req: AuthRequest, res) => 
     const bucket = ALLOWED_BUCKETS.has(String(requestedBucket || ''))
       ? String(requestedBucket)
       : 'madrasa-assets';
-    const signed = await createSignedUploadForSupabaseStorage(bucket, fileName, req.user!.id);
-    return res.json(signed);
+
+    const session = await initTursoChunkedUpload({
+      originalName: fileName,
+      mimetype: fileMime,
+      sizeBytes: fileSize,
+      bucket,
+      folder: req.user!.id,
+      uploadedBy: req.user!.id,
+    });
+
+    return res.json(session);
   } catch (err: any) {
     const status = typeof err?.status === 'number' ? err.status : 500;
-    return res.status(status).json({ error: err?.message || 'Failed to prepare upload URL' });
+    return res.status(status).json({ error: err?.message || 'Failed to initialize Turso upload' });
   }
 });
 
-router.post('/upload/resolve-url', requireAuth, async (req: AuthRequest, res) => {
+router.post('/upload/turso/:fileId/chunk', requireAuth, chunkUpload.single('chunk'), async (req: AuthRequest, res) => {
   try {
-    const storedRef = String((req.body as { storedRef?: string })?.storedRef || '').trim();
-    if (!storedRef) return res.status(400).json({ error: 'storedRef is required' });
-    const url = await resolveStorageUrl(storedRef);
-    return res.json({ url, storedRef });
+    if (!req.file) return res.status(400).json({ error: 'Missing file chunk' });
+    const fileId = String(req.params.fileId || '').trim();
+    const chunkIndex = Number(req.query.index ?? req.body?.index);
+    await saveTursoUploadChunk({
+      fileId,
+      chunkIndex,
+      buffer: req.file.buffer,
+      uploadedBy: req.user!.id,
+    });
+    return res.json({ ok: true, index: chunkIndex });
   } catch (err: any) {
-    return res.status(500).json({ error: err?.message || 'Failed to resolve file URL' });
+    const status = typeof err?.status === 'number' ? err.status : 500;
+    return res.status(status).json({ error: err?.message || 'Failed to upload chunk to Turso' });
+  }
+});
+
+router.post('/upload/turso/:fileId/complete', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const fileId = String(req.params.fileId || '').trim();
+    const finalized = await finalizeTursoChunkedUpload({
+      fileId,
+      uploadedBy: req.user!.id,
+    });
+    return res.json({
+      url: finalized.resolvedUrl,
+      storedRef: finalized.storedRef,
+      provider: 'turso',
+      name: finalized.name,
+      mimetype: finalized.mimetype,
+      size: finalized.size,
+    });
+  } catch (err: any) {
+    const status = typeof err?.status === 'number' ? err.status : 500;
+    return res.status(status).json({ error: err?.message || 'Failed to complete Turso upload' });
   }
 });
 
@@ -153,6 +206,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req: AuthReque
       mimetype: req.file.mimetype,
       bucket,
       folder: req.user!.id,
+      uploadedBy: req.user!.id,
     });
 
     return res.json({

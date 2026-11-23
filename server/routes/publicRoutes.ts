@@ -11,6 +11,7 @@ import {
   supabaseAdmin,
 } from '../supabase.ts';
 import { saveUploadedAsset } from '../imgbb.ts';
+import { normalizeTursoMediaUrlToRef } from '../turso.ts';
 import { logActivity, notifyRoles } from '../auth.ts';
 import {
   TOO_MANY_ATTEMPTS_MESSAGE,
@@ -50,6 +51,8 @@ const publicUpload = multer({
 
 export function normalizeStorageRef(url: string | null | undefined): string {
   if (!url) return '';
+  const tursoRef = normalizeTursoMediaUrlToRef(url);
+  if (tursoRef) return tursoRef;
   const signMatch = url.match(/\/storage\/v1\/object\/sign\/([^/]+)\/([^?]+)/);
   if (signMatch) {
     return `supabase://${signMatch[1]}/${decodeURIComponent(signMatch[2])}`;

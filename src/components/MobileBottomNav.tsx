@@ -35,6 +35,7 @@ const SHORT_TAB_LABELS: Partial<Record<NavModuleId, string>> = {
   classes: 'Classes',
   subjects: 'Subjects',
   syllabus: 'Syllabus',
+  schedules: 'Schedule',
   attendance: 'Attend',
   examinations: 'Exams',
   results: 'Results',

@@ -29,6 +29,7 @@ const ParentsPage = lazy(() => import('./pages/ParentsPage.tsx').then((m) => ({ 
 const ClassesPage = lazy(() => import('./pages/ClassesPage.tsx').then((m) => ({ default: m.ClassesPage })));
 const SubjectsPage = lazy(() => import('./pages/SubjectsPage.tsx').then((m) => ({ default: m.SubjectsPage })));
 const SyllabusPage = lazy(() => import('./pages/SyllabusPage.tsx').then((m) => ({ default: m.SyllabusPage })));
+const SchedulesPage = lazy(() => import('./pages/SchedulesPage.tsx').then((m) => ({ default: m.SchedulesPage })));
 const AttendancePage = lazy(() => import('./pages/AttendancePage.tsx').then((m) => ({ default: m.AttendancePage })));
 const ExaminationsPage = lazy(() =>
   import('./pages/ExaminationsPage.tsx').then((m) => ({ default: m.ExaminationsPage }))
@@ -617,6 +618,8 @@ export default function App() {
         return <SubjectsPage user={user} />;
       case 'syllabus':
         return <SyllabusPage user={user} />;
+      case 'schedules':
+        return <SchedulesPage user={user} settings={settings} />;
       case 'attendance':
         return <AttendancePage user={user} settings={settings} />;
       case 'examinations':

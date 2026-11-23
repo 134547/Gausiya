@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { isSupabaseServerConfigured, uploadFileToSupabaseStorage } from './supabase.ts';
+import { isTursoConfigured, uploadBufferToTurso } from './turso.ts';
 
 export function getImgbbApiKey(): string {
   return (process.env.IMGBB_API_KEY || '').trim();
@@ -12,13 +12,16 @@ export function isImgbbConfigured(): boolean {
 export interface UploadedAssetResult {
   url: string;
   storedRef: string;
-  provider: 'imgbb' | 'supabase';
+  provider: 'imgbb' | 'turso';
 }
 
-const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif', '.jfif', '.heic', '.heif']);
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.avif', '.jfif', '.heic', '.heif']);
+const LARGE_FILE_TURSO_THRESHOLD_BYTES = 1.5 * 1024 * 1024; // Files > 1.5 MB always go to Turso
 
 function isImageAsset(mimetype: string, originalName: string): boolean {
-  if (mimetype.startsWith('image/')) return true;
+  const mime = (mimetype || '').toLowerCase();
+  if (mime === 'image/svg+xml' || /\.svg$/i.test(originalName || '')) return false;
+  if (mime.startsWith('image/')) return true;
   const ext = path.extname(originalName || '').toLowerCase();
   return IMAGE_EXTENSIONS.has(ext);
 }
@@ -87,10 +90,22 @@ export async function saveUploadedAsset(options: {
   mimetype: string;
   bucket?: string;
   folder?: string;
+  uploadedBy?: string;
 }): Promise<UploadedAssetResult> {
-  const { buffer, originalName, mimetype, bucket = 'madrasa-assets', folder = 'general' } = options;
+  const {
+    buffer,
+    originalName,
+    mimetype,
+    bucket = 'madrasa-assets',
+    folder = 'general',
+    uploadedBy = '',
+  } = options;
 
-  if (isImageAsset(mimetype, originalName)) {
+  const isImg = isImageAsset(mimetype, originalName);
+  const isLarge = buffer.length > LARGE_FILE_TURSO_THRESHOLD_BYTES;
+
+  // Lightweight images (<= 1.5 MB) use ImgBB when configured, falling back to Turso
+  if (isImg && !isLarge) {
     if (isImgbbConfigured()) {
       try {
         const imgbb = await uploadImageToImgbb(buffer, originalName, mimetype);
@@ -100,47 +115,47 @@ export async function saveUploadedAsset(options: {
           provider: 'imgbb',
         };
       } catch (imgbbErr: any) {
-        if (isSupabaseServerConfigured) {
-          console.warn('ImgBB upload fallback to Supabase Storage:', imgbbErr?.message || imgbbErr);
-          const supa = await uploadFileToSupabaseStorage(bucket, buffer, originalName, mimetype, folder);
+        if (isTursoConfigured()) {
+          console.warn('ImgBB upload fallback to Turso media DB:', imgbbErr?.message || imgbbErr);
+          const tursoRes = await uploadBufferToTurso({
+            buffer,
+            originalName,
+            mimetype,
+            bucket,
+            folder,
+            uploadedBy,
+          });
           return {
-            url: supa.resolvedUrl,
-            storedRef: supa.storedRef,
-            provider: 'supabase',
+            url: tursoRes.resolvedUrl,
+            storedRef: tursoRes.storedRef,
+            provider: 'turso',
           };
         }
         throw imgbbErr;
       }
     }
+  }
 
-    if (isSupabaseServerConfigured) {
-      const supa = await uploadFileToSupabaseStorage(bucket, buffer, originalName, mimetype, folder);
-      return {
-        url: supa.resolvedUrl,
-        storedRef: supa.storedRef,
-        provider: 'supabase',
-      };
-    }
-
+  // ALL Videos, PDFs, Documents, and Large Files (> 1.5 MB) are stored strictly in Turso (never Supabase Storage)
+  if (!isTursoConfigured()) {
     const err: any = new Error(
-      'Image upload requires IMGBB_API_KEY (or Supabase Storage) configured in Secrets / .env.'
+      'Turso database is not configured yet for PDF, video & large file storage. Please add TURSO_DATABASE_URL and TURSO_AUTH_TOKEN to Secrets / .env.'
     );
     err.status = 503;
     throw err;
   }
 
-  if (!isSupabaseServerConfigured) {
-    const err: any = new Error(
-      'Non-image attachments require Supabase Storage, or upload an image file (JPG/PNG/WebP) to save via ImgBB.'
-    );
-    err.status = 503;
-    throw err;
-  }
-
-  const supa = await uploadFileToSupabaseStorage(bucket, buffer, originalName, mimetype, folder);
+  const tursoRes = await uploadBufferToTurso({
+    buffer,
+    originalName,
+    mimetype,
+    bucket,
+    folder,
+    uploadedBy,
+  });
   return {
-    url: supa.resolvedUrl,
-    storedRef: supa.storedRef,
-    provider: 'supabase',
+    url: tursoRes.resolvedUrl,
+    storedRef: tursoRes.storedRef,
+    provider: 'turso',
   };
 }
